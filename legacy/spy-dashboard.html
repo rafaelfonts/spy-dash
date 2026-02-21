@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SPY Dash</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<!-- API Init Overlay -->
+<div id="api-init">
+  <div class="init-spin"></div>
+  <p id="api-init-msg">Conectando à Tastytrade API...</p>
+</div>
+
+<!-- Login Modal -->
+<div id="modal-overlay">
+  <div class="modal">
+    <h2>SPY <span>Dash</span></h2>
+    <p class="modal-sub">Dashboard de opções SPY em tempo real.</p>
+    <div class="modal-hint">
+      <strong>Fase alpha —</strong> qualquer usuário e senha não-vazios funcionam.<br>
+      Integração com Supabase será adicionada em breve.
+    </div>
+    <div class="modal-error" id="modal-error"></div>
+    <div class="form-group">
+      <label>Usuário</label>
+      <input type="text" id="login-user" placeholder="seu usuário" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label>Senha</label>
+      <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn-login" id="btn-login">
+      <div class="ldr"></div>
+      <span class="btn-text">Entrar</span>
+    </button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- Header -->
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    <h1>SPY <span>DASH</span></h1>
+  </div>
+  <div class="header-right">
+    <div id="api-status-badge"></div>
+    <div id="market-status"></div>
+    <div id="last-update">
+      <div class="spinner" id="refresh-spinner"></div>
+      <span id="update-time"></span>
+    </div>
+    <button class="btn-primary" id="btn-refresh" style="display:none" onclick="loadData()">↻ Refresh</button>
+    <button class="btn-ghost"   id="btn-logout"  style="display:none" onclick="logout()">Sair</button>
+  </div>
+</header>
+
+<main>
+  <div class="cards-grid">
+    <!-- SPY Price -->
+    <div class="card">
+      <div class="card-label">SPY Preço</div>
+      <div class="card-value" id="spy-price"><div class="skeleton sk-value"></div></div>
+      <div class="card-change" id="spy-change"><div class="skeleton sk-sub"></div></div>
+    </div>
+    <!-- IV Rank -->
+    <div class="card">
+      <div class="card-label">SPY IV Rank</div>
+      <div class="card-badge" id="iv-badge" style="display:none"></div>
+      <div class="card-value" id="iv-rank"><div class="skeleton sk-value"></div></div>
+      <div class="card-change" id="iv-percentile"><div class="skeleton sk-sub"></div></div>
+      <div class="iv-meter"><div class="iv-fill" id="iv-fill"></div></div>
+    </div>
+    <!-- VIX -->
+    <div class="card">
+      <div class="card-label">VIX</div>
+      <div class="card-badge" id="vix-badge" style="display:none"></div>
+      <div class="card-value" id="vix-price"><div class="skeleton sk-value"></div></div>
+      <div class="card-change" id="vix-change"><div class="skeleton sk-sub"></div></div>
+    </div>
+  </div>
+
+  <div class="ai-section">
+    <div class="ai-header">
+      <div class="ai-header-left">
+        <div class="ai-icon">🤖</div>
+        <span class="ai-title">Análise de Estratégia — GPT-4o</span>
+      </div>
+      <button id="btn-analyze" disabled onclick="analyzeWithAI()">
+        <div class="btn-spinner"></div>
+        <span class="btn-text">✦ Analisar com IA</span>
+      </button>
+    </div>
+    <div class="ai-body">
+      <div class="ai-placeholder" id="ai-placeholder">Carregando dados de mercado...</div>
+      <div class="ai-error" id="ai-error"></div>
+      <div class="ai-result" id="ai-result">
+        <div class="md-content" id="md-content"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Scripts carregados em ordem de dependência -->
+<script src="js/config.js"></script>
+<script src="js/state.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/api.js"></script>
+<script src="js/render.js"></script>
+<script src="js/data.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
