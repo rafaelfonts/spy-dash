@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { IncomingMessage, ServerResponse } from 'http'
-import { emitter, marketState } from '../data/marketState'
+import { emitter, marketState, newsSnapshot } from '../data/marketState'
 import type { SSEClient } from '../types/market'
 
 const clients = new Set<SSEClient>()
@@ -20,6 +20,7 @@ emitter.on('quote', (data) => broadcast('quote', data))
 emitter.on('vix', (data) => broadcast('vix', data))
 emitter.on('ivrank', (data) => broadcast('ivrank', data))
 emitter.on('status', (data) => broadcast('status', data))
+emitter.on('newsfeed', (data) => broadcast('newsfeed', data))
 
 export async function registerSSE(fastify: FastifyInstance): Promise<void> {
   fastify.get('/stream/market', (request, reply) => {
@@ -86,6 +87,26 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
       wsState: marketState.connection.wsState,
       reconnectAttempts: marketState.connection.reconnectAttempts,
     })
+
+    // Send cached news feed snapshot to newly connected clients
+    if (newsSnapshot.earnings.length > 0) {
+      client.write('newsfeed', { type: 'earnings', items: newsSnapshot.earnings, ts: Date.now() })
+    }
+    if (newsSnapshot.macro.length > 0) {
+      client.write('newsfeed', { type: 'macro', items: newsSnapshot.macro, ts: Date.now() })
+    }
+    if (newsSnapshot.bls.length > 0) {
+      client.write('newsfeed', { type: 'bls', items: newsSnapshot.bls, ts: Date.now() })
+    }
+    if (newsSnapshot.fearGreed) {
+      client.write('newsfeed', { type: 'sentiment', fearGreed: newsSnapshot.fearGreed, ts: Date.now() })
+    }
+    if (newsSnapshot.macroEvents.length > 0) {
+      client.write('newsfeed', { type: 'macro-events', items: newsSnapshot.macroEvents, ts: Date.now() })
+    }
+    if (newsSnapshot.headlines.length > 0) {
+      client.write('newsfeed', { type: 'headlines', items: newsSnapshot.headlines, ts: Date.now() })
+    }
 
     // Keepalive comment every 15s to prevent proxy/browser timeout
     const keepaliveTimer = setInterval(() => {

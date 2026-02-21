@@ -5,6 +5,11 @@ import type {
   VIXData,
   IVRankData,
   ConnectionState,
+  EarningsItem,
+  MacroDataItem,
+  FearGreedData,
+  MacroEvent,
+  NewsHeadline,
 } from '../types/market'
 
 const MAX_HISTORY = 60
@@ -59,6 +64,16 @@ export const marketState: MarketState = {
 
 export const emitter = new EventEmitter()
 emitter.setMaxListeners(200)
+
+// In-memory snapshot of news feed data — sent to newly connected SSE clients
+export const newsSnapshot: {
+  earnings: EarningsItem[]
+  macro: MacroDataItem[]
+  bls: MacroDataItem[]
+  fearGreed: FearGreedData | null
+  macroEvents: MacroEvent[]
+  headlines: NewsHeadline[]
+} = { earnings: [], macro: [], bls: [], fearGreed: null, macroEvents: [], headlines: [] }
 
 export function updateSPY(data: Partial<SPYData>): void {
   Object.assign(marketState.spy, data, { lastUpdated: Date.now() })

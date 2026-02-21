@@ -47,6 +47,57 @@ export interface SSEClient {
   write: (event: string, data: unknown) => void
 }
 
+// News Feed types
+
+export interface EarningsItem {
+  symbol: string
+  earningsDate: string | null   // 'YYYY-MM-DD'
+  daysToEarnings: number | null
+}
+
+export interface MacroDataItem {
+  seriesId: string
+  name: string
+  value: number | null
+  previousValue: number | null
+  date: string                  // 'YYYY-MM-DD' of latest observation
+  unit: string
+}
+
+export interface FearGreedData {
+  score: number | null          // 0–100
+  label: string | null
+  previousClose: number | null
+  lastUpdated: number
+}
+
+export interface MacroEvent {
+  event: string
+  time: string | null             // 'YYYY-MM-DD HH:MM:SS' UTC from Finnhub
+  country: string
+  impact: 'high' | 'medium' | 'low'
+  actual: number | null           // null if not yet released
+  estimate: number | null
+  prev: number | null
+  unit: string | null
+}
+
+export interface NewsHeadline {
+  title: string
+  description: string | null
+  url: string
+  source: string
+  publishedAt: string             // ISO 8601
+  image: string | null
+}
+
+export interface NewsFeedEvent {
+  type: 'earnings' | 'macro' | 'bls' | 'sentiment' | 'macro-events' | 'headlines'
+  items?: EarningsItem[] | MacroDataItem[] | MacroEvent[] | NewsHeadline[]
+  fearGreed?: FearGreedData
+  ts: number
+}
+
 export interface QuoteEvent {
   symbol: string
   bid: number | null

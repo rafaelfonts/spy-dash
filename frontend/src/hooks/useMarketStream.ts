@@ -10,6 +10,7 @@ export function useMarketStream(): void {
   const updateVIX = useMarketStore((s) => s.updateVIX)
   const updateIVRank = useMarketStore((s) => s.updateIVRank)
   const updateConnection = useMarketStore((s) => s.updateConnection)
+  const updateNewsFeed = useMarketStore((s) => s.updateNewsFeed)
 
   const esRef = useRef<EventSource | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -88,6 +89,32 @@ export function useMarketStream(): void {
             connected: data.connected,
             reconnectAttempts: data.reconnectAttempts ?? 0,
           })
+        } catch {
+          // ignore
+        }
+      })
+
+      es.addEventListener('newsfeed', (e) => {
+        try {
+          const payload = JSON.parse(e.data) as {
+            type: string
+            items?: unknown[]
+            fearGreed?: unknown
+            ts: number
+          }
+          if (payload.type === 'earnings') {
+            updateNewsFeed({ earnings: payload.items as never, lastUpdated: payload.ts })
+          } else if (payload.type === 'macro') {
+            updateNewsFeed({ macro: payload.items as never, lastUpdated: payload.ts })
+          } else if (payload.type === 'bls') {
+            updateNewsFeed({ bls: payload.items as never, lastUpdated: payload.ts })
+          } else if (payload.type === 'sentiment') {
+            updateNewsFeed({ fearGreed: payload.fearGreed as never, lastUpdated: payload.ts })
+          } else if (payload.type === 'macro-events') {
+            updateNewsFeed({ macroEvents: payload.items as never, lastUpdated: payload.ts })
+          } else if (payload.type === 'headlines') {
+            updateNewsFeed({ headlines: payload.items as never, lastUpdated: payload.ts })
+          }
         } catch {
           // ignore
         }

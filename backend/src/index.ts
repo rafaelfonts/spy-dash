@@ -4,6 +4,12 @@ import { CONFIG } from './config'
 import { initTokenManager } from './auth/tokenManager'
 import { startDXFeedStream } from './stream/dxfeedClient'
 import { startIVRankPoller } from './data/ivRankPoller'
+import { startEarningsCalendar } from './data/earningsCalendar'
+import { startFredPoller } from './data/fredPoller'
+import { startFearGreedPoller } from './data/fearGreed'
+import { startMacroCalendar } from './data/macroCalendar'
+import { startNewsAggregator } from './data/newsAggregator'
+import { startBlsPoller } from './data/blsPoller'
 import { registerSSE } from './api/sse'
 import { registerOpenAI } from './api/openai'
 import { registerHealth } from './api/health'
@@ -62,6 +68,12 @@ async function bootstrap(): Promise<void> {
     console.log('[Bootstrap] Token acquired. Starting DXFeed stream...')
     startDXFeedStream()
     startIVRankPoller()
+    startEarningsCalendar()
+    startFredPoller()
+    startFearGreedPoller()
+    startMacroCalendar()
+    startNewsAggregator()
+    startBlsPoller()
   } catch (err) {
     console.error('[Bootstrap] Failed to initialize token:', (err as Error).message)
     console.error('[Bootstrap] The server is running but market data will not stream.')

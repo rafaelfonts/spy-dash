@@ -1,12 +1,12 @@
 # SPY Dash
 
-Dashboard de trading em tempo real focado em opções de SPY, com streaming de dados de mercado ao vivo e análise gerada por IA.
+Dashboard de trading em tempo real focado em opções de SPY, com streaming de dados de mercado ao vivo, análise gerada por IA e feed de contexto macroeconômico.
 
 ---
 
 ## Visão Geral
 
-SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análise gerada por GPT-4o, entregando um painel profissional para operadores de opções que precisam de velocidade e contexto ao mesmo tempo.
+SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análise GPT-4o e um feed de contexto completo (earnings, dados macro, eventos econômicos, headlines e sentimento de mercado), entregando um painel profissional para operadores de opções que precisam de velocidade e contexto ao mesmo tempo.
 
 **Stack:** React 18 + Vite no frontend, Fastify + TypeScript no backend, comunicação via Server-Sent Events (SSE).
 
@@ -31,7 +31,31 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - Análise gerada com contexto real: preço SPY, nível VIX, IV Rank e chain de opções
 - Resposta em streaming via SSE — texto aparece em tempo real
 - Renderização em Markdown com headers, listas e destaques
-- Idioma configurável (padrão: Português)
+- Idioma padrão: Português
+
+### Feed de Mercado
+Painel abaixo da Análise IA com cinco fontes de dados agregadas via SSE:
+
+| Seção | Fonte | Frequência |
+|---|---|---|
+| **Earnings Calendar** | Tastytrade API | A cada 6h |
+| **Dados Macro (FRED)** | Federal Reserve St. Louis | A cada 24h |
+| **Dados Macro (BLS)** | Bureau of Labor Statistics | A cada 24h |
+| **Eventos Macro** | Finnhub Economic Calendar | A cada 1h |
+| **Headlines** | GNews | A cada 30min |
+| **Fear & Greed** | CNN (endpoint público) | A cada 4h |
+
+**Earnings Calendar:** próximos earnings dos 10 maiores componentes do SPY, ordenados por DTE, com alertas de urgência (≤3 dias = vermelho, ≤14 dias = amarelo).
+
+**Dados Macro FRED:** CPI All Items, Core CPI, PCE Deflator, Fed Funds Rate e Yield Curve (T10Y2Y), com direção vs. leitura anterior e color-coding semântico.
+
+**Dados Macro BLS:** Unemployment Rate, Nonfarm Payrolls, Average Hourly Earnings e PPI Final Demand, via BLS API v2. Exibidos na mesma seção do FRED com sub-headers "FRED" e "BLS" e formatação por unidade (%, K jobs, $/h, idx).
+
+**Eventos Macro:** calendário prospectivo de eventos US de alto e médio impacto com horário em ET, consenso de analistas e valor anterior.
+
+**Headlines:** 10 headlines recentes filtradas por Fed, FOMC, S&P 500, juros, CPI, NFP, SPY e volatilidade, com links diretos para a fonte.
+
+**Fear & Greed:** gauge semicircular SVG com score 0–100 e 5 zonas de cor (Medo Extremo → Ganância Extrema).
 
 ### Dashboard UI
 - Três cards principais: **SPY**, **VIX**, **IV Rank**
@@ -47,9 +71,9 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - Alimenta automaticamente o prompt de análise da IA
 
 ### Autenticação
-- Sistema local simples para fase alpha (sem banco de dados)
-- Sessão com validade de 8 horas armazenada em `sessionStorage`
-- Preparado para integração Supabase (código comentado presente)
+- Supabase Auth com email e senha
+- JWT validado no backend em todas as rotas protegidas
+- Token Bearer no header HTTP (ou query param `?token=` para SSE)
 
 ---
 
@@ -68,13 +92,21 @@ SPY Dash/
 │       ├── auth/               # OAuth2 Tastytrade
 │       │   ├── tokenManager.ts # Refresh automático de tokens
 │       │   └── streamerToken.ts
+│       ├── middleware/
+│       │   └── authMiddleware.ts  # Validação JWT Supabase
 │       ├── stream/             # Conexão DXFeed
 │       │   ├── dxfeedClient.ts # WebSocket + parser de quotes
 │       │   └── reconnector.ts  # Reconexão com backoff
 │       ├── data/               # Estado e polling
-│       │   ├── marketState.ts  # Estado centralizado + EventEmitter
-│       │   ├── ivRankPoller.ts # Poll IV Rank 60s
-│       │   └── optionChain.ts  # Fetch + cache de options
+│       │   ├── marketState.ts  # Estado centralizado + EventEmitter + newsSnapshot
+│       │   ├── ivRankPoller.ts # Poll IV Rank 60s (Tastytrade)
+│       │   ├── optionChain.ts  # Fetch + cache de options (Tastytrade)
+│       │   ├── earningsCalendar.ts  # Earnings top 10 SPY (Tastytrade, 6h)
+│       │   ├── fredPoller.ts   # CPI/PCE/Fed Rate/Yield Curve (FRED, 24h)
+│       │   ├── blsPoller.ts    # NFP/Desemprego/PPI/Earnings (BLS, 24h)
+│       │   ├── macroCalendar.ts     # Eventos econômicos EUA (Finnhub, 1h)
+│       │   ├── newsAggregator.ts    # Headlines de mercado (GNews, 30min)
+│       │   └── fearGreed.ts    # Fear & Greed score (CNN, 4h)
 │       └── types/
 │           └── market.ts       # Interfaces TypeScript
 │
@@ -82,28 +114,36 @@ SPY Dash/
 │   └── src/
 │       ├── App.tsx             # Componente raiz + auth gate
 │       ├── store/
-│       │   └── marketStore.ts  # Zustand (estado global de mercado)
+│       │   └── marketStore.ts  # Zustand (estado global: mercado + newsFeed)
 │       ├── hooks/
-│       │   ├── useMarketStream.ts  # EventSource → store
+│       │   ├── useMarketStream.ts  # EventSource → store (todos os eventos SSE)
 │       │   ├── useAIAnalysis.ts    # Streaming GPT-4o
-│       │   ├── useAuth.ts          # Sessão local
+│       │   ├── useAuth.ts          # Supabase Auth
 │       │   └── useMarketOpen.ts    # Horário de mercado EUA
 │       ├── components/
 │       │   ├── cards/          # SPYCard, VIXCard, IVRankCard
 │       │   ├── ai/             # AIPanel + AnalysisResult
+│       │   ├── news/           # NewsFeedPanel e subcomponentes
+│       │   │   ├── NewsFeedPanel.tsx   # Container principal (5 seções)
+│       │   │   ├── EarningsCalendar.tsx
+│       │   │   ├── MacroData.tsx
+│       │   │   ├── MacroCalendar.tsx
+│       │   │   ├── NewsHeadlines.tsx
+│       │   │   └── FearGreedGauge.tsx
 │       │   ├── charts/         # PriceSparkline (Recharts)
 │       │   ├── layout/         # Header + StatusBar
 │       │   ├── ui/             # ConnectionDot, TickFlash, Skeleton
-│       │   └── auth/           # LoginPage
+│       │   └── auth/           # LoginPage (Supabase)
 │       └── lib/
-│           └── formatters.ts   # Utilitários de formatação
+│           ├── formatters.ts   # Utilitários de formatação
+│           └── supabase.ts     # Cliente Supabase
 │
 ├── legacy/                     # Versão anterior HTML/JS
 ├── start.sh                    # Script de inicialização unificado
 └── README.md
 ```
 
-### Fluxo de Dados
+### Fluxo de Dados — Mercado em Tempo Real
 
 ```
 DXFeed WebSocket
@@ -111,11 +151,29 @@ DXFeed WebSocket
   → SSE broadcast → Browser EventSource
   → Zustand store
   → React re-renders
+```
 
+### Fluxo de Dados — Feed de Mercado
+
+```
+Pollers independentes (6h / 24h / 1h / 30min / 4h) — 6 módulos
+  → newsSnapshot (in-memory cache)
+  → emitter.emit('newsfeed', { type, items })
+  → SSE broadcast → Browser EventSource
+  → Zustand newsFeed slice
+  → NewsFeedPanel re-renders
+
+Novo cliente SSE conectado:
+  → snapshot imediato dos 5 tipos de dados em cache
+```
+
+### Fluxo de Dados — Análise IA
+
+```
 Usuário clica "Analisar com IA"
-  → POST /api/analyze (com snapshot de mercado)
+  → POST /api/analyze (snapshot: SPY, VIX, IV Rank, options chain)
   → GPT-4o stream
-  → SSE response
+  → SSE response token a token
   → Markdown renderizado em tempo real
 ```
 
@@ -123,27 +181,37 @@ Usuário clica "Analisar com IA"
 
 ## APIs e Endpoints
 
-| Endpoint | Método | Descrição |
-|---|---|---|
-| `/health` | GET | Status do servidor e idade do dado |
-| `/stream/market` | GET (SSE) | Stream de quotes, VIX, IV Rank e status |
-| `/api/analyze` | POST (SSE) | Análise GPT-4o em streaming |
-| `/api/option-chain` | GET | Snapshot da cadeia de opções SPY |
+### HTTP
+
+| Endpoint | Método | Auth | Descrição |
+|---|---|---|---|
+| `/health` | GET | — | Status do servidor e idade do dado |
+| `/stream/market` | GET (SSE) | JWT | Stream de todos os eventos de mercado |
+| `/api/analyze` | POST (SSE) | JWT | Análise GPT-4o em streaming |
+| `/api/option-chain` | GET | JWT | Snapshot da cadeia de opções SPY |
 
 ### Eventos SSE (`/stream/market`)
 
-| Evento | Payload |
+| Evento | Tipo / Payload |
 |---|---|
-| `quote` | Preço SPY, bid, ask, volume, máx/mín |
+| `quote` | Preço SPY, bid, ask, volume, máx/mín, priceHistory |
 | `vix` | Preço VIX, variação, nível (low/moderate/high) |
 | `ivrank` | IV Rank %, percentil, rótulo |
-| `status` | Estado da conexão, tentativas de reconexão |
+| `status` | Estado da conexão WebSocket, tentativas de reconexão |
+| `newsfeed` | Payload polimórfico com campo `type`: |
+| ↳ `type: earnings` | `items: EarningsItem[]` — earnings dos top 10 SPY |
+| ↳ `type: macro` | `items: MacroDataItem[]` — séries FRED |
+| ↳ `type: bls` | `items: MacroDataItem[]` — séries BLS (NFP, Desemprego, PPI, AHE) |
+| ↳ `type: macro-events` | `items: MacroEvent[]` — calendário Finnhub |
+| ↳ `type: headlines` | `items: NewsHeadline[]` — headlines GNews |
+| ↳ `type: sentiment` | `fearGreed: FearGreedData` — score CNN Fear & Greed |
 
 ---
 
 ## Stack Tecnológico
 
 ### Backend
+
 | Tecnologia | Versão | Uso |
 |---|---|---|
 | Node.js | 20+ | Runtime |
@@ -151,9 +219,11 @@ Usuário clica "Analisar com IA"
 | TypeScript | 5.3 | Linguagem |
 | ws | — | WebSocket DXFeed |
 | OpenAI SDK | — | GPT-4o |
+| Supabase Admin SDK | — | Validação JWT |
 | dotenv | — | Configuração |
 
 ### Frontend
+
 | Tecnologia | Versão | Uso |
 |---|---|---|
 | React | 18.3 | UI |
@@ -165,28 +235,41 @@ Usuário clica "Analisar com IA"
 | Recharts | 2.12 | Sparklines |
 | Framer Motion | 11 | Animações |
 | react-markdown | 9 | Renderização da IA |
+| Supabase JS | — | Autenticação |
 
 ### Integrações Externas
-| Serviço | Uso |
-|---|---|
-| Tastytrade API | OAuth2, IV Rank, option chain |
-| DXFeed | Quotes SPY/VIX em tempo real via WebSocket |
-| OpenAI | GPT-4o para análise de mercado |
-| Supabase | (preparado — não ativo) |
+
+| Serviço | Uso | Key necessária |
+|---|---|---|
+| Tastytrade API | OAuth2, IV Rank, option chain, earnings | Sim (OAuth2) |
+| DXFeed | Quotes SPY/VIX em tempo real via WebSocket | Via Tastytrade |
+| OpenAI | GPT-4o para análise de mercado | Sim |
+| Supabase | Autenticação JWT (email/senha) | Sim |
+| FRED (Federal Reserve) | CPI, PCE, Fed Rate, Yield Curve | Sim (gratuita) |
+| Finnhub | Calendário econômico prospectivo | Sim (gratuita) |
+| GNews | Headlines de mercado em tempo real | Sim (gratuita) |
+| BLS | NFP, CPI, Desemprego (baixa latência) | Sim (gratuita) |
+| CNN Fear & Greed | Score de sentimento 0–100 | Não (público) |
 
 ---
 
 ## Configuração e Instalação
 
 ### Pré-requisitos
+
 - Node.js 20+
 - Conta Tastytrade com acesso à API
 - API Key OpenAI com acesso ao GPT-4o
+- Projeto Supabase (gratuito em supabase.com)
+- API Key FRED (gratuita em fred.stlouisfed.org/docs/api/fred/)
+- API Key Finnhub (gratuita em finnhub.io)
+- API Key GNews (gratuita em gnews.io)
+- API Key BLS (gratuita em bls.gov/developers/)
 
-### Variáveis de Ambiente (backend/.env)
+### Variáveis de Ambiente (`backend/.env`)
 
 ```env
-# Tastytrade
+# Tastytrade OAuth2
 TT_BASE=https://api.tastytrade.com
 TT_CLIENT_ID=<seu_client_id>
 TT_CLIENT_SECRET=<seu_client_secret>
@@ -195,25 +278,42 @@ TT_REFRESH_TOKEN=<seu_refresh_token>
 # OpenAI
 OPENAI_API_KEY=sk-proj-...
 
+# FRED (Federal Reserve) — gratuito em fred.stlouisfed.org/docs/api/fred/
+FRED_API_KEY=<sua_key>
+
+# Finnhub — gratuito em finnhub.io (60 req/min; uso comercial requer plano pago)
+FINNHUB_API_KEY=<sua_key>
+
+# GNews — gratuito em gnews.io (100 req/dia, sem delay)
+GNEWS_API_KEY=<sua_key>
+
+# BLS (Bureau of Labor Statistics) — gratuito em bls.gov/developers/
+BLS_API_KEY=<sua_key>
+
 # Servidor
 PORT=3001
 CORS_ORIGIN=http://localhost:5173
 
-# Supabase (opcional — para fase futura)
+# Supabase
 SUPABASE_URL=https://<projeto>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service_role_key>
+```
+
+### Variáveis de Ambiente (`frontend/.env`)
+
+```env
+VITE_SUPABASE_URL=https://<projeto>.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon_key>
 ```
 
 ### Instalação
 
 ```bash
 # Backend
-cd backend
-npm install
+cd backend && npm install
 
 # Frontend
-cd frontend
-npm install
+cd frontend && npm install
 ```
 
 ### Inicialização
@@ -246,54 +346,49 @@ npm run preview # Preview do build de produção
 
 ---
 
-## Credenciais Alpha
-
-Fase alpha com autenticação local simples (sem banco de dados):
-
-| Usuário | Senha |
-|---|---|
-| `admin` | `spydash` |
-| `spy` | `dash2024` |
-
-Sessões expiram após 8 horas.
-
----
-
 ## Estado Atual de Desenvolvimento
 
 ### Implementado
+
+**Dados de mercado:**
 - Streaming WebSocket DXFeed (SPY + VIX) em tempo real
 - OAuth2 Tastytrade com refresh automático de token
 - Polling IV Rank a cada 60 s
-- Broadcast SSE para múltiplos clientes
-- Dashboard React com 3 cards de métricas
-- Animações Framer Motion + Tailwind dark theme
-- Integração GPT-4o com streaming de resposta
-- Autenticação local (sessão 8h)
-- Reconexão automática com backoff exponencial
 - Cadeia de opções SPY com cache em memória (5 min)
-- Sparklines com Recharts
-- Versão legada HTML/JS mantida em `/legacy`
+- Broadcast SSE para múltiplos clientes com reconexão automática
 
-### Em Desenvolvimento / Planejado
-- Integração Supabase Auth (código preparado)
-- Persistência de histórico de preços no banco
-- Indicadores técnicos adicionais (RSI, MACD, Bandas de Bollinger)
+**Feed de Mercado (News Feed):**
+- Earnings Calendar dos top 10 componentes do SPY via Tastytrade (6h)
+- Dados Macro via FRED: CPI, Core CPI, PCE, Fed Funds Rate, Yield Curve T10Y2Y (24h)
+- Dados Macro via BLS: Unemployment Rate, Nonfarm Payrolls, Avg Hourly Earnings, PPI Final Demand (24h)
+- Calendário de Eventos Econômicos via Finnhub: US high/medium impact (1h)
+- Headlines de mercado via GNews com query focada em Fed/macro/SPY (30min)
+- Fear & Greed Index via CNN com gauge SVG semicircular (4h)
+- Snapshot imediato para novos clientes SSE conectados (6 tipos de dados)
+
+**UI & Autenticação:**
+- Dashboard React com 3 cards de métricas (SPY, VIX, IV Rank)
+- Painel "Análise IA" com GPT-4o streaming
+- Painel "Feed de Mercado" com 5 seções em layout responsivo
+- Supabase Auth com email/senha (JWT validado no backend)
+- Animações Framer Motion + Tailwind dark theme
+- Skeletons de carregamento + Sparklines Recharts
+
+### Planejado / Em Desenvolvimento
+
+- Persistência de histórico de preços no banco Supabase
+- Indicadores técnicos (RSI, MACD, Bandas de Bollinger)
 - Alertas de preço e volatilidade
 - Rastreamento de posições e portfólio
-- Otimização mobile e layout responsivo
 - Suporte a múltiplos ativos além do SPY
-- Internacionalização (i18n) — idioma atualmente fixo em PT-BR
-- Temas claro/escuro alternáveis
-- Templates de estratégias de opções
+- Internacionalização (i18n)
 
 ### Limitações Conhecidas
-- Credenciais Tastytrade no `.env` em texto (fase alpha)
-- Sem persistência de sessão entre reloads (sessionStorage)
-- Greeks das opções (delta, gamma, theta) ainda não populados pela API
-- Idioma de análise IA fixo em Português
-- Sem tratamento de erros em nível de UI (error boundaries)
-- Multi-usuário não suportado (auth local simples)
+
+- Greeks das opções (delta, gamma, theta) ainda não populados pela API Tastytrade
+- Fear & Greed usa endpoint CNN não oficial — pode mudar sem aviso (com fallback implementado)
+- Finnhub free tier não autoriza uso comercial
+- GNews free tier limitado a 100 req/dia
 
 ---
 
@@ -306,8 +401,9 @@ Paleta customizada escura (definida em `tailwind.config.js`):
 | `bg-base` | `#0a0a0f` | Fundo global |
 | `bg-card` | `#12121a` | Fundo dos cards |
 | `bg-elevated` | `#1a1a26` | Elementos elevados |
-| `accent-green` | `#00ff88` | Alta / bullish |
-| `accent-red` | `#ff4444` | Baixa / bearish |
+| `accent-green` | `#00ff88` | Alta / bullish / queda de inflação |
+| `accent-red` | `#ff4444` | Baixa / bearish / alta de inflação |
+| `accent-yellow` | `#ffcc00` | Alerta / médio impacto |
 | `text-primary` | `#e8e8f0` | Texto principal |
 | `text-secondary` | `#8888aa` | Texto secundário |
 
@@ -315,7 +411,7 @@ Paleta customizada escura (definida em `tailwind.config.js`):
 
 ## Contribuindo
 
-O projeto está em fase alpha ativa. Estrutura de branches sugerida:
+O projeto está em desenvolvimento ativo. Estrutura de branches sugerida:
 
 - `main` — código estável
 - `feature/*` — novas funcionalidades

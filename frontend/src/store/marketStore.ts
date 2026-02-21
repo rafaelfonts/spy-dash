@@ -1,6 +1,59 @@
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 
+// News Feed types (mirrored from backend)
+export interface EarningsItem {
+  symbol: string
+  earningsDate: string | null
+  daysToEarnings: number | null
+}
+
+export interface MacroDataItem {
+  seriesId: string
+  name: string
+  value: number | null
+  previousValue: number | null
+  date: string
+  unit: string
+}
+
+export interface FearGreedData {
+  score: number | null
+  label: string | null
+  previousClose: number | null
+  lastUpdated: number
+}
+
+export interface MacroEvent {
+  event: string
+  time: string | null
+  country: string
+  impact: 'high' | 'medium' | 'low'
+  actual: number | null
+  estimate: number | null
+  prev: number | null
+  unit: string | null
+}
+
+export interface NewsHeadline {
+  title: string
+  description: string | null
+  url: string
+  source: string
+  publishedAt: string
+  image: string | null
+}
+
+export interface NewsFeedState {
+  earnings: EarningsItem[]
+  macro: MacroDataItem[]
+  bls: MacroDataItem[]
+  macroEvents: MacroEvent[]
+  headlines: NewsHeadline[]
+  fearGreed: FearGreedData | null
+  lastUpdated: number
+}
+
 export interface SPYData {
   last: number | null
   bid: number | null
@@ -43,11 +96,13 @@ interface MarketStore {
   vix: VIXData
   ivRank: IVRankData
   connection: ConnectionState
+  newsFeed: NewsFeedState
 
   updateSPY: (data: Partial<SPYData>) => void
   updateVIX: (data: Partial<VIXData>) => void
   updateIVRank: (data: Partial<IVRankData>) => void
   updateConnection: (data: Partial<ConnectionState>) => void
+  updateNewsFeed: (data: Partial<NewsFeedState>) => void
   isDataReady: () => boolean
 }
 
@@ -90,6 +145,15 @@ export const useMarketStore = create<MarketStore>()(
       reconnectAttempts: 0,
       connected: false,
     },
+    newsFeed: {
+      earnings: [],
+      macro: [],
+      bls: [],
+      macroEvents: [],
+      headlines: [],
+      fearGreed: null,
+      lastUpdated: 0,
+    },
 
     updateSPY: (data) =>
       set((state) => ({ spy: { ...state.spy, ...data, lastUpdated: Date.now() } })),
@@ -104,6 +168,9 @@ export const useMarketStore = create<MarketStore>()(
 
     updateConnection: (data) =>
       set((state) => ({ connection: { ...state.connection, ...data } })),
+
+    updateNewsFeed: (data) =>
+      set((state) => ({ newsFeed: { ...state.newsFeed, ...data } })),
 
     isDataReady: () => {
       return get().spy.last !== null

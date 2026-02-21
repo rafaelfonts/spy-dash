@@ -8,6 +8,7 @@ import { SPYCard } from './components/cards/SPYCard'
 import { IVRankCard } from './components/cards/IVRankCard'
 import { VIXCard } from './components/cards/VIXCard'
 import { AIPanel } from './components/ai/AIPanel'
+import { NewsFeedPanel } from './components/news/NewsFeedPanel'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,6 +31,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           <VIXCard />
         </div>
         <AIPanel />
+        <NewsFeedPanel />
       </main>
 
       <footer className="text-center py-4 text-[10px] text-text-muted border-t border-border-subtle mt-8">
