@@ -42,6 +42,15 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 function AppContent() {
   const auth = useAuth()
 
+  // Evita flash da LoginPage enquanto Supabase verifica sessão existente
+  if (auth.isLoading && !auth.error) {
+    return (
+      <div className="min-h-screen bg-bg-base flex items-center justify-center">
+        <span className="w-6 h-6 rounded-full border-2 border-[#00ff88] border-t-transparent animate-spin" />
+      </div>
+    )
+  }
+
   if (!auth.isAuthenticated) {
     return <LoginPage auth={auth} />
   }

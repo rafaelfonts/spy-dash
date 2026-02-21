@@ -7,13 +7,13 @@ interface LoginPageProps {
 }
 
 export function LoginPage({ auth }: LoginPageProps) {
-  const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    await auth.login(username, password)
+    await auth.login(email, password)
   }
 
   return (
@@ -57,22 +57,21 @@ export function LoginPage({ auth }: LoginPageProps) {
             Entrar
           </h2>
           <p className="text-[11px] text-text-muted mb-5">
-            {/* TODO: update copy when Supabase is integrated */}
-            Fase alpha — use as credenciais de acesso fornecidas
+            Acesso restrito — use o email e senha fornecidos
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Username */}
+            {/* Email */}
             <div>
               <label className="block text-[11px] text-text-secondary mb-1.5 tracking-wide">
-                USUÁRIO
+                EMAIL
               </label>
               <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="usuário"
-                autoComplete="username"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="email@exemplo.com"
+                autoComplete="email"
                 required
                 className="
                   w-full bg-bg-elevated border border-border-subtle rounded-lg
@@ -148,7 +147,7 @@ export function LoginPage({ auth }: LoginPageProps) {
             {/* Submit */}
             <button
               type="submit"
-              disabled={auth.isLoading || !username || !password}
+              disabled={auth.isLoading || !email || !password}
               className="
                 w-full py-2.5 rounded-lg text-sm font-semibold tracking-wide
                 transition-all duration-200 active:scale-[0.98]
@@ -170,10 +169,8 @@ export function LoginPage({ auth }: LoginPageProps) {
           </form>
         </div>
 
-        {/* Future Supabase note */}
         <p className="text-center text-[10px] text-text-muted mt-5">
-          {/* TODO: substituir por Supabase Auth */}
-          Autenticação via Supabase em breve
+          Autenticado via Supabase Auth
         </p>
       </motion.div>
     </div>

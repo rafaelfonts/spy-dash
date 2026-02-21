@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
+import { supabase } from '../lib/supabase'
 
 export type AnalysisState = 'idle' | 'loading' | 'streaming' | 'done' | 'error'
 
@@ -44,9 +45,15 @@ export function useAIAnalysis(): UseAIAnalysis {
     }
 
     try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`
+      }
+
       const res = await fetch('/api/analyze', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ marketSnapshot }),
         signal: abortRef.current.signal,
       })

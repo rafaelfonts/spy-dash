@@ -8,6 +8,7 @@ import { registerSSE } from './api/sse'
 import { registerOpenAI } from './api/openai'
 import { registerHealth } from './api/health'
 import { getOptionChain } from './data/optionChain'
+import { requireAuth } from './middleware/authMiddleware'
 
 const fastify = Fastify({
   logger: {
@@ -35,14 +36,17 @@ async function bootstrap(): Promise<void> {
     },
   )
 
-  // Register API routes
+  // Rota pública de health check
   await registerHealth(fastify)
-  await registerSSE(fastify)
-  await registerOpenAI(fastify)
 
-  // Option chain snapshot endpoint
-  fastify.get('/api/option-chain', async () => {
-    return { data: await getOptionChain() }
+  // Rotas protegidas por JWT Supabase
+  await fastify.register(async (app) => {
+    app.addHook('preHandler', requireAuth)
+    await registerSSE(app)
+    await registerOpenAI(app)
+    app.get('/api/option-chain', async () => {
+      return { data: await getOptionChain() }
+    })
   })
 
   // Start server

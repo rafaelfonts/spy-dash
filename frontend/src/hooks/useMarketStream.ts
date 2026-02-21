@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
+import { supabase } from '../lib/supabase'
 
 const BASE_DELAY = 1000
 const MAX_DELAY = 15_000
@@ -18,12 +19,18 @@ export function useMarketStream(): void {
   useEffect(() => {
     mountedRef.current = true
 
-    function connect() {
+    async function connect() {
       if (!mountedRef.current) return
 
       updateConnection({ wsState: 'CONNECTING', connected: false })
 
-      const es = new EventSource('/stream/market')
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token
+      const url = token
+        ? `/stream/market?token=${encodeURIComponent(token)}`
+        : '/stream/market'
+
+      const es = new EventSource(url)
       esRef.current = es
 
       es.addEventListener('quote', (e) => {
