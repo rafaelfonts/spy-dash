@@ -54,9 +54,9 @@ function blsColor(seriesId: string, value: number | null, previous: number | nul
   return 'text-text-primary'
 }
 
-function ArrowIcon({ dir }: { dir: 'up' | 'down' | 'flat' }) {
-  if (dir === 'up') return <span className="text-red-400 text-[10px]">▲</span>
-  if (dir === 'down') return <span className="text-[#00ff88] text-[10px]">▼</span>
+function ArrowIcon({ dir, colorClass }: { dir: 'up' | 'down' | 'flat'; colorClass: string }) {
+  if (dir === 'up') return <span className={`${colorClass} text-[10px]`}>▲</span>
+  if (dir === 'down') return <span className={`${colorClass} text-[10px]`}>▼</span>
   return <span className="text-text-muted text-[10px]">—</span>
 }
 
@@ -131,7 +131,7 @@ export function MacroData({ macro, bls, loading }: Props) {
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <ArrowIcon dir={dir} />
+                    <ArrowIcon dir={dir} colorClass={valColor} />
                     <span className={`text-xs font-num font-semibold ${valColor}`}>
                       {formatFredValue(item.value, item.seriesId)}
                     </span>
@@ -163,7 +163,7 @@ export function MacroData({ macro, bls, loading }: Props) {
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <ArrowIcon dir={dir} />
+                    <ArrowIcon dir={dir} colorClass={valColor} />
                     <span className={`text-xs font-num font-semibold ${valColor}`}>
                       {formatBlsValue(item.value, item.unit)}
                     </span>

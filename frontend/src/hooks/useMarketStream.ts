@@ -11,6 +11,7 @@ export function useMarketStream(): void {
   const updateIVRank = useMarketStore((s) => s.updateIVRank)
   const updateConnection = useMarketStore((s) => s.updateConnection)
   const updateNewsFeed = useMarketStore((s) => s.updateNewsFeed)
+  const applyNewsfeedBatch = useMarketStore((s) => s.applyNewsfeedBatch)
 
   const esRef = useRef<EventSource | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -101,23 +102,59 @@ export function useMarketStream(): void {
             items?: unknown[]
             fearGreed?: unknown
             ts: number
+            _stale?: true
           }
+          const stale = payload._stale === true
+          const currentFlags = useMarketStore.getState().newsFeed.staleFlags
           if (payload.type === 'earnings') {
             updateNewsFeed({ earnings: payload.items as never, lastUpdated: payload.ts })
           } else if (payload.type === 'macro') {
-            updateNewsFeed({ macro: payload.items as never, lastUpdated: payload.ts })
+            updateNewsFeed({
+              macro: payload.items as never,
+              lastUpdated: payload.ts,
+              staleFlags: { ...currentFlags, macro: stale },
+            })
           } else if (payload.type === 'bls') {
-            updateNewsFeed({ bls: payload.items as never, lastUpdated: payload.ts })
+            updateNewsFeed({
+              bls: payload.items as never,
+              lastUpdated: payload.ts,
+              staleFlags: { ...currentFlags, bls: stale },
+            })
           } else if (payload.type === 'sentiment') {
-            updateNewsFeed({ fearGreed: payload.fearGreed as never, lastUpdated: payload.ts })
+            updateNewsFeed({
+              fearGreed: payload.fearGreed as never,
+              lastUpdated: payload.ts,
+              staleFlags: { ...currentFlags, fearGreed: stale },
+            })
           } else if (payload.type === 'macro-events') {
-            updateNewsFeed({ macroEvents: payload.items as never, lastUpdated: payload.ts })
+            updateNewsFeed({
+              macroEvents: payload.items as never,
+              lastUpdated: payload.ts,
+              staleFlags: { ...currentFlags, macroEvents: stale },
+            })
           } else if (payload.type === 'headlines') {
-            updateNewsFeed({ headlines: payload.items as never, lastUpdated: payload.ts })
+            updateNewsFeed({
+              headlines: payload.items as never,
+              lastUpdated: payload.ts,
+              staleFlags: { ...currentFlags, headlines: stale },
+            })
           }
         } catch {
           // ignore
         }
+      })
+
+      es.addEventListener('newsfeed-batch', (e) => {
+        try {
+          const { batch } = JSON.parse(e.data) as { batch: Record<string, any> };
+          applyNewsfeedBatch(batch);
+        } catch {
+          // ignore parse errors
+        }
+      })
+
+      es.addEventListener('ping', () => {
+        // keep-alive event — connection is alive, no action needed
       })
 
       es.onopen = () => {

@@ -1,6 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useAuth } from './hooks/useAuth'
 import { useMarketStream } from './hooks/useMarketStream'
+import { useOptionChain } from './hooks/useOptionChain'
+import { usePriceHistory } from './hooks/usePriceHistory'
 import { LoginPage } from './components/auth/LoginPage'
 import { Header } from './components/layout/Header'
 import { StatusBar } from './components/layout/StatusBar'
@@ -8,6 +10,7 @@ import { SPYCard } from './components/cards/SPYCard'
 import { IVRankCard } from './components/cards/IVRankCard'
 import { VIXCard } from './components/cards/VIXCard'
 import { AIPanel } from './components/ai/AIPanel'
+import { OptionChainPanel } from './components/options/OptionChainPanel'
 import { NewsFeedPanel } from './components/news/NewsFeedPanel'
 
 const queryClient = new QueryClient({
@@ -18,6 +21,8 @@ const queryClient = new QueryClient({
 
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   useMarketStream()
+  usePriceHistory()
+  useOptionChain()
 
   return (
     <div className="min-h-screen bg-bg-base">
@@ -31,6 +36,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           <VIXCard />
         </div>
         <AIPanel />
+        <OptionChainPanel />
         <NewsFeedPanel />
       </main>
 

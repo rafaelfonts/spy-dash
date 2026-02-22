@@ -2,6 +2,9 @@ import type { FastifyInstance } from 'fastify'
 import type { IncomingMessage, ServerResponse } from 'http'
 import { emitter, marketState, newsSnapshot } from '../data/marketState'
 import type { SSEClient } from '../types/market'
+import { SSEBatcher } from '../lib/sseBatcher'
+
+const HEARTBEAT_INTERVAL_MS = 15_000
 
 const clients = new Set<SSEClient>()
 
@@ -20,7 +23,32 @@ emitter.on('quote', (data) => broadcast('quote', data))
 emitter.on('vix', (data) => broadcast('vix', data))
 emitter.on('ivrank', (data) => broadcast('ivrank', data))
 emitter.on('status', (data) => broadcast('status', data))
-emitter.on('newsfeed', (data) => broadcast('newsfeed', data))
+const newsfeedBatcher = new SSEBatcher(500, (events) => {
+  const merged = events.reduce((acc, e) => {
+    acc[e.type] = e.payload;
+    return acc;
+  }, {} as Record<string, any>);
+
+  for (const client of clients) {
+    try {
+      client.write('newsfeed-batch', { batch: merged });
+    } catch {
+      clients.delete(client);
+    }
+  }
+});
+
+emitter.on('newsfeed', (data) => {
+  const payload = data.type === 'sentiment' ? data.fearGreed : data.items;
+  newsfeedBatcher.emit({ type: data.type, payload });
+})
+
+export function getSSEStats(): { count: number; avgConnectionAgeMs: number } {
+  if (clients.size === 0) return { count: 0, avgConnectionAgeMs: 0 }
+  const now = Date.now()
+  const total = [...clients].reduce((sum, c) => sum + (now - c.connectedAt), 0)
+  return { count: clients.size, avgConnectionAgeMs: Math.round(total / clients.size) }
+}
 
 export async function registerSSE(fastify: FastifyInstance): Promise<void> {
   fastify.get('/stream/market', (request, reply) => {
@@ -32,10 +60,14 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     res.setHeader('X-Accel-Buffering', 'no')
     res.flushHeaders()
 
+    // Tell the browser to reconnect after 3s if the connection drops
+    res.write('retry: 3000\n\n')
+
     const clientId = Math.random().toString(36).slice(2)
 
     const client: SSEClient = {
       id: clientId,
+      connectedAt: Date.now(),
       write(event: string, data: unknown) {
         res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
       },
@@ -108,18 +140,23 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
       client.write('newsfeed', { type: 'headlines', items: newsSnapshot.headlines, ts: Date.now() })
     }
 
-    // Keepalive comment every 15s to prevent proxy/browser timeout
-    const keepaliveTimer = setInterval(() => {
+    // Heartbeat ping every 15s — keeps proxies from closing idle connections
+    const heartbeatTimer = setInterval(() => {
       try {
-        res.write(`: keepalive\n\n`)
+        if (res.writable) {
+          res.write(`event: ping\ndata: ${Date.now()}\n\n`)
+        } else {
+          clients.delete(client)
+          clearInterval(heartbeatTimer)
+        }
       } catch {
         clients.delete(client)
-        clearInterval(keepaliveTimer)
+        clearInterval(heartbeatTimer)
       }
-    }, 15_000)
+    }, HEARTBEAT_INTERVAL_MS)
 
     request.raw.on('close', () => {
-      clearInterval(keepaliveTimer)
+      clearInterval(heartbeatTimer)
       clients.delete(client)
       console.log(`[SSE] Client disconnected: ${clientId} (total: ${clients.size})`)
     })

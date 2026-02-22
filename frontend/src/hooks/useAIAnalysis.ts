@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
+import type { OptionExpiry } from '../store/marketStore'
 import { supabase } from '../lib/supabase'
 
 export type AnalysisState = 'idle' | 'loading' | 'streaming' | 'done' | 'error'
@@ -8,19 +9,40 @@ export interface UseAIAnalysis {
   text: string
   state: AnalysisState
   error: string | null
+  cooldownSeconds: number
   analyze: () => void
   reset: () => void
+}
+
+interface FreshnessBlock {
+  spy?: string
+  vix?: string
+  ivRank?: string
+  optionChain?: string
+  fearGreed?: string
+  macro?: string
+  bls?: string
+  macroEvents?: string
+  earnings?: string
+}
+
+function msToIso(ms: number): string | undefined {
+  return ms > 0 ? new Date(ms).toISOString() : undefined
 }
 
 export function useAIAnalysis(): UseAIAnalysis {
   const [text, setText] = useState('')
   const [state, setState] = useState<AnalysisState>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [cooldownSeconds, setCooldownSeconds] = useState(0)
   const abortRef = useRef<AbortController | null>(null)
+  const optionChainCapturedAtRef = useRef<number>(0)
+  const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const spy = useMarketStore((s) => s.spy)
   const vix = useMarketStore((s) => s.vix)
   const ivRank = useMarketStore((s) => s.ivRank)
+  const newsFeed = useMarketStore((s) => s.newsFeed)
 
   const analyze = useCallback(async () => {
     abortRef.current?.abort()
@@ -45,18 +67,87 @@ export function useAIAnalysis(): UseAIAnalysis {
     }
 
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (session?.access_token) {
-        headers['Authorization'] = `Bearer ${session.access_token}`
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      const authHeader = session?.access_token ? `Bearer ${session.access_token}` : ''
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(authHeader ? { Authorization: authHeader } : {}),
+      }
+
+      // Busca a cadeia de opções (não-fatal: continua sem ela se falhar)
+      let optionChain: OptionExpiry[] | undefined
+      try {
+        const chainRes = await fetch('/api/option-chain', {
+          headers: authHeader ? { Authorization: authHeader } : {},
+          signal: abortRef.current.signal,
+        })
+        if (chainRes.ok) {
+          const chainJson = (await chainRes.json()) as { data: OptionExpiry[] }
+          optionChain = chainJson.data
+          optionChainCapturedAtRef.current = Date.now()
+          useMarketStore.getState().setOptionChain(optionChain)
+        }
+      } catch {
+        // Continua sem option chain
+      }
+
+      // Contexto do Feed de Mercado para enriquecer o prompt da IA
+      const context = {
+        fearGreed: newsFeed.fearGreed
+          ? { score: newsFeed.fearGreed.score, label: newsFeed.fearGreed.label }
+          : undefined,
+        macro: newsFeed.macro.length > 0 ? newsFeed.macro : undefined,
+        bls: newsFeed.bls.length > 0 ? newsFeed.bls : undefined,
+        macroEvents: newsFeed.macroEvents.length > 0 ? newsFeed.macroEvents : undefined,
+        earnings: newsFeed.earnings.length > 0 ? newsFeed.earnings : undefined,
+      }
+
+      // Timestamps de captura para cada bloco de dados — permitem ao backend
+      // rotular a frescura de cada seção no prompt enviado ao GPT-4o
+      const freshness: FreshnessBlock = {
+        spy: msToIso(spy.lastUpdated),
+        vix: msToIso(vix.lastUpdated),
+        ivRank: msToIso(ivRank.lastUpdated),
+        optionChain: msToIso(optionChainCapturedAtRef.current),
+        // fearGreed tem seu próprio lastUpdated registrado no momento do poll
+        fearGreed: newsFeed.fearGreed?.lastUpdated
+          ? msToIso(newsFeed.fearGreed.lastUpdated)
+          : undefined,
+        // macro/bls/macroEvents/earnings compartilham newsFeed.lastUpdated no frontend
+        // (o backend usa newsSnapshot.*Ts para maior granularidade no fallback sem payload)
+        macro: msToIso(newsFeed.lastUpdated),
+        bls: msToIso(newsFeed.lastUpdated),
+        macroEvents: msToIso(newsFeed.lastUpdated),
+        earnings: msToIso(newsFeed.lastUpdated),
       }
 
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ marketSnapshot }),
+        body: JSON.stringify({ marketSnapshot, optionChain, context, freshness }),
         signal: abortRef.current.signal,
       })
+
+      if (res.status === 429) {
+        const body = (await res.json()) as { retryAfter?: number }
+        const seconds = body.retryAfter ?? 30
+        setCooldownSeconds(seconds)
+        cooldownTimerRef.current && clearInterval(cooldownTimerRef.current)
+        cooldownTimerRef.current = setInterval(() => {
+          setCooldownSeconds((prev) => {
+            if (prev <= 1) {
+              clearInterval(cooldownTimerRef.current!)
+              cooldownTimerRef.current = null
+              return 0
+            }
+            return prev - 1
+          })
+        }, 1000)
+        setState('idle')
+        return
+      }
 
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`)
@@ -113,7 +204,7 @@ export function useAIAnalysis(): UseAIAnalysis {
       setError((err as Error).message)
       setState('error')
     }
-  }, [spy, vix, ivRank])
+  }, [spy, vix, ivRank, newsFeed])
 
   const reset = useCallback(() => {
     abortRef.current?.abort()
@@ -122,5 +213,5 @@ export function useAIAnalysis(): UseAIAnalysis {
     setState('idle')
   }, [])
 
-  return { text, state, error, analyze, reset }
+  return { text, state, error, cooldownSeconds, analyze, reset }
 }

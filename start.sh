@@ -42,7 +42,8 @@ FRONTEND_PID=$!
 echo ""
 echo "  Backend  → http://localhost:3001"
 echo "  Frontend → http://localhost:5173"
-echo "  Health   → http://localhost:3001/health"
+echo "  Health   → http://localhost:3001/health
+  Health+  → http://localhost:3001/health/details  (requer X-Health-Token)"
 echo ""
 echo "  Press Ctrl+C to stop both servers."
 echo ""

@@ -44,6 +44,7 @@ export interface MarketState {
 
 export interface SSEClient {
   id: string
+  connectedAt: number
   write: (event: string, data: unknown) => void
 }
 
@@ -96,6 +97,7 @@ export interface NewsFeedEvent {
   items?: EarningsItem[] | MacroDataItem[] | MacroEvent[] | NewsHeadline[]
   fearGreed?: FearGreedData
   ts: number
+  _stale?: true  // present only when data comes from cache fallback (API unavailable or schema mismatch)
 }
 
 export interface QuoteEvent {
@@ -134,3 +136,88 @@ export interface StatusEvent {
   wsState: string
   reconnectAttempts: number
 }
+
+// =============================================================================
+// Zod schemas — referência viva do formato esperado de cada API externa
+// =============================================================================
+import { z } from 'zod'
+
+// CNN Fear & Greed — https://production.dataviz.cnn.io/index/fearandgreed/graphdata
+export const FearGreedApiSchema = z.object({
+  fear_and_greed: z.object({
+    score: z.number().min(0).max(100),
+    rating: z.string(),
+    previous_close: z.number().optional(),
+    timestamp: z.string().optional(),
+  }),
+})
+export type FearGreedApiResponse = z.infer<typeof FearGreedApiSchema>
+
+// GNews — https://gnews.io/api/v4/search
+export const GNewsResponseSchema = z.object({
+  articles: z
+    .array(
+      z.object({
+        title: z.string().optional(),
+        description: z.string().nullable().optional(),
+        url: z.string().optional(),
+        image: z.string().nullable().optional(),
+        publishedAt: z.string().optional(),
+        source: z.object({ name: z.string().optional() }).optional(),
+      }),
+    )
+    .optional(),
+})
+export type GNewsApiResponse = z.infer<typeof GNewsResponseSchema>
+
+// Finnhub Economic Calendar — https://finnhub.io/api/v1/calendar/economic
+export const FinnhubCalendarSchema = z.object({
+  economicCalendar: z
+    .array(
+      z.object({
+        event: z.string().optional(),
+        time: z.string().optional(),
+        country: z.string().optional(),
+        impact: z.string().optional(),
+        actual: z.number().nullable().optional(),
+        estimate: z.number().nullable().optional(),
+        prev: z.number().nullable().optional(),
+        unit: z.string().nullable().optional(),
+      }),
+    )
+    .optional(),
+})
+export type FinnhubCalendarApiResponse = z.infer<typeof FinnhubCalendarSchema>
+
+// FRED Series Observations — https://api.stlouisfed.org/fred/series/observations
+export const FredObservationSchema = z.object({
+  date: z.string(),
+  value: z.string(),
+})
+export const FredResponseSchema = z.object({
+  observations: z.array(FredObservationSchema),
+})
+export type FredApiResponse = z.infer<typeof FredResponseSchema>
+
+// BLS Timeseries — https://api.bls.gov/publicAPI/v2/timeseries/data/
+export const BlsObservationSchema = z.object({
+  year: z.string(),
+  period: z.string(),
+  value: z.string(),
+  footnotes: z.array(z.unknown()),
+})
+export const BlsResponseSchema = z.object({
+  status: z.string(),
+  Results: z
+    .object({
+      series: z.array(
+        z.object({
+          seriesID: z.string(),
+          data: z.array(BlsObservationSchema),
+        }),
+      ),
+    })
+    .optional(),
+  message: z.array(z.string()).optional(),
+})
+export type BlsApiResponse = z.infer<typeof BlsResponseSchema>

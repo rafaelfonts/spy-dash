@@ -2,6 +2,7 @@
   "name": "frontend",
   "version": "1.0.0",
   "description": "SPY Dash frontend — React 18 + Vite + Zustand + Recharts",
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

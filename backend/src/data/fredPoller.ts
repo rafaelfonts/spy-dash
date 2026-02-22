@@ -1,8 +1,13 @@
 import { CONFIG } from '../config'
 import { emitter, newsSnapshot } from './marketState'
 import type { MacroDataItem } from '../types/market'
+import { FredResponseSchema } from '../types/market'
+import { createBreaker } from '../lib/circuitBreaker'
+import { cacheGet, cacheSet } from '../lib/cacheStore'
 
 const POLL_INTERVAL = 24 * 60 * 60 * 1000 // 24 hours
+const CACHE_KEY = 'fred_macro'
+const CACHE_TTL = 95_040_000 // POLL_INTERVAL * 1.1
 const FRED_BASE = 'https://api.stlouisfed.org/fred/series/observations'
 
 interface FredSeries {
@@ -19,14 +24,8 @@ const SERIES: FredSeries[] = [
   { seriesId: 'T10Y2Y',    name: 'Yield Curve (10Y-2Y)', unit: '%'     },
 ]
 
-interface FredObservation {
-  date: string
-  value: string
-}
-
-interface FredResponse {
-  observations: FredObservation[]
-}
+// Last successfully fetched+validated full items array — used as fallback on total poll failure
+let lastValidFredItems: MacroDataItem[] | null = null
 
 function parseValue(str: string): number | null {
   if (!str || str === '.') return null
@@ -51,10 +50,26 @@ async function fetchSeries(series: FredSeries): Promise<MacroDataItem> {
     throw new Error(`FRED ${series.seriesId} HTTP ${res.status}: ${text.slice(0, 100)}`)
   }
 
-  const json = (await res.json()) as FredResponse
-  const obs = json.observations ?? []
+  const json: unknown = await res.json()
+
+  // Validate the series response with Zod for early detection of API format changes
+  const parsed = FredResponseSchema.safeParse(json)
+  if (!parsed.success) {
+    console.error(`[FredPoller] ${series.seriesId} schema inválido:`, parsed.error.format())
+    console.error(`[FredPoller] ${series.seriesId} payload:`, JSON.stringify(json).slice(0, 300))
+    // Return null-valued item; poller continues with remaining series
+    return {
+      seriesId: series.seriesId,
+      name: series.name,
+      value: null,
+      previousValue: null,
+      date: '',
+      unit: series.unit,
+    }
+  }
 
   // obs[0] = most recent (desc order), obs[1] = previous
+  const obs = parsed.data.observations
   const latest = obs[0]
   const previous = obs[1]
 
@@ -68,22 +83,48 @@ async function fetchSeries(series: FredSeries): Promise<MacroDataItem> {
   }
 }
 
+// CB wraps individual series fetches — 5 per cycle gives fast signal within a single poll
+const fredBreaker = createBreaker(fetchSeries, 'fred', {
+  resetTimeout: 3_600_000, // FRED is stable; wait 1h before retrying
+})
+
 async function pollFred(): Promise<void> {
   if (!CONFIG.FRED_API_KEY) {
     console.warn('[FredPoller] FRED_API_KEY not set — skipping macro data poll')
     return
   }
+
+  const cached = await cacheGet<{ items: MacroDataItem[]; ts: number }>(CACHE_KEY)
+  if (cached) {
+    newsSnapshot.macro = cached.items
+    newsSnapshot.macroTs = cached.ts
+    emitter.emit('newsfeed', { type: 'macro', items: cached.items, ts: cached.ts })
+    return
+  }
+
   try {
-    const results = await Promise.allSettled(SERIES.map(fetchSeries))
+    // With CB fallback=null, allSettled always gets fulfilled results (null or MacroDataItem)
+    const results = await Promise.allSettled(SERIES.map((s) => fredBreaker.fire(s)))
 
     const items: MacroDataItem[] = []
     for (let i = 0; i < results.length; i++) {
       const result = results[i]
       if (result.status === 'fulfilled') {
-        items.push(result.value)
+        if (result.value === null) {
+          // CB fallback: circuit is OPEN or fetch failed for this series
+          items.push({
+            seriesId: SERIES[i].seriesId,
+            name: SERIES[i].name,
+            value: null,
+            previousValue: null,
+            date: '',
+            unit: SERIES[i].unit,
+          })
+        } else {
+          items.push(result.value as MacroDataItem)
+        }
       } else {
         console.error(`[FredPoller] ${SERIES[i].seriesId} error:`, result.reason)
-        // Push a placeholder so the UI knows the series exists but has no data
         items.push({
           seriesId: SERIES[i].seriesId,
           name: SERIES[i].name,
@@ -95,12 +136,26 @@ async function pollFred(): Promise<void> {
       }
     }
 
+    lastValidFredItems = items
     newsSnapshot.macro = items
-
-    emitter.emit('newsfeed', { type: 'macro', items, ts: Date.now() })
+    newsSnapshot.macroTs = Date.now()
+    await cacheSet(CACHE_KEY, { items, ts: newsSnapshot.macroTs }, CACHE_TTL, 'fred')
+    emitter.emit('newsfeed', { type: 'macro', items, ts: newsSnapshot.macroTs })
     console.log(`[FredPoller] Updated: ${items.filter((i) => i.value !== null).length}/${items.length} series`)
   } catch (err) {
+    // Catastrophic failure (e.g. network down) — fall back to last valid data
     console.error('[FredPoller] Error:', (err as Error).message)
+
+    if (lastValidFredItems !== null) {
+      newsSnapshot.macro = lastValidFredItems
+      emitter.emit('newsfeed', {
+        type: 'macro',
+        items: lastValidFredItems,
+        ts: Date.now(),
+        _stale: true,
+      })
+      console.warn('[FredPoller] Usando dados em cache (último válido)')
+    }
   }
 }
 

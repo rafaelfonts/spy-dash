@@ -15,6 +15,13 @@ export const CONFIG = {
   TT_CLIENT_SECRET: requireEnv('TT_CLIENT_SECRET'),
   TT_REFRESH_TOKEN: requireEnv('TT_REFRESH_TOKEN'),
   OPENAI_API_KEY: requireEnv('OPENAI_API_KEY'),
+  FRED_API_KEY: process.env.FRED_API_KEY ?? '',
+  FINNHUB_API_KEY: process.env.FINNHUB_API_KEY ?? '',
+  GNEWS_API_KEY: process.env.GNEWS_API_KEY ?? '',
+  BLS_API_KEY: process.env.BLS_API_KEY ?? '',
   PORT: parseInt(process.env.PORT ?? '3001', 10),
   CORS_ORIGIN: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+  ANALYZE_COOLDOWN_MS: parseInt(process.env.ANALYZE_COOLDOWN_MS ?? '30000', 10),
+  OPTION_CHAIN_THRESHOLD: parseFloat(process.env.OPTION_CHAIN_THRESHOLD ?? '0.003'),
+  HEALTH_SECRET: process.env.HEALTH_SECRET ?? '',
 } as const

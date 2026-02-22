@@ -44,6 +44,45 @@ export interface NewsHeadline {
   image: string | null
 }
 
+// Option chain types (mirrored from backend OptionLeg/OptionExpiry)
+export interface OptionChainMeta {
+  capturedAt: string
+  capturedAtPrice: number
+  currentPrice: number | null
+  priceDelta: string
+  cacheHit: boolean
+}
+
+export interface OptionLeg {
+  symbol: string
+  strike: number
+  bid: number | null
+  ask: number | null
+  volume: number | null
+  openInterest: number | null
+  iv: number | null
+  delta: number | null
+  gamma: number | null
+  theta: number | null
+  vega: number | null
+  greeksSource: 'api' | 'calculated' | null
+}
+
+export interface OptionExpiry {
+  dte: number
+  expirationDate: string
+  calls: OptionLeg[]
+  puts: OptionLeg[]
+}
+
+export interface StaleFlags {
+  macro?: boolean
+  bls?: boolean
+  macroEvents?: boolean
+  headlines?: boolean
+  fearGreed?: boolean
+}
+
 export interface NewsFeedState {
   earnings: EarningsItem[]
   macro: MacroDataItem[]
@@ -52,6 +91,7 @@ export interface NewsFeedState {
   headlines: NewsHeadline[]
   fearGreed: FearGreedData | null
   lastUpdated: number
+  staleFlags: StaleFlags
 }
 
 export interface SPYData {
@@ -97,12 +137,17 @@ interface MarketStore {
   ivRank: IVRankData
   connection: ConnectionState
   newsFeed: NewsFeedState
+  optionChain: OptionExpiry[]
+  optionChainMeta: OptionChainMeta | null
 
   updateSPY: (data: Partial<SPYData>) => void
   updateVIX: (data: Partial<VIXData>) => void
   updateIVRank: (data: Partial<IVRankData>) => void
   updateConnection: (data: Partial<ConnectionState>) => void
   updateNewsFeed: (data: Partial<NewsFeedState>) => void
+  applyNewsfeedBatch: (batch: Record<string, any>) => void
+  setOptionChain: (chain: OptionExpiry[]) => void
+  setOptionChainMeta: (meta: OptionChainMeta) => void
   isDataReady: () => boolean
 }
 
@@ -153,7 +198,10 @@ export const useMarketStore = create<MarketStore>()(
       headlines: [],
       fearGreed: null,
       lastUpdated: 0,
+      staleFlags: {},
     },
+    optionChain: [],
+    optionChainMeta: null,
 
     updateSPY: (data) =>
       set((state) => ({ spy: { ...state.spy, ...data, lastUpdated: Date.now() } })),
@@ -171,6 +219,23 @@ export const useMarketStore = create<MarketStore>()(
 
     updateNewsFeed: (data) =>
       set((state) => ({ newsFeed: { ...state.newsFeed, ...data } })),
+
+    applyNewsfeedBatch: (batch) =>
+      set((state) => ({
+        newsFeed: {
+          ...state.newsFeed,
+          lastUpdated: Date.now(),
+          ...(batch.earnings        && { earnings: batch.earnings }),
+          ...(batch.macro           && { macro: batch.macro }),
+          ...(batch.bls             && { bls: batch.bls }),
+          ...(batch['macro-events'] && { macroEvents: batch['macro-events'] }),
+          ...(batch.headlines       && { headlines: batch.headlines }),
+          ...(batch.sentiment       && { fearGreed: batch.sentiment }),
+        },
+      })),
+
+    setOptionChain: (chain) => set({ optionChain: chain }),
+    setOptionChainMeta: (meta) => set({ optionChainMeta: meta }),
 
     isDataReady: () => {
       return get().spy.last !== null

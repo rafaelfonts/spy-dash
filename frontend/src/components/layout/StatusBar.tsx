@@ -27,16 +27,18 @@ export function StatusBar() {
       : ''
 
   return (
-    <div className="flex items-center justify-between px-4 sm:px-6 py-1.5 border-b border-border-subtle bg-bg-base">
-      <span className={`text-[10px] tracking-wide ${colorClass}`}>
-        {message}
-        {wsState === 'RECONNECTING' && reconnectAttempts > 0 && (
-          <span className="ml-1 opacity-60">(tentativa {reconnectAttempts})</span>
+    <div className="border-b border-border-subtle bg-bg-base">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-1.5 flex items-center justify-between">
+        <span className={`text-[10px] tracking-wide ${colorClass}`}>
+          {message}
+          {wsState === 'RECONNECTING' && reconnectAttempts > 0 && (
+            <span className="ml-1 opacity-60">(tentativa {reconnectAttempts})</span>
+          )}
+        </span>
+        {ago && (
+          <span className="text-[10px] text-text-muted hidden sm:inline">{ago}</span>
         )}
-      </span>
-      {ago && (
-        <span className="text-[10px] text-text-muted hidden sm:inline">{ago}</span>
-      )}
+      </div>
     </div>
   )
 }

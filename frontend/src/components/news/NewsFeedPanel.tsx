@@ -25,6 +25,7 @@ export function NewsFeedPanel() {
   const hasMacroEvents = newsFeed.macroEvents.length > 0
   const hasHeadlines = newsFeed.headlines.length > 0
   const isLoading = newsFeed.lastUpdated === 0
+  const hasStale = Object.values(newsFeed.staleFlags).some(Boolean)
 
   const lastUpdatedStr = newsFeed.lastUpdated
     ? new Date(newsFeed.lastUpdated).toLocaleTimeString('pt-BR', {
@@ -58,8 +59,16 @@ export function NewsFeedPanel() {
         )}
       </div>
 
-      {/* Row 1: Earnings + Macro FRED */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
+      {/* Stale data warning */}
+      {hasStale && (
+        <div className="mb-4 px-3 py-2 rounded border border-yellow-500/30 bg-yellow-500/10 text-[11px] text-yellow-400 flex items-center gap-2">
+          <span>⚠</span>
+          <span>Alguns dados podem estar desatualizados — última busca falhou ou retornou formato inválido</span>
+        </div>
+      )}
+
+      {/* Row 1: Earnings + Macro FRED/BLS + Sentimento */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
         <div>
           <SectionTitle>Earnings Calendar</SectionTitle>
           <EarningsCalendar
@@ -68,7 +77,7 @@ export function NewsFeedPanel() {
           />
         </div>
 
-        <div className="lg:border-l lg:border-border-subtle lg:pl-4">
+        <div className="md:border-l md:border-border-subtle md:pl-4">
           <SectionTitle>Dados Macro — FRED / BLS</SectionTitle>
           <MacroData
             macro={newsFeed.macro}
@@ -76,12 +85,17 @@ export function NewsFeedPanel() {
             loading={isLoading && !hasMacro && !hasBls}
           />
         </div>
+
+        <div className="md:border-l md:border-border-subtle md:pl-4">
+          <SectionTitle>Sentimento do Mercado</SectionTitle>
+          <FearGreedGauge fearGreed={newsFeed.fearGreed} />
+        </div>
       </div>
 
       <div className="border-t border-border-subtle mb-5" />
 
-      {/* Row 2: Macro Events + Headlines */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
+      {/* Row 2: Macro Events (1 col) + Headlines (2 cols) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div>
           <SectionTitle>Eventos Macro — Próximas 48h</SectionTitle>
           <MacroCalendar
@@ -90,21 +104,13 @@ export function NewsFeedPanel() {
           />
         </div>
 
-        <div className="lg:border-l lg:border-border-subtle lg:pl-4">
+        <div className="md:border-l md:border-border-subtle md:pl-4 md:col-span-2">
           <SectionTitle>Headlines</SectionTitle>
           <NewsHeadlines
             headlines={newsFeed.headlines}
             loading={isLoading && !hasHeadlines}
           />
         </div>
-      </div>
-
-      <div className="border-t border-border-subtle mb-5" />
-
-      {/* Row 3: Fear & Greed */}
-      <div>
-        <SectionTitle>Sentimento do Mercado</SectionTitle>
-        <FearGreedGauge fearGreed={newsFeed.fearGreed} />
       </div>
     </motion.section>
   )

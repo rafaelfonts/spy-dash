@@ -1,8 +1,13 @@
 import { CONFIG } from '../config'
 import { emitter, newsSnapshot } from './marketState'
-import type { MacroDataItem } from '../types/market'
+import type { MacroDataItem, BlsApiResponse } from '../types/market'
+import { BlsResponseSchema } from '../types/market'
+import { createBreaker } from '../lib/circuitBreaker'
+import { cacheGet, cacheSet } from '../lib/cacheStore'
 
 const POLL_INTERVAL = 24 * 60 * 60 * 1000 // 24 hours
+const CACHE_KEY = 'bls_macro'
+const CACHE_TTL = 95_040_000 // POLL_INTERVAL * 1.1
 const BLS_API_URL = 'https://api.bls.gov/publicAPI/v2/timeseries/data/'
 
 interface BlsSeries {
@@ -18,25 +23,8 @@ const SERIES: BlsSeries[] = [
   { seriesId: 'WPSFD4',        name: 'PPI Final Demand',      unit: 'idx' },
 ]
 
-interface BlsObservation {
-  year: string
-  period: string
-  value: string
-  footnotes: unknown[]
-}
-
-interface BlsSeriesResult {
-  seriesID: string
-  data: BlsObservation[]
-}
-
-interface BlsResponse {
-  status: string
-  Results?: {
-    series: BlsSeriesResult[]
-  }
-  message?: string[]
-}
+// Last successfully validated items — used as fallback when API fails or schema changes
+let lastValidBlsItems: MacroDataItem[] | null = null
 
 function parseValue(str: string): number | null {
   if (!str || str === '-') return null
@@ -50,24 +38,8 @@ function periodToDate(year: string, period: string): string {
   return `${year}-${month}-01`
 }
 
-async function pollBls(): Promise<void> {
-  if (!CONFIG.BLS_API_KEY) {
-    console.warn('[BlsPoller] BLS_API_KEY not set — skipping BLS poll')
-    return
-  }
-
-  try {
-    const now = new Date()
-    const endYear = now.getFullYear().toString()
-    const startYear = (now.getFullYear() - 1).toString()
-
-    const body = {
-      seriesid: SERIES.map((s) => s.seriesId),
-      startyear: startYear,
-      endyear: endYear,
-      registrationkey: CONFIG.BLS_API_KEY,
-    }
-
+const fetchBreaker = createBreaker(
+  async (body: object) => {
     const res = await fetch(BLS_API_URL, {
       method: 'POST',
       headers: {
@@ -76,58 +48,124 @@ async function pollBls(): Promise<void> {
       },
       body: JSON.stringify(body),
     })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json() as Promise<unknown>
+  },
+  'bls',
+  { resetTimeout: 3_600_000 }, // BLS is stable; wait 1h before retrying
+)
 
-    if (!res.ok) {
-      const text = await res.text()
-      throw new Error(`BLS HTTP ${res.status}: ${text.slice(0, 200)}`)
+async function pollBls(): Promise<void> {
+  if (!CONFIG.BLS_API_KEY) {
+    console.warn('[BlsPoller] BLS_API_KEY not set — skipping BLS poll')
+    return
+  }
+
+  const cached = await cacheGet<{ items: MacroDataItem[]; ts: number }>(CACHE_KEY)
+  if (cached) {
+    newsSnapshot.bls = cached.items
+    newsSnapshot.blsTs = cached.ts
+    emitter.emit('newsfeed', { type: 'bls', items: cached.items, ts: cached.ts })
+    return
+  }
+
+  const now = new Date()
+  const body = {
+    seriesid: SERIES.map((s) => s.seriesId),
+    startyear: (now.getFullYear() - 1).toString(),
+    endyear: now.getFullYear().toString(),
+    registrationkey: CONFIG.BLS_API_KEY,
+  }
+
+  const raw = (await fetchBreaker.fire(body)) as BlsApiResponse | null
+
+  if (!raw) {
+    // CB fallback: circuit is OPEN or fetch failed
+    if (lastValidBlsItems !== null) {
+      newsSnapshot.bls = lastValidBlsItems
+      emitter.emit('newsfeed', {
+        type: 'bls',
+        items: lastValidBlsItems,
+        ts: Date.now(),
+        _stale: true,
+      })
+      console.warn('[BlsPoller] Usando dados em cache (último válido)')
     }
+    return
+  }
 
-    const json = (await res.json()) as BlsResponse
-
-    if (json.status !== 'REQUEST_SUCCEEDED') {
-      const msgs = json.message?.join(', ') ?? 'Unknown BLS error'
-      throw new Error(`BLS API: ${msgs}`)
+  const parsed = BlsResponseSchema.safeParse(raw)
+  if (!parsed.success) {
+    console.error('[BlsPoller] Schema inválido:', parsed.error.format())
+    console.error('[BlsPoller] Payload recebido:', JSON.stringify(raw).slice(0, 500))
+    if (lastValidBlsItems !== null) {
+      newsSnapshot.bls = lastValidBlsItems
+      emitter.emit('newsfeed', {
+        type: 'bls',
+        items: lastValidBlsItems,
+        ts: Date.now(),
+        _stale: true,
+      })
     }
+    return
+  }
 
-    const seriesResults = json.Results?.series ?? []
-    const items: MacroDataItem[] = []
+  const json = parsed.data
+  if (json.status !== 'REQUEST_SUCCEEDED') {
+    const msgs = json.message?.join(', ') ?? 'Unknown BLS error'
+    console.error(`[BlsPoller] API error: ${msgs}`)
 
-    for (const meta of SERIES) {
-      const result = seriesResults.find((s) => s.seriesID === meta.seriesId)
+    if (lastValidBlsItems !== null) {
+      newsSnapshot.bls = lastValidBlsItems
+      emitter.emit('newsfeed', {
+        type: 'bls',
+        items: lastValidBlsItems,
+        ts: Date.now(),
+        _stale: true,
+      })
+      console.warn('[BlsPoller] Usando dados em cache (último válido)')
+    }
+    return
+  }
 
-      if (!result || result.data.length === 0) {
-        items.push({
-          seriesId: meta.seriesId,
-          name: meta.name,
-          value: null,
-          previousValue: null,
-          date: '',
-          unit: meta.unit,
-        })
-        continue
-      }
+  const seriesResults = json.Results?.series ?? []
+  const items: MacroDataItem[] = []
 
-      // BLS returns data sorted newest first
-      const latest = result.data[0]
-      const previous = result.data[1]
+  for (const meta of SERIES) {
+    const result = seriesResults.find((s) => s.seriesID === meta.seriesId)
 
+    if (!result || result.data.length === 0) {
       items.push({
         seriesId: meta.seriesId,
         name: meta.name,
-        value: parseValue(latest.value),
-        previousValue: previous ? parseValue(previous.value) : null,
-        date: periodToDate(latest.year, latest.period),
+        value: null,
+        previousValue: null,
+        date: '',
         unit: meta.unit,
       })
+      continue
     }
 
-    newsSnapshot.bls = items
+    // BLS returns data sorted newest first
+    const latest = result.data[0]
+    const previous = result.data[1]
 
-    emitter.emit('newsfeed', { type: 'bls', items, ts: Date.now() })
-    console.log(`[BlsPoller] Updated: ${items.filter((i) => i.value !== null).length}/${items.length} series`)
-  } catch (err) {
-    console.error('[BlsPoller] Error:', (err as Error).message)
+    items.push({
+      seriesId: meta.seriesId,
+      name: meta.name,
+      value: parseValue(latest.value),
+      previousValue: previous ? parseValue(previous.value) : null,
+      date: periodToDate(latest.year, latest.period),
+      unit: meta.unit,
+    })
   }
+
+  lastValidBlsItems = items
+  newsSnapshot.bls = items
+  newsSnapshot.blsTs = Date.now()
+  await cacheSet(CACHE_KEY, { items, ts: newsSnapshot.blsTs }, CACHE_TTL, 'bls')
+  emitter.emit('newsfeed', { type: 'bls', items, ts: newsSnapshot.blsTs })
+  console.log(`[BlsPoller] Updated: ${items.filter((i) => i.value !== null).length}/${items.length} series`)
 }
 
 export function startBlsPoller(): void {

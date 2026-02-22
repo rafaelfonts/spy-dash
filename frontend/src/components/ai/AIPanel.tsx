@@ -6,7 +6,7 @@ import { useMarketStore } from '../../store/marketStore'
 import { fmtPrice, fmtPct, fmtChange } from '../../lib/formatters'
 
 export function AIPanel() {
-  const { text, state, error, analyze, reset } = useAIAnalysis()
+  const { text, state, error, cooldownSeconds, analyze, reset } = useAIAnalysis()
   const spy = useMarketStore((s) => s.spy)
   const vix = useMarketStore((s) => s.vix)
   const ivRank = useMarketStore((s) => s.ivRank)
@@ -48,11 +48,11 @@ export function AIPanel() {
 
           <button
             onClick={analyze}
-            disabled={isLoading || isStreaming || !hasData}
+            disabled={isLoading || isStreaming || !hasData || cooldownSeconds > 0}
             className={`
               px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200
               ${
-                isLoading || isStreaming
+                isLoading || isStreaming || cooldownSeconds > 0
                   ? 'bg-bg-elevated text-text-muted cursor-not-allowed border border-border-subtle'
                   : !hasData
                     ? 'bg-bg-elevated text-text-muted cursor-not-allowed border border-border-subtle'
@@ -70,6 +70,8 @@ export function AIPanel() {
                 <span className="w-2 h-2 rounded-full bg-[#00ff88] animate-pulse-dot" />
                 Gerando...
               </span>
+            ) : cooldownSeconds > 0 ? (
+              `Aguarde ${cooldownSeconds}s...`
             ) : (
               'Analisar com IA'
             )}

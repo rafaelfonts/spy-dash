@@ -2,8 +2,11 @@ import { CONFIG } from '../config'
 import { ensureAccessToken } from '../auth/tokenManager'
 import { emitter, newsSnapshot } from './marketState'
 import type { EarningsItem } from '../types/market'
+import { cacheGet, cacheSet } from '../lib/cacheStore'
 
 const POLL_INTERVAL = 6 * 60 * 60 * 1000 // 6 hours
+const CACHE_KEY = 'earnings'
+const CACHE_TTL = 23_760_000 // POLL_INTERVAL * 1.1
 
 // Top 10 SPY components by weight (BRK.B encoded for URL)
 const SPY_TOP_SYMBOLS = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOGL', 'LLY', 'AVGO', 'JPM', 'TSLA']
@@ -19,6 +22,14 @@ function daysUntil(dateStr: string | null): number | null {
 }
 
 async function pollEarningsCalendar(): Promise<void> {
+  const cached = await cacheGet<{ items: EarningsItem[]; ts: number }>(CACHE_KEY)
+  if (cached) {
+    newsSnapshot.earnings = cached.items
+    newsSnapshot.earningsTs = cached.ts
+    emitter.emit('newsfeed', { type: 'earnings', items: cached.items, ts: cached.ts })
+    return
+  }
+
   try {
     const token = await ensureAccessToken()
     const symbols = SPY_TOP_SYMBOLS.join(',')
@@ -67,8 +78,9 @@ async function pollEarningsCalendar(): Promise<void> {
     })
 
     newsSnapshot.earnings = items
-
-    emitter.emit('newsfeed', { type: 'earnings', items, ts: Date.now() })
+    newsSnapshot.earningsTs = Date.now()
+    await cacheSet(CACHE_KEY, { items, ts: newsSnapshot.earningsTs }, CACHE_TTL, 'tastytrade')
+    emitter.emit('newsfeed', { type: 'earnings', items, ts: newsSnapshot.earningsTs })
     console.log(`[EarningsCalendar] Updated: ${items.length} symbols with earnings data`)
   } catch (err) {
     console.error('[EarningsCalendar] Error:', (err as Error).message)

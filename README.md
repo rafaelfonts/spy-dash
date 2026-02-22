@@ -28,8 +28,14 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - Endpoint `/health` com idade do dado mais recente
 
 ### Análise por IA (GPT-4o)
-- Análise gerada com contexto real: preço SPY, nível VIX, IV Rank e chain de opções
-- Resposta em streaming via SSE — texto aparece em tempo real
+- Análise gerada com contexto completo enviado no prompt:
+  - **Mercado em tempo real:** preço SPY, variação, VIX (com nível), IV Rank (valor + percentil + label), Fear & Greed (score/100 + label)
+  - **Cadeia de opções:** ATM ±5 strikes com bid/ask de calls e puts para as 3 expirações mais próximas (0, 1, ~7 DTE), buscados via `/api/option-chain` no momento do clique
+  - **Contexto macro (FRED + BLS):** todos os indicadores em cache — CPI, Core CPI, PCE, Fed Funds Rate, Yield Curve, Unemployment, NFP, Average Hourly Earnings, PPI — com direção vs. leitura anterior
+  - **Earnings próximos:** componentes do SPY com earnings em ≤7 dias
+  - **Eventos macro de alto impacto:** próximas 48h com estimativa e valor anterior
+- **System prompt:** "especialista sênior em opções americanas, foco em SPY, análises concisas, objetivas e acionáveis, formato Markdown"
+- Resposta em streaming via SSE — texto aparece em tempo real (max 1 200 tokens)
 - Renderização em Markdown com headers, listas e destaques
 - Idioma padrão: Português
 
@@ -66,9 +72,10 @@ Painel abaixo da Análise IA com cinco fontes de dados agregadas via SSE:
 - Indicador de status da conexão com contagem de reconexões
 
 ### Cadeia de Opções (Option Chain)
-- Dados SPY: calls e puts por DTE (0, 1, 7, 21, 45 dias)
-- Cache em memória de 5 minutos
-- Alimenta automaticamente o prompt de análise da IA
+- Dados SPY: calls e puts por DTE (0, 1, 7, 21, 45 dias) — filtro ±3 dias em relação ao alvo
+- Campos por strike: símbolo, bid, ask (volume, OI, IV e delta não retornados pela API Tastytrade neste endpoint)
+- Cache em memória de 5 minutos no backend (endpoint `GET /api/option-chain`)
+- Incluída automaticamente no prompt da IA ao clicar em "Analisar com IA": o hook `useAIAnalysis` busca `/api/option-chain`, seleciona os 5 strikes mais próximos do ATM para cada uma das 3 expirações mais próximas e inclui bid/ask de calls e puts no contexto enviado ao GPT-4o
 
 ### Autenticação
 - Supabase Auth com email e senha
@@ -171,10 +178,21 @@ Novo cliente SSE conectado:
 
 ```
 Usuário clica "Analisar com IA"
-  → POST /api/analyze (snapshot: SPY, VIX, IV Rank, options chain)
-  → GPT-4o stream
-  → SSE response token a token
-  → Markdown renderizado em tempo real
+  → useAIAnalysis: GET /api/option-chain  (busca strikes ATM, cache 5 min)
+  → useAIAnalysis: lê newsFeed do Zustand  (macro FRED/BLS, Fear&Greed,
+                                            earnings, macroEvents)
+  → POST /api/analyze {
+        marketSnapshot: { spy, vix, ivRank },
+        optionChain:    OptionExpiry[] (ATM ±5 strikes × 3 expirações),
+        context: {
+          fearGreed, macro (FRED), bls (BLS),
+          macroEvents (alto impacto, 48h),
+          earnings (≤7 dias)
+        }
+      }
+  → buildPrompt() monta texto estruturado com todos os dados acima
+  → GPT-4o (gpt-4o, max_tokens: 1200, system prompt em PT)
+  → SSE stream token a token → Markdown renderizado em tempo real
 ```
 
 ---
@@ -185,10 +203,38 @@ Usuário clica "Analisar com IA"
 
 | Endpoint | Método | Auth | Descrição |
 |---|---|---|---|
-| `/health` | GET | — | Status do servidor e idade do dado |
+| `/health` | GET | — | Status binário: `{ "status": "ok" \| "degraded" }` |
+| `/health/details` | GET | `X-Health-Token` | Detalhes completos: dataAge, circuit breakers, SSE clients, uptime |
 | `/stream/market` | GET (SSE) | JWT | Stream de todos os eventos de mercado |
 | `/api/analyze` | POST (SSE) | JWT | Análise GPT-4o em streaming |
 | `/api/option-chain` | GET | JWT | Snapshot da cadeia de opções SPY |
+
+### Health Endpoints
+
+O endpoint de health é dividido em dois níveis para não vazar informação operacional publicamente.
+
+**Público — apenas status binário**
+```bash
+curl http://localhost:3001/health
+# → { "status": "ok" }
+# → { "status": "degraded" }  (WebSocket não conectado ou algum circuit breaker OPEN)
+```
+
+**Protegido — detalhes completos** (requer header `X-Health-Token`)
+```bash
+HEALTH_SECRET=$(grep HEALTH_SECRET backend/.env | cut -d= -f2)
+curl -H "X-Health-Token: $HEALTH_SECRET" http://localhost:3001/health/details
+# → {
+#     "status": "ok",
+#     "dataAge": { "spy": 2, "vix": 2, "ivRank": 45 },
+#     "circuitBreakers": { "fred": "CLOSED", "bls": "CLOSED", "cnn": "CLOSED" },
+#     "sseClients": 3,
+#     "uptime": 3600
+#   }
+```
+
+O `HEALTH_SECRET` é gerado com `openssl rand -hex 32` e definido em `backend/.env`.
+Use `GET /health` para healthchecks de container e uptime monitoring externo.
 
 ### Eventos SSE (`/stream/market`)
 
@@ -294,6 +340,10 @@ BLS_API_KEY=<sua_key>
 PORT=3001
 CORS_ORIGIN=http://localhost:5173
 
+# Health check secret — protege GET /health/details
+# Gere com: openssl rand -hex 32
+HEALTH_SECRET=<gere_com_openssl_rand_hex_32>
+
 # Supabase
 SUPABASE_URL=https://<projeto>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service_role_key>
@@ -368,8 +418,8 @@ npm run preview # Preview do build de produção
 
 **UI & Autenticação:**
 - Dashboard React com 3 cards de métricas (SPY, VIX, IV Rank)
-- Painel "Análise IA" com GPT-4o streaming
-- Painel "Feed de Mercado" com 5 seções em layout responsivo
+- Painel "Análise IA" com GPT-4o streaming e contexto completo (opções, macro, Fear & Greed, earnings, eventos)
+- Painel "Feed de Mercado" com 6 seções em layout de 3 colunas
 - Supabase Auth com email/senha (JWT validado no backend)
 - Animações Framer Motion + Tailwind dark theme
 - Skeletons de carregamento + Sparklines Recharts

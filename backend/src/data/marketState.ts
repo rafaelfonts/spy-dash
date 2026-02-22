@@ -11,6 +11,7 @@ import type {
   MacroEvent,
   NewsHeadline,
 } from '../types/market'
+import { persistPriceTick } from './priceHistory'
 
 const MAX_HISTORY = 60
 
@@ -73,7 +74,23 @@ export const newsSnapshot: {
   fearGreed: FearGreedData | null
   macroEvents: MacroEvent[]
   headlines: NewsHeadline[]
-} = { earnings: [], macro: [], bls: [], fearGreed: null, macroEvents: [], headlines: [] }
+  // Timestamps (ms epoch) of the last successful poll for each category
+  macroTs: number
+  blsTs: number
+  macroEventsTs: number
+  earningsTs: number
+} = {
+  earnings: [],
+  macro: [],
+  bls: [],
+  fearGreed: null,
+  macroEvents: [],
+  headlines: [],
+  macroTs: 0,
+  blsTs: 0,
+  macroEventsTs: 0,
+  earningsTs: 0,
+}
 
 export function updateSPY(data: Partial<SPYData>): void {
   Object.assign(marketState.spy, data, { lastUpdated: Date.now() })
@@ -90,6 +107,13 @@ export function updateSPY(data: Partial<SPYData>): void {
     if (change !== null && last - change !== 0) {
       marketState.spy.changePct = (change / (last - change)) * 100
     }
+
+    persistPriceTick('SPY', {
+      price: last,
+      bid: marketState.spy.bid,
+      ask: marketState.spy.ask,
+      volume: marketState.spy.volume,
+    })
   }
 
   emitter.emit('quote', {
@@ -122,6 +146,13 @@ export function updateVIX(data: Partial<VIXData>): void {
     if (change !== null && last - change !== 0) {
       marketState.vix.changePct = (change / (last - change)) * 100
     }
+
+    persistPriceTick('VIX', {
+      price: last,
+      bid: null,
+      ask: null,
+      volume: null,
+    })
   }
 
   emitter.emit('vix', {

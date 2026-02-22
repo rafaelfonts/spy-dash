@@ -13,8 +13,13 @@ import { startBlsPoller } from './data/blsPoller'
 import { registerSSE } from './api/sse'
 import { registerOpenAI } from './api/openai'
 import { registerHealth } from './api/health'
+import { registerPriceHistory } from './api/priceHistory'
 import { getOptionChain } from './data/optionChain'
 import { requireAuth } from './middleware/authMiddleware'
+import { restoreSnapshotsFromCache } from './lib/restoreCache'
+import { restorePriceHistory } from './data/priceHistory'
+import { cleanupExpiredCache } from './lib/cacheStore'
+import { getBreakerStatuses, resetBreaker, listBreakers } from './lib/circuitBreaker'
 
 const fastify = Fastify({
   logger: {
@@ -50,8 +55,23 @@ async function bootstrap(): Promise<void> {
     app.addHook('preHandler', requireAuth)
     await registerSSE(app)
     await registerOpenAI(app)
+    await registerPriceHistory(app)
     app.get('/api/option-chain', async () => {
-      return { data: await getOptionChain() }
+      return await getOptionChain()
+    })
+
+    // Admin: circuit breaker management (requires auth)
+    app.get('/admin/breakers', async () => {
+      return { circuitBreakers: getBreakerStatuses(), breakers: listBreakers() }
+    })
+    app.post('/admin/breakers/:name/reset', async (request, reply) => {
+      const { name } = request.params as { name: string }
+      const ok = resetBreaker(name)
+      if (!ok) {
+        reply.code(404)
+        return { error: `Circuit breaker '${name}' not found` }
+      }
+      return { ok: true, name, status: 'CLOSED' }
     })
   })
 
@@ -60,6 +80,13 @@ async function bootstrap(): Promise<void> {
   console.log(`\n🚀 SPY Dash backend running on http://localhost:${CONFIG.PORT}`)
   console.log(`   Health: http://localhost:${CONFIG.PORT}/health`)
   console.log(`   Stream: http://localhost:${CONFIG.PORT}/stream/market\n`)
+
+  // Restore cached market snapshots before pollers start (independent of Tastytrade token)
+  await restoreSnapshotsFromCache()
+  await restorePriceHistory()
+
+  // Daily cleanup of expired cache entries
+  setInterval(() => cleanupExpiredCache().catch(console.error), 24 * 60 * 60 * 1000)
 
   // Initialize token and start streaming
   console.log('[Bootstrap] Initializing Tastytrade OAuth2...')
