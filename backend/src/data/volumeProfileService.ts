@@ -15,6 +15,10 @@
 
 import { getTradierClient } from '../lib/tradierClient'
 import { CONFIG } from '../config'
+import { cacheSet } from '../lib/cacheStore'
+
+const CACHE_TTL_MS = 120_000  // 2min
+const cacheKey = (symbol: string) => `volume_profile:${symbol}`
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -232,7 +236,11 @@ export async function buildVolumeProfile(
     )
   }
 
-  return computeProfile(s.buckets, s.barCount, s.sessionStart)
+  const result = computeProfile(s.buckets, s.barCount, s.sessionStart)
+  if (result.barsProcessed > 0) {
+    await cacheSet(cacheKey(symbol), result, CACHE_TTL_MS, 'volume-profile')
+  }
+  return result
 }
 
 /**

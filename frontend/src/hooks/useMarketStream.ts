@@ -79,6 +79,7 @@ export function useMarketStream(): void {
           updateIVRank({
             value: data.ivRank,
             percentile: data.ivPercentile,
+            ivx: data.ivx ?? null,
             label: data.label,
           })
         } catch {

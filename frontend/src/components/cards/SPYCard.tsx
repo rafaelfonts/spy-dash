@@ -32,7 +32,7 @@ export const SPYCard = memo(function SPYCard() {
 
   return (
     <motion.div
-      className="card"
+      className="card flex flex-col"
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: 'easeOut' }}
@@ -112,7 +112,7 @@ export const SPYCard = memo(function SPYCard() {
       </div>
 
       {/* Sparkline */}
-      <div className="border-t border-border-subtle pt-3">
+      <div className="mt-auto border-t border-border-subtle pt-3">
         <PriceSparkline data={sparkData} height={52} showTooltip />
       </div>
     </motion.div>

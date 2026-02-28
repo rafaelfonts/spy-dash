@@ -1,6 +1,10 @@
 import { getTradierClient } from '../lib/tradierClient'
 import { resolveNearestExpiration } from './gexService'
 import { CONFIG } from '../config'
+import { cacheGet, cacheSet } from '../lib/cacheStore'
+
+const CACHE_TTL_MS = 90_000  // 90s
+const cacheKey = (symbol: string) => `put_call_ratio:${symbol}`
 
 export interface PutCallRatioResult {
   ratio: number              // putVolume / callVolume (0 if callVolume === 0)
@@ -22,6 +26,9 @@ export async function calculatePutCallRatio(symbol: string): Promise<PutCallRati
     console.warn('[PutCallRatio] TRADIER_API_KEY not set — skipping P/C calculation')
     return null
   }
+
+  const cached = await cacheGet<PutCallRatioResult>(cacheKey(symbol))
+  if (cached) return cached
 
   const expiration = await resolveNearestExpiration(symbol)
   if (!expiration) {
@@ -50,7 +57,7 @@ export async function calculatePutCallRatio(symbol: string): Promise<PutCallRati
     `puts=${putVolume.toLocaleString('en-US')} calls=${callVolume.toLocaleString('en-US')}`,
   )
 
-  return {
+  const result: PutCallRatioResult = {
     ratio,
     putVolume,
     callVolume,
@@ -58,4 +65,6 @@ export async function calculatePutCallRatio(symbol: string): Promise<PutCallRati
     expiration,
     calculatedAt: new Date().toISOString(),
   }
+  await cacheSet(cacheKey(symbol), result, CACHE_TTL_MS, 'put-call-ratio')
+  return result
 }

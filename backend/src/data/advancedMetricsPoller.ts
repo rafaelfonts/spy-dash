@@ -16,28 +16,11 @@ import { buildVolumeProfile } from './volumeProfileService'
 import { calculatePutCallRatio } from './putCallRatio'
 import { publishAdvancedMetrics } from './advancedMetricsState'
 import type { AdvancedMetricsPayload } from './advancedMetricsState'
+import { isMarketOpen } from '../lib/time'
 
 const SYMBOL = 'SPY'
 const POLL_INTERVAL_MS   = 60_000   // 60 s during market hours
 const OFFHOURS_INTERVAL_MS = 5 * 60_000  // 5 min outside market hours
-
-// ---------------------------------------------------------------------------
-// Market hours helper (ET, DST-aware)
-// ---------------------------------------------------------------------------
-
-function isMarketOpen(): boolean {
-  const now = new Date()
-  const day = now.getUTCDay()
-  if (day === 0 || day === 6) return false    // weekend
-
-  const jan = new Date(now.getFullYear(), 0, 1).getTimezoneOffset()
-  const jul = new Date(now.getFullYear(), 6, 1).getTimezoneOffset()
-  const isDst = now.getTimezoneOffset() < Math.max(jan, jul)
-  const etOffset = isDst ? -4 : -5
-
-  const etMinutes = (now.getUTCHours() + etOffset) * 60 + now.getUTCMinutes()
-  return etMinutes >= 570 && etMinutes < 960  // 09:30–16:00 ET
-}
 
 // ---------------------------------------------------------------------------
 // Single poll tick

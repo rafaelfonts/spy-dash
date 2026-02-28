@@ -183,6 +183,7 @@ export interface VIXData {
 export interface IVRankData {
   value: number | null
   percentile: number | null
+  ivx: number | null           // Tastytrade composite IV index (absolute level, e.g. 24.8%)
   label: 'low' | 'medium' | 'high' | null
   lastUpdated: number
 }
@@ -260,6 +261,7 @@ const initialVIX: VIXData = {
 const initialIVRank: IVRankData = {
   value: null,
   percentile: null,
+  ivx: null,
   label: null,
   lastUpdated: 0,
 }

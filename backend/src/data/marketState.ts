@@ -53,6 +53,7 @@ export const marketState: MarketState = {
   ivRank: {
     value: null,
     percentile: null,
+    ivx: null,
     label: null,
     lastUpdated: 0,
   },
@@ -177,6 +178,7 @@ export function updateIVRank(data: Partial<IVRankData>): void {
   emitter.emit('ivrank', {
     ivRank: marketState.ivRank.value,
     ivPercentile: marketState.ivRank.percentile,
+    ivx: marketState.ivRank.ivx,
     label: marketState.ivRank.label,
     timestamp: marketState.ivRank.lastUpdated,
   })

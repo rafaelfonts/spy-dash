@@ -2,8 +2,11 @@ import { CONFIG } from '../config'
 import { updateVIX, marketState } from './marketState'
 import { createBreaker } from '../lib/circuitBreaker'
 import { getTradierClient } from '../lib/tradierClient'
+import { cacheSet } from '../lib/cacheStore'
 
 const POLL_INTERVAL = 5 * 60 * 1000 // 5 minutes
+const CACHE_KEY = 'vix_snapshot'
+const CACHE_TTL_MS = 330_000  // 330s = 5min × 1.1
 // DXFeed is considered stale if it hasn't updated VIX in this window
 const DXFEED_STALE_MS = 5 * 60 * 1000
 
@@ -66,6 +69,7 @@ async function pollVIX(): Promise<void> {
       const quote = (await vixBreaker.fire()) as FinnhubQuote | null
       if (quote) {
         updateVIX({ last: quote.c, change: quote.d })
+        await cacheSet(CACHE_KEY, { last: quote.c, change: quote.d }, CACHE_TTL_MS, 'vix-poller')
         console.log(`[VIXPoller] VIX=${quote.c.toFixed(2)} change=${quote.d >= 0 ? '+' : ''}${quote.d.toFixed(2)} (Finnhub)`)
         return
       }
@@ -78,6 +82,7 @@ async function pollVIX(): Promise<void> {
   const tradierVIX = await fetchVIXFromTradier()
   if (tradierVIX) {
     updateVIX({ last: tradierVIX.last, change: tradierVIX.change })
+    await cacheSet(CACHE_KEY, { last: tradierVIX.last, change: tradierVIX.change }, CACHE_TTL_MS, 'vix-poller')
     console.log(`[VIXPoller] VIX=${tradierVIX.last.toFixed(2)} (Tradier fallback)`)
   }
 }

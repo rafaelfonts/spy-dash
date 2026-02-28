@@ -134,6 +134,7 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
       client.write('ivrank', {
         ivRank: marketState.ivRank.value,
         ivPercentile: marketState.ivRank.percentile,
+        ivx: marketState.ivRank.ivx,
         label: marketState.ivRank.label,
         timestamp: marketState.ivRank.lastUpdated,
       })

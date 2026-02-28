@@ -18,6 +18,8 @@ import { registerSSE } from './api/sse'
 import { registerOpenAI } from './api/openai'
 import { registerHealth } from './api/health'
 import { registerPriceHistory } from './api/priceHistory'
+import { registerGex } from './api/gex'
+import { registerVolumeProfile } from './api/volumeProfile'
 import { getOptionChain } from './data/optionChain'
 import { requireAuth } from './middleware/authMiddleware'
 import { restoreSnapshotsFromCache } from './lib/restoreCache'
@@ -60,6 +62,8 @@ async function bootstrap(): Promise<void> {
     await registerSSE(app)
     await registerOpenAI(app)
     await registerPriceHistory(app)
+    await registerGex(app)
+    await registerVolumeProfile(app)
     app.get('/api/option-chain', async () => {
       return await getOptionChain()
     })

@@ -27,4 +27,5 @@ export const CONFIG = {
   TRADIER_API_KEY: process.env.TRADIER_API_KEY ?? '',
   TRADIER_BASE_URL: process.env.TRADIER_BASE_URL ?? 'https://sandbox.tradier.com',
   ALPHA_VANTAGE_KEY: process.env.ALPHA_VANTAGE_KEY ?? '',
+  REDIS_URL: process.env.REDIS_URL ?? '',
 } as const

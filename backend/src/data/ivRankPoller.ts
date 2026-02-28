@@ -1,8 +1,11 @@
 import { CONFIG } from '../config'
 import { ensureAccessToken } from '../auth/tokenManager'
 import { updateIVRank } from './marketState'
+import { cacheGet, cacheSet } from '../lib/cacheStore'
 
 const POLL_INTERVAL = 60_000
+const CACHE_KEY = 'ivrank_snapshot'
+const CACHE_TTL_MS = 90_000  // 90s = 60s × 1.5
 
 // API returns numeric fields as strings (e.g. "0.128494281") — parse explicitly.
 function toFloat(v: unknown): number | null {
@@ -13,6 +16,12 @@ function toFloat(v: unknown): number | null {
 
 async function pollIVRank(): Promise<void> {
   try {
+    const cached = await cacheGet<{ value: number; percentile: number | null; ivx: number | null }>(CACHE_KEY)
+    if (cached) {
+      updateIVRank(cached)
+      return
+    }
+
     const token = await ensureAccessToken()
 
     const res = await fetch(`${CONFIG.TT_BASE}/market-metrics?symbols=SPY`, {
@@ -41,12 +50,29 @@ async function pollIVRank(): Promise<void> {
 
     const ivPercentile = toFloat(item['implied-volatility-percentile'])
 
+    // IVx — Tastytrade composite implied volatility index (absolute level, 0–1 decimal → %)
+    const ivxRaw = toFloat(item['implied-volatility-index'])
+
+    // Diagnostic log — raw IV fields from Tastytrade /market-metrics
+    console.log('[IVRankPoller] Raw fields:', {
+      'implied-volatility-index': item['implied-volatility-index'],
+      'implied-volatility-index-rank': item['implied-volatility-index-rank'],
+      'tw-implied-volatility-index-rank': item['tw-implied-volatility-index-rank'],
+      'implied-volatility-percentile': item['implied-volatility-percentile'],
+    })
+
     if (ivRank !== null) {
-      updateIVRank({
+      const payload = {
         value: ivRank * 100,
         percentile: ivPercentile !== null ? ivPercentile * 100 : null,
-      })
-      console.log(`[IVRankPoller] IV Rank: ${(ivRank * 100).toFixed(1)}%`)
+        ivx: ivxRaw !== null ? ivxRaw * 100 : null,
+      }
+      updateIVRank(payload)
+      await cacheSet(CACHE_KEY, payload, CACHE_TTL_MS, 'tastytrade')
+      console.log(
+        `[IVRankPoller] IV Rank: ${payload.value.toFixed(1)}%` +
+        ` | IVx: ${payload.ivx !== null ? payload.ivx.toFixed(1) : 'N/A'}`,
+      )
     }
   } catch (err) {
     console.error('[IVRankPoller] Error:', (err as Error).message)

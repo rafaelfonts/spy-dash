@@ -55,36 +55,14 @@ function getRiskFreeRate(): number {
  * Prefers today's date (0DTE); otherwise the first future expiration.
  */
 export async function resolveNearestExpiration(symbol: string): Promise<string | null> {
-  const url =
-    `${CONFIG.TRADIER_BASE_URL}/v1/markets/options/expirations` +
-    `?symbol=${encodeURIComponent(symbol)}&includeAllRoots=true`
+  const expirations = await getTradierClient().getExpirations(symbol)
+  if (expirations.length === 0) return null
 
-  try {
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${CONFIG.TRADIER_API_KEY}`,
-        Accept: 'application/json',
-      },
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const today = new Date().toISOString().slice(0, 10)
+  if (expirations.includes(today)) return today
 
-    const json = (await res.json()) as {
-      expirations?: { date: string | string[] } | null
-    }
-
-    const raw = json.expirations?.date
-    const expirations: string[] = Array.isArray(raw) ? raw : raw ? [raw] : []
-    if (expirations.length === 0) return null
-
-    const today = new Date().toISOString().slice(0, 10)
-    if (expirations.includes(today)) return today
-
-    const future = expirations.filter((d) => d >= today).sort()
-    return future[0] ?? null
-  } catch (err) {
-    console.error('[GexService] Failed to fetch expirations:', (err as Error).message)
-    return null
-  }
+  const future = expirations.filter((d) => d >= today).sort()
+  return future[0] ?? null
 }
 
 // ---------------------------------------------------------------------------

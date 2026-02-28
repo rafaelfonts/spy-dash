@@ -31,7 +31,7 @@ export function persistPriceTick(symbol: string, tick: PriceTick): void {
       price: tick.price,
       bid: tick.bid,
       ask: tick.ask,
-      volume: tick.volume,
+      volume: tick.volume !== null ? Math.trunc(tick.volume) : null,
     })
     .then(({ error }) => {
       if (error) console.error('[PriceHistory] Insert falhou:', error.message)

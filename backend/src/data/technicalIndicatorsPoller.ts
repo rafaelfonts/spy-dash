@@ -12,6 +12,11 @@
 import { CONFIG } from '../config'
 import { publishTechnicalData } from './technicalIndicatorsState'
 import type { TechnicalData } from './technicalIndicatorsState'
+import { isMarketOpen } from '../lib/time'
+import { cacheGet, cacheSet } from '../lib/cacheStore'
+
+const CACHE_KEY = 'technical_indicators:SPY'
+const CACHE_TTL_MS = 60 * 60_000  // 60min
 
 const BASE = 'https://www.alphavantage.co/query'
 const SYMBOL = 'SPY'
@@ -128,27 +133,12 @@ async function tick(): Promise<void> {
   }
 
   publishTechnicalData(data)
+  await cacheSet(CACHE_KEY, data, CACHE_TTL_MS, 'alpha-vantage')
   console.log(
     `[TechIndicators] Published — RSI=${data.rsi14.toFixed(2)} ` +
     `MACD_hist=${data.macd.histogram.toFixed(4)} ` +
     `BB_mid=${data.bbands.middle.toFixed(2)}`,
   )
-}
-
-// ---------------------------------------------------------------------------
-// Market hours helper (ET, DST-aware) — mirrors advancedMetricsPoller
-// ---------------------------------------------------------------------------
-
-function isMarketOpen(): boolean {
-  const now = new Date()
-  const day = now.getUTCDay()
-  if (day === 0 || day === 6) return false
-  const jan = new Date(now.getFullYear(), 0, 1).getTimezoneOffset()
-  const jul = new Date(now.getFullYear(), 6, 1).getTimezoneOffset()
-  const isDst = now.getTimezoneOffset() < Math.max(jan, jul)
-  const etOffset = isDst ? -4 : -5
-  const etMinutes = (now.getUTCHours() + etOffset) * 60 + now.getUTCMinutes()
-  return etMinutes >= 570 && etMinutes < 960  // 09:30–16:00 ET
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +165,14 @@ export function startTechnicalIndicatorsPoller(): void {
   }
   console.log('[TechIndicators] Starting poller (rotation: RSI→MACD→BBANDS, 15min)')
   Promise.resolve()
+    .then(async () => {
+      const cached = await cacheGet<TechnicalData>(CACHE_KEY)
+      if (cached) {
+        Object.assign(acc, cached)
+        publishTechnicalData(cached)
+        console.log('[TechIndicators] Restored from cache')
+      }
+    })
     .then(() => tick())
     .catch((e) => console.error('[TechIndicators] Initial tick error:', e))
     .finally(scheduleNext)

@@ -30,7 +30,7 @@ export const VIXCard = memo(function VIXCard() {
 
   return (
     <motion.div
-      className="card"
+      className="card flex flex-col"
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: 'easeOut', delay: 0.14 }}
@@ -102,7 +102,7 @@ export const VIXCard = memo(function VIXCard() {
       </div>
 
       {/* Sparkline */}
-      <div className="border-t border-border-subtle pt-3">
+      <div className="mt-auto border-t border-border-subtle pt-3">
         <PriceSparkline
           data={sparkData}
           color={vix.level === 'high' ? '#ff4444' : '#ffcc00'}

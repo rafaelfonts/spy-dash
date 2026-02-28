@@ -2,6 +2,7 @@ import { CONFIG } from '../config'
 import { ensureAccessToken } from '../auth/tokenManager'
 import { marketState, newsSnapshot } from './marketState'
 import { calcDelta, calcGamma, calcTheta, calcVega } from '../lib/blackScholes'
+import { isMarketOpen } from '../lib/time'
 
 export interface OptionExpiry {
   dte: number
@@ -64,25 +65,6 @@ export function getOptionChainCapturedAt(): number {
 /** Returns the cached option chain data, or null if not yet fetched. */
 export function getOptionChainSnapshot(): OptionExpiry[] | null {
   return optionChainCache?.data ?? null
-}
-
-// ─── Market-hours helpers ─────────────────────────────────────────────────────
-
-function isDst(date: Date): boolean {
-  // Simplified DST detection: US observes DST from second Sunday of March
-  // through first Sunday of November.
-  const jan = new Date(date.getFullYear(), 0, 1).getTimezoneOffset()
-  const jul = new Date(date.getFullYear(), 6, 1).getTimezoneOffset()
-  return date.getTimezoneOffset() < Math.max(jan, jul)
-}
-
-function isMarketOpen(): boolean {
-  const now = new Date()
-  const day = now.getUTCDay() // 0 = Sun, 6 = Sat
-  if (day === 0 || day === 6) return false
-  const etOffset = isDst(now) ? -4 : -5
-  const etMinutes = (now.getUTCHours() + etOffset) * 60 + now.getUTCMinutes()
-  return etMinutes >= 570 && etMinutes < 960 // 09:30–16:00 ET
 }
 
 // ─── Cache staleness ──────────────────────────────────────────────────────────

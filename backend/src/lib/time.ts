@@ -1,4 +1,20 @@
 /**
+ * Returns true if US equity markets are currently open (09:30–16:00 ET, Mon–Fri).
+ * DST-aware: detects EDT (UTC-4) vs EST (UTC-5) using January/July offset comparison.
+ */
+export function isMarketOpen(): boolean {
+  const now = new Date()
+  const day = now.getUTCDay()
+  if (day === 0 || day === 6) return false
+  const jan = new Date(now.getFullYear(), 0, 1).getTimezoneOffset()
+  const jul = new Date(now.getFullYear(), 6, 1).getTimezoneOffset()
+  const isDst = now.getTimezoneOffset() < Math.max(jan, jul)
+  const etOffset = isDst ? -4 : -5
+  const etMinutes = (now.getUTCHours() + etOffset) * 60 + now.getUTCMinutes()
+  return etMinutes >= 570 && etMinutes < 960 // 09:30–16:00 ET
+}
+
+/**
  * Converts an ISO 8601 date string to a human-readable freshness label
  * used inside AI prompts to communicate data age.
  *

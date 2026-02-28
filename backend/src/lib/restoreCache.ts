@@ -1,5 +1,5 @@
 import { cacheGet } from './cacheStore'
-import { emitter, newsSnapshot } from '../data/marketState'
+import { emitter, newsSnapshot, updateIVRank, updateVIX } from '../data/marketState'
 import type {
   FearGreedData,
   MacroDataItem,
@@ -26,13 +26,15 @@ interface CachedEarnings {
 export async function restoreSnapshotsFromCache(): Promise<void> {
   console.log('[Cache] Restaurando snapshots do Supabase...')
 
-  const [fg, fred, bls, headlines, events, earnings] = await Promise.allSettled([
+  const [fg, fred, bls, headlines, events, earnings, ivrank, vix] = await Promise.allSettled([
     cacheGet<FearGreedData>('fear_greed'),
     cacheGet<CachedMacro>('fred_macro'),
     cacheGet<CachedMacro>('bls_macro'),
     cacheGet<NewsHeadline[]>('gnews_headlines'),
     cacheGet<CachedEvents>('macro_events'),
     cacheGet<CachedEarnings>('earnings'),
+    cacheGet<{ value: number; percentile: number | null; ivx: number | null }>('ivrank_snapshot'),
+    cacheGet<{ last: number; change: number }>('vix_snapshot'),
   ])
 
   if (fg.status === 'fulfilled' && fg.value) {
@@ -85,5 +87,15 @@ export async function restoreSnapshotsFromCache(): Promise<void> {
       ts: earnings.value.ts,
     })
     console.log('[Cache] ✓ earnings restored')
+  }
+
+  if (ivrank.status === 'fulfilled' && ivrank.value) {
+    updateIVRank(ivrank.value)
+    console.log('[Cache] ✓ ivrank restored')
+  }
+
+  if (vix.status === 'fulfilled' && vix.value) {
+    updateVIX(vix.value)
+    console.log('[Cache] ✓ vix restored')
   }
 }

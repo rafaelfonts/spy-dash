@@ -8,7 +8,7 @@ Dashboard de trading em tempo real focado em opções de SPY, com streaming de d
 
 SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análise GPT-4o e um feed de contexto completo (earnings, dados macro, eventos econômicos, headlines, sentimento de mercado, GEX, Volume Profile, VIX Term Structure e indicadores técnicos), entregando um painel profissional para operadores de opções que precisam de velocidade e contexto ao mesmo tempo.
 
-**Stack:** React 18 + Vite no frontend, Fastify + TypeScript no backend, comunicação via Server-Sent Events (SSE).
+**Stack:** React 18 + Vite no frontend, Fastify + TypeScript no backend, comunicação via Server-Sent Events (SSE). Cache de dados de mercado em Redis (ioredis), persistência de usuário e autenticação via Supabase.
 
 ---
 
@@ -161,7 +161,9 @@ SPY Dash/
 │       │   ├── health.ts       # Status do servidor (público + protegido)
 │       │   ├── openai.ts       # Análise GPT-4o em streaming (buildPrompt + buildTechBlock)
 │       │   ├── sse.ts          # Stream de mercado SSE (broadcast global + por usuário)
-│       │   └── priceHistory.ts # GET /api/price-history
+│       │   ├── priceHistory.ts # GET /api/price-history
+│       │   ├── gex.ts          # GET /api/gex (snapshot) + /api/gex/detail (full Redis cache)
+│       │   └── volumeProfile.ts # GET /api/volume-profile (snapshot) + /detail (full)
 │       ├── auth/               # OAuth2 Tastytrade
 │       │   ├── tokenManager.ts # Refresh automático de tokens
 │       │   └── streamerToken.ts
@@ -198,10 +200,11 @@ SPY Dash/
 │       ├── lib/                # Utilitários
 │       │   ├── circuitBreaker.ts    # Opossum wrapper: CLOSED/HALF_OPEN/OPEN; registry global
 │       │   ├── confidenceScorer.ts  # Score 0.0–1.0 por fonte (frescor × CB multiplier)
-│       │   ├── cacheStore.ts        # Cache em memória com TTL, namespace por fonte
-│       │   ├── restoreCache.ts      # Restaura snapshots de cache no startup do servidor
+│       │   ├── cacheStore.ts        # Cache Redis (ioredis) com TTL automático; prefixo cache:
+│       │   ├── restoreCache.ts      # Restaura 8 chaves Redis no startup (incluindo ivrank + vix)
 │       │   ├── sseBatcher.ts        # Batch de eventos newsfeed em janela de 500ms
-│       │   ├── tradierClient.ts     # TradierClient: getQuotes(), getTimeSales(), getOptionChain()
+│       │   ├── time.ts              # isMarketOpen() DST-aware ET — compartilhado entre pollers
+│       │   ├── tradierClient.ts     # TradierClient singleton: getQuotes(), getTimeSales(), getOptionChain(), getExpirations()
 │       │   └── gexCalculator.ts     # Black-Scholes gamma: Nd1(), calcGamma(), buildProfile()
 │       └── types/
 │           └── market.ts       # Interfaces TypeScript (todos os tipos compartilhados)
@@ -344,6 +347,27 @@ Novo cliente SSE conectado:
   → snapshot imediato de advanced-metrics + vix-term-structure
 ```
 
+### Cache Redis — Cobertura e TTLs
+
+| Chave | Dado | TTL | Fonte | Restaurado no startup? |
+|---|---|---|---|---|
+| `tradier:chain:<sym>:<exp>` | Option chain completa | 5min | Tradier | — |
+| `tradier:timesales:<sym>` | Bars 1min (time & sales) | 30s | Tradier | — |
+| `tradier:quotes:<syms>` | Quotes (last, change) | 30s | Tradier | — |
+| `tradier:expirations:<sym>` | Datas de expiração | 60s | Tradier | — |
+| `gex:daily:<sym>` | GEX completo por strike | 5min | Tradier | — |
+| `volume_profile:<sym>` | POC / VAH / VAL / buckets | 2min | Tradier | — |
+| `put_call_ratio:<sym>` | Ratio puts/calls + label | 90s | Tradier | — |
+| `ivrank_snapshot` | IV Rank % + percentil + IVx | 90s | Tastytrade | ✓ |
+| `vix_snapshot` | VIX last + change | 330s | Finnhub/Tradier | ✓ |
+| `technical_indicators:SPY` | RSI14 + MACD + BBANDS | 60min | Alpha Vantage | ✓ (via poller start) |
+| `fear_greed` | Score CNN 0–100 | 4h | CNN | ✓ |
+| `fred_macro` | CPI/PCE/Fed Rate/Yield | 24h | FRED | ✓ |
+| `bls_macro` | NFP/Desemprego/PPI/AHE | 24h | BLS | ✓ |
+| `gnews_headlines` | 10 headlines filtradas | 30min | GNews | ✓ |
+| `macro_events` | Calendário econômico US | 1h | Finnhub | ✓ |
+| `earnings` | Earnings top 10 SPY | 6h | Tastytrade | ✓ |
+
 ### Circuit Breakers
 
 Todos os pollers de APIs externas são protegidos por `circuitBreaker.ts` (wrapper de `opossum`):
@@ -384,6 +408,10 @@ Todos os pollers de APIs externas são protegidos por `circuitBreaker.ts` (wrapp
 | `/api/analyze` | POST (SSE) | JWT | Análise GPT-4o em streaming |
 | `/api/option-chain` | GET | JWT | Snapshot da cadeia de opções SPY |
 | `/api/price-history` | GET | JWT | Histórico de preços por símbolo |
+| `/api/gex` | GET | JWT | Snapshot GEX atual (in-memory, atualizado a cada 60s) |
+| `/api/gex/detail` | GET | JWT | GEX completo com todos os strikes (lê do cache Redis) |
+| `/api/volume-profile` | GET | JWT | Snapshot Volume Profile atual (in-memory, atualizado a cada 60s) |
+| `/api/volume-profile/detail` | GET | JWT | Volume Profile completo com todos os buckets |
 | `/admin/breakers` | GET | JWT | Lista circuit breakers com status e nomes |
 | `/admin/breakers/:name/reset` | POST | JWT | Reseta manualmente um circuit breaker para CLOSED |
 
@@ -452,7 +480,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3001/admin/break
 | TypeScript | 5.3 | Linguagem |
 | ws | — | WebSocket DXFeed |
 | OpenAI SDK | — | GPT-4o + GPT-4o-mini + text-embedding-3-small |
-| Supabase Admin SDK | — | Validação JWT + persistência análises |
+| ioredis | — | Cache de dados de mercado (Redis) |
+| Supabase Admin SDK | — | Validação JWT + persistência análises + histórico de preços |
 | opossum | — | Circuit breakers |
 | dotenv | — | Configuração |
 
@@ -479,7 +508,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3001/admin/break
 | DXFeed | Quotes SPY/VIX em tempo real via WebSocket | Via Tastytrade |
 | Tradier API | GEX (option chain), Volume Profile (time-sales), VIX fallback, SPY price history | Sim |
 | OpenAI | GPT-4o (análise), GPT-4o-mini (resumos), text-embedding-3-small | Sim |
-| Supabase | Autenticação JWT + persistência análises IA | Sim |
+| Redis Cloud | Cache de dados de mercado com TTL automático | Sim (gratuito em redis.io/try-free) |
+| Supabase | Autenticação JWT + persistência análises IA + histórico de preços | Sim |
 | FRED (Federal Reserve) | CPI, PCE, Fed Rate, Yield Curve | Sim (gratuita) |
 | Finnhub | VIX quote (fallback), calendário econômico prospectivo | Sim (gratuita) |
 | GNews | Headlines de mercado em tempo real | Sim (gratuita) |
@@ -497,6 +527,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3001/admin/break
 - Conta Tastytrade com acesso à API
 - Conta Tradier com acesso à API (production: `api.tradier.com`)
 - API Key OpenAI com acesso ao GPT-4o
+- Banco Redis Cloud (gratuito em redis.io/try-free — 30MB, sem configuração adicional)
 - Projeto Supabase (gratuito em supabase.com) com tabelas `price_ticks`, `price_sparkline`, `ai_analyses`
 - API Key FRED (gratuita em fred.stlouisfed.org/docs/api/fred/)
 - API Key Finnhub (gratuita em finnhub.io)
@@ -543,7 +574,11 @@ CORS_ORIGIN=http://localhost:5173
 # Gere com: openssl rand -hex 32
 HEALTH_SECRET=<gere_com_openssl_rand_hex_32>
 
-# Supabase
+# Redis (cache de dados de mercado — GEX, Tradier, FRED, CNN, etc.)
+# Formato: redis://default:SENHA@HOST:PORTA  (obtido no painel Redis Cloud)
+REDIS_URL=redis://default:<senha>@<host>:<porta>
+
+# Supabase (auth, AI memory, price history)
 SUPABASE_URL=https://<projeto>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service_role_key>
 ```
@@ -637,11 +672,13 @@ npm run preview # Preview do build de produção
 
 **Infraestrutura:**
 - Circuit breakers para todas as APIs externas (opossum)
-- Cache em memória com TTL por fonte (`cacheStore.ts`)
-- Restauração de cache no startup (`restoreCache.ts`)
+- Cache de dados de mercado com TTL no Redis (`cacheStore.ts`) — cobertura total: GEX, Tradier (chain/timesales/quotes/expirations), FRED, BLS, CNN, GNews, Finnhub, IV Rank, VIX, Volume Profile, Put/Call Ratio, Indicadores Técnicos
+- TTL gerenciado nativamente pelo Redis (sem cleanup manual)
+- Restauração de cache no startup (`restoreCache.ts`) — 8 chaves restauradas: fearGreed, fred, bls, headlines, macroEvents, earnings, ivrank, vix
 - Confidence scorer por fonte de dados (`confidenceScorer.ts`)
 - SSE roteado por usuário (`broadcastToUser`) para alertas direcionados
 - Endpoint `/admin/breakers` para gestão de circuit breakers
+- Endpoints REST dedicados para GEX e Volume Profile (`/api/gex`, `/api/volume-profile` e variantes `/detail`)
 
 **UI & Autenticação:**
 - Dashboard React com 3 cards de métricas (SPY, VIX, IV Rank)
@@ -667,6 +704,7 @@ npm run preview # Preview do build de produção
 - GNews free tier limitado a 100 req/dia
 - Alpha Vantage free tier limitado a 25 req/dia (design da rotação mantém uso dentro deste limite)
 - VIX Term Structure depende da option chain estar fresca (≤6min); pula se stale
+- Redis Cloud free tier (30MB) sem persistência garantida — restart do Redis limpa o cache, mas os pollers repopulam automaticamente na próxima execução. IV Rank, VIX, Volume Profile, P/C Ratio e Indicadores Técnicos têm cache Redis com TTL próprio e são restaurados no startup quando disponíveis.
 
 ---
 

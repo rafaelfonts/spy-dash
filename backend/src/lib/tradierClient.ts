@@ -260,6 +260,38 @@ class TradierClient {
   }
 
   /**
+   * Fetch available option expiration dates for a symbol.
+   * Prefers today's date (0DTE) at call sites via resolveNearestExpiration.
+   *
+   * Cache TTL: 60 s — the expiration calendar rarely changes intraday.
+   */
+  async getExpirations(symbol: string): Promise<string[]> {
+    if (!this.token) return []
+
+    const cacheKey = `tradier:expirations:${symbol}`
+    const cached = await cacheGet<string[]>(cacheKey)
+    if (cached) return cached
+
+    const url =
+      `${this.baseUrl}/v1/markets/options/expirations` +
+      `?symbol=${encodeURIComponent(symbol)}&includeAllRoots=true`
+
+    const json = await this.fetchWithBreaker<{
+      expirations?: { date: string | string[] } | null
+    }>('expirations', url)
+
+    const raw = json?.expirations?.date
+    const dates: string[] = Array.isArray(raw) ? raw : raw ? [raw] : []
+
+    if (dates.length > 0) {
+      await cacheSet(cacheKey, dates, 60_000, 'tradier:expirations')
+    }
+
+    console.log(`[Tradier] getExpirations(${symbol}): ${dates.length} dates`)
+    return dates
+  }
+
+  /**
    * Fetch real-time quotes for one or more symbols.
    * Accepts a comma-separated list or an array.
    *
