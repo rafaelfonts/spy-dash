@@ -11,7 +11,9 @@ import { IVRankCard } from './components/cards/IVRankCard'
 import { VIXCard } from './components/cards/VIXCard'
 import { AIPanel } from './components/ai/AIPanel'
 import { OptionChainPanel } from './components/options/OptionChainPanel'
+import { GEXPanel } from './components/options/GEXPanel'
 import { NewsFeedPanel } from './components/news/NewsFeedPanel'
+import { AlertOverlay } from './components/ui/AlertOverlay'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -36,6 +38,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           <VIXCard />
         </div>
         <AIPanel />
+        <GEXPanel />
         <OptionChainPanel />
         <NewsFeedPanel />
       </main>
@@ -43,6 +46,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       <footer className="text-center py-4 text-[10px] text-text-muted border-t border-border-subtle mt-8">
         SPY DASH — Dados via Tastytrade DXFeed · IA via GPT-4o
       </footer>
+
+      <AlertOverlay />
     </div>
   )
 }

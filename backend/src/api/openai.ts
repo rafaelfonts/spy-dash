@@ -6,7 +6,19 @@ import { marketState, newsSnapshot } from '../data/marketState'
 import type { OptionExpiry } from '../data/optionChain'
 import { getOptionChainCapturedAt } from '../data/optionChain'
 import { humanizeAge } from '../lib/time'
-import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem } from '../types/market'
+import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem, AnalysisStructuredOutput } from '../types/market'
+import { saveAnalysis, getRecentAnalyses } from '../data/analysisMemory'
+import { calculateDailyGex } from '../data/gexService'
+import type { DailyGexResult } from '../data/gexService'
+import { getAdvancedMetricsSnapshot } from '../data/advancedMetricsState'
+import { getVIXTermStructureSnapshot } from '../data/vixTermStructureState'
+import { getTechnicalSnapshot } from '../data/technicalIndicatorsState'
+import { deriveBBPosition } from '../data/technicalIndicatorsPoller'
+import type { TechnicalData } from '../data/technicalIndicatorsState'
+import { calculateConfidence } from '../lib/confidenceScorer'
+import type { ConfidenceResult } from '../lib/confidenceScorer'
+import { getBreakerStatuses } from '../lib/circuitBreaker'
+import { registerAlertsFromAnalysis } from '../data/alertEngine'
 
 interface ContextData {
   fearGreed?: { score: FearGreedData['score']; label: FearGreedData['label'] }
@@ -52,17 +64,128 @@ function fmtGreek(v: number | null | undefined, decimals: number): string {
   return v.toFixed(decimals)
 }
 
+function buildGexBlock(gex: DailyGexResult): string {
+  const regimeLabel =
+    gex.regime === 'positive'
+      ? 'POSITIVO (market makers suprimem volatilidade — mercado tende a reverter à média)'
+      : 'NEGATIVO (market makers amplificam movimentos — espere maior volatilidade)'
+
+  const top5 = [...gex.profile.byStrike]
+    .sort((a, b) => Math.abs(b.netGEX) - Math.abs(a.netGEX))
+    .slice(0, 5)
+
+  let block = `\n=== GAMMA EXPOSURE (GEX) — ${gex.expiration} ===\n`
+  block += `Regime: ${regimeLabel}\n`
+  block += `GEX Total: $${gex.totalNetGamma}M\n`
+  block += `GEX Flip Point: ${gex.flipPoint ?? 'N/A'}\n`
+  block += `Zero Gamma Level (ZGL): ${gex.zeroGammaLevel ?? 'N/A'}\n`
+  block += `Call Wall (maior OI call): $${gex.callWall}\n`
+  block += `Put Wall (maior OI put): $${gex.putWall}\n`
+  block += `Max Gamma Strike (nível magnético): $${gex.maxGexStrike}\n`
+  if (top5.length > 0) {
+    block += `Top strikes por |GEX|:\n`
+    for (const s of top5) {
+      const callSign = s.callGEX >= 0 ? '+' : ''
+      const netSign = s.netGEX >= 0 ? '+' : ''
+      block += `  $${s.strike}: net=${netSign}${s.netGEX}M (call=${callSign}${s.callGEX}M / put=${s.putGEX}M)\n`
+    }
+  }
+  return block
+}
+
+function buildPutCallRatioBlock(pc: {
+  ratio: number
+  putVolume: number
+  callVolume: number
+  label: string
+  expiration: string
+}): string {
+  let block = `\n=== PUT/CALL RATIO SPY — ${pc.expiration} ===\n`
+  block += `P/C Ratio: ${pc.ratio} (${pc.label.toUpperCase()})\n`
+  block += `Volume: ${pc.putVolume.toLocaleString('en-US')} puts / ${pc.callVolume.toLocaleString('en-US')} calls\n`
+  const interp =
+    pc.label === 'bearish'
+      ? 'Hedge pesado — traders comprando proteção. Sinal de cautela.'
+      : pc.label === 'bullish'
+      ? 'Calls dominam — positioning bullish, risco de complacência.'
+      : 'Balanceado — sem sinal direcional forte no fluxo.'
+  block += `Interpretação: ${interp}\n`
+  return block
+}
+
+function buildVIXTermStructureBlock(ts: {
+  spot: number
+  structure: string
+  steepness: number
+  curve: Array<{ dte: number; iv: number }>
+}): string {
+  let block = `\n=== VIX TERM STRUCTURE ===\n`
+  block += `Spot: ${ts.spot.toFixed(2)} | Estrutura: ${ts.structure.toUpperCase()}\n`
+  block += `Steepness: ${ts.steepness > 0 ? '+' : ''}${ts.steepness}%\n`
+  if (ts.curve.length > 0) {
+    block += `Curva IV por DTE: ${ts.curve.map((p) => `${p.dte}d=${p.iv}%`).join(' → ')}\n`
+  }
+  const interp =
+    ts.structure === 'contango'
+      ? 'Mercado precifica mais vol futura — DTEs mais longos oferecem melhor theta enquanto vol spot é barata.'
+      : ts.structure === 'backwardation'
+      ? 'Vol spot > futura — pânico atual. 0-1 DTE pode capturar mean reversion rápida de vol.'
+      : 'Curva flat — vol estável em todos os prazos.'
+  block += `Interpretação: ${interp}\n`
+  return block
+}
+
+function buildTechBlock(
+  tech: TechnicalData,
+  spyPrice: number | null,
+  confidence?: Record<string, ConfidenceResult>,
+): string {
+  const bbands = spyPrice != null
+    ? { ...tech.bbands, position: deriveBBPosition(spyPrice, tech.bbands) }
+    : tech.bbands
+
+  const rsiLabel = tech.rsi14 > 70 ? ' [SOBRECOMPRADO]' : tech.rsi14 < 30 ? ' [SOBREVENDIDO]' : ''
+  const histSign = tech.macd.histogram >= 0 ? '+' : ''
+  const crossLabel = tech.macd.crossover !== 'none' ? ` [CROSSOVER ${tech.macd.crossover.toUpperCase()}]` : ''
+
+  let block = `\n=== INDICADORES TÉCNICOS (SPY 15min)${confTag(confidence?.technicals)} ===\n`
+  block += `RSI(14): ${tech.rsi14.toFixed(2)}${rsiLabel}\n`
+  block += `MACD: hist=${histSign}${tech.macd.histogram.toFixed(4)} macd=${tech.macd.macd.toFixed(4)} signal=${tech.macd.signal.toFixed(4)}${crossLabel}\n`
+  block += `Bollinger(20): upper=${bbands.upper.toFixed(2)} mid=${bbands.middle.toFixed(2)} lower=${bbands.lower.toFixed(2)}\n`
+  block += `  → SPY em posição: ${bbands.position.replace(/_/g, ' ').toUpperCase()}\n`
+  return block
+}
+
+/** Formata a tag de confiança para inserção inline no prompt. Score 0 = sem rastreabilidade → omite tag. */
+function confTag(c: ConfidenceResult | undefined): string {
+  if (!c || c.score === 0) return ''
+  return ` [Confiança: ${c.score} ${c.label}]`
+}
+
 function buildPrompt(
   snapshot: AnalyzeBody['marketSnapshot'],
   chain?: OptionExpiry[],
   context?: ContextData,
   freshness?: FreshnessBlock,
+  memoryBlock?: string,
+  gexBlock?: string | null,
+  putCallRatioBlock?: string | null,
+  vixTermStructureBlock?: string | null,
+  confidence?: Record<string, ConfidenceResult>,
+  techBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
   const ivRank = snapshot?.ivRank
 
-  let prompt = `Análise de mercado atual:\n\n`
+  let prompt = ''
+
+  if (memoryBlock) {
+    prompt += `=== SUAS ANÁLISES ANTERIORES (HOJE) ===\n${memoryBlock}\n\n`
+    prompt += `INSTRUÇÃO: Compare sua análise atual com as anteriores. Se mudou de opinião, explique por quê. Se os níveis anteriores foram testados, comente o resultado. Mantenha consistência narrativa.\n\n`
+  }
+
+  prompt += `Análise de mercado atual:\n\n`
 
   // --- Dados de mercado em tempo real ---
   const spyAge = freshness?.spy ? ` ${humanizeAge(freshness.spy)}` : ''
@@ -71,23 +194,43 @@ function buildPrompt(
   const fgAge = freshness?.fearGreed ? ` ${humanizeAge(freshness.fearGreed)}` : ''
 
   if (spy) {
-    prompt += `**SPY**${spyAge}: $${spy.last?.toFixed(2)} | Variação: ${spy.change >= 0 ? '+' : ''}${spy.change?.toFixed(2)} (${spy.changePct?.toFixed(2)}%)\n`
+    prompt += `**SPY**${spyAge}${confTag(confidence?.spy)}: $${spy.last?.toFixed(2)} | Variação: ${spy.change >= 0 ? '+' : ''}${spy.change?.toFixed(2)} (${spy.changePct?.toFixed(2)}%)\n`
   }
   if (vix) {
-    prompt += `**VIX**${vixAge}: ${vix.last?.toFixed(2)} | Nível: ${vix.level}\n`
+    prompt += `**VIX**${vixAge}${confTag(confidence?.vix)}: ${vix.last?.toFixed(2)} | Nível: ${vix.level}\n`
   }
   if (ivRank) {
-    prompt += `**IV Rank SPY**${ivAge}: ${ivRank.value?.toFixed(1)}% | Percentil: ${ivRank.percentile?.toFixed(1)}% | Classificação: ${ivRank.label}\n`
+    prompt += `**IV Rank SPY**${ivAge}${confTag(confidence?.ivRank)}: ${ivRank.value?.toFixed(1)}% | Percentil: ${ivRank.percentile?.toFixed(1)}% | Classificação: ${ivRank.label}\n`
   }
   if (context?.fearGreed?.score !== null && context?.fearGreed?.score !== undefined) {
-    prompt += `**Fear & Greed**${fgAge}: ${context.fearGreed.score}/100 — ${context.fearGreed.label}\n`
+    prompt += `**Fear & Greed**${fgAge}${confTag(confidence?.fearGreed)}: ${context.fearGreed.score}/100 — ${context.fearGreed.label}\n`
+  }
+
+  // --- GEX (Gamma Exposure) ---
+  if (gexBlock) {
+    prompt += gexBlock
+  }
+
+  // --- Put/Call Ratio ---
+  if (putCallRatioBlock) {
+    prompt += putCallRatioBlock
+  }
+
+  // --- VIX Term Structure ---
+  if (vixTermStructureBlock) {
+    prompt += vixTermStructureBlock
+  }
+
+  // --- Indicadores Técnicos (Alpha Vantage) ---
+  if (techBlock) {
+    prompt += techBlock
   }
 
   // --- Cadeia de opções: ATM ±5 strikes para as 3 expirações mais próximas ---
   const chainAge = freshness?.optionChain ? ` ${humanizeAge(freshness.optionChain)}` : ''
   if (chain && chain.length > 0) {
     const spyLast = spy?.last ?? 0
-    prompt += `\n**Cadeia de Opções SPY (strikes próximos ATM)**${chainAge}:\n`
+    prompt += `\n**Cadeia de Opções SPY (strikes próximos ATM)**${chainAge}${confTag(confidence?.optionChain)}:\n`
     for (const exp of chain.slice(0, 3)) {
       const atmCalls = exp.calls
         .filter((c) => c.bid !== null && c.ask !== null)
@@ -134,11 +277,11 @@ function buildPrompt(
     const hasBls = (context?.bls?.length ?? 0) > 0
     let macroLabel = 'Contexto Macroeconômico'
     if (hasMacro && hasBls) {
-      macroLabel = `Contexto Macroeconômico (FRED${macroAge} + BLS${blsAge})`
+      macroLabel = `Contexto Macroeconômico (FRED${macroAge}${confTag(confidence?.macro)} + BLS${blsAge}${confTag(confidence?.bls)})`
     } else if (hasMacro) {
-      macroLabel = `Contexto Macroeconômico (FRED${macroAge})`
+      macroLabel = `Contexto Macroeconômico (FRED${macroAge}${confTag(confidence?.macro)})`
     } else if (hasBls) {
-      macroLabel = `Contexto Macroeconômico (BLS${blsAge})`
+      macroLabel = `Contexto Macroeconômico (BLS${blsAge}${confTag(confidence?.bls)})`
     }
     prompt += `\n**${macroLabel}:**\n`
     for (const item of allMacro) {
@@ -161,7 +304,7 @@ function buildPrompt(
     (e) => e.daysToEarnings !== null && e.daysToEarnings >= 0 && e.daysToEarnings <= 7,
   )
   if (urgentEarnings.length > 0) {
-    prompt += `\n**Earnings de componentes SPY (próximos 7 dias)**${earningsAge}:\n`
+    prompt += `\n**Earnings de componentes SPY (próximos 7 dias)**${earningsAge}${confTag(confidence?.earnings)}:\n`
     for (const e of urgentEarnings.slice(0, 6)) {
       prompt += `- ${e.symbol}: ${e.earningsDate ?? '?'} (em ${e.daysToEarnings} dias)\n`
     }
@@ -171,7 +314,7 @@ function buildPrompt(
   const eventsAge = freshness?.macroEvents ? ` ${humanizeAge(freshness.macroEvents)}` : ''
   const highImpact = (context?.macroEvents ?? []).filter((ev) => ev.impact === 'high')
   if (highImpact.length > 0) {
-    prompt += `\n**Eventos macro de alto impacto (próximas 48h)**${eventsAge}:\n`
+    prompt += `\n**Eventos macro de alto impacto (próximas 48h)**${eventsAge}${confTag(confidence?.macroEvents)}:\n`
     for (const ev of highImpact.slice(0, 6)) {
       const est = ev.estimate !== null ? ` | Est: ${ev.estimate}${ev.unit ?? ''}` : ''
       const prev = ev.prev !== null ? ` | Prev: ${ev.prev}${ev.unit ?? ''}` : ''
@@ -186,6 +329,77 @@ function buildPrompt(
   prompt += `4. Níveis técnicos importantes para monitorar\n`
 
   return prompt
+}
+
+// ---------------------------------------------------------------------------
+// Structured output extraction — called after the GPT-4o stream completes
+// ---------------------------------------------------------------------------
+
+const STRUCTURED_EXAMPLE: AnalysisStructuredOutput = {
+  bias: 'neutral',
+  confidence: 0.7,
+  timeframe: 'intraday',
+  key_levels: { support: [592, 590], resistance: [595, 597], gex_flip: 593 },
+  suggested_strategy: {
+    name: 'put_credit_spread',
+    legs: [
+      { type: 'put', action: 'sell', strike: 592, dte: 0 },
+      { type: 'put', action: 'buy', strike: 590, dte: 0 },
+    ],
+    max_risk: 150,
+    max_reward: 50,
+    breakeven: 591.5,
+  },
+  catalysts: ['VIX em queda', 'GEX positivo'],
+  risk_factors: ['IV Rank elevado', 'resistência em 595'],
+}
+
+async function extractStructuredOutput(
+  fullText: string,
+  snapshot: AnalyzeBody['marketSnapshot'],
+): Promise<AnalysisStructuredOutput | null> {
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${CONFIG.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        max_tokens: 800,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content: 'Extraia dados estruturados de análises de opções. Retorne JSON puro sem Markdown.',
+          },
+          {
+            role: 'user',
+            content: [
+              'Baseado na análise abaixo, extraia os dados estruturados.',
+              'Retorne APENAS JSON válido seguindo o schema de exemplo.',
+              '',
+              `SPY: ${snapshot?.spy?.last ?? 'N/A'} | VIX: ${snapshot?.vix?.last ?? 'N/A'}`,
+              '',
+              '--- ANÁLISE ---',
+              fullText,
+              '',
+              '--- SCHEMA ESPERADO ---',
+              JSON.stringify(STRUCTURED_EXAMPLE),
+            ].join('\n'),
+          },
+        ],
+      }),
+    })
+    if (!res.ok) return null
+    const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
+    const raw = json.choices?.[0]?.message?.content ?? ''
+    return JSON.parse(raw) as AnalysisStructuredOutput
+  } catch (err) {
+    console.error('[Structured] Extraction failed:', (err as Error).message)
+    return null
+  }
 }
 
 export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
@@ -242,6 +456,61 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const userId = (request as any).user?.sub ?? 'unknown'
     console.log(`[ANALYZE] user=${userId} model=gpt-4o tokens_max=1200`)
 
+    // Fetch intraday memory and GEX concurrently — both gracefully degrade on failure
+    const [pastAnalyses, gexResult] = await Promise.all([
+      getRecentAnalyses(userId, 3),
+      calculateDailyGex('SPY').catch(() => null),
+    ])
+
+    const memoryBlock = pastAnalyses.length > 0
+      ? pastAnalyses.map((a, i) => {
+          const age = humanizeAge(a.created_at)
+          const spyThen = a.market_snapshot?.spyPrice
+          const spyStr = spyThen ? ` SPY era $${spyThen.toFixed(2)}.` : ''
+          return `[Análise ${i + 1} — ${age}] Bias: ${a.bias ?? 'N/A'}.${spyStr} ${a.summary}`
+        }).join('\n')
+      : ''
+
+    const gexBlock = gexResult ? buildGexBlock(gexResult) : null
+
+    const advancedSnapshot = getAdvancedMetricsSnapshot()
+    const pcBlock = advancedSnapshot?.putCallRatio
+      ? buildPutCallRatioBlock(advancedSnapshot.putCallRatio)
+      : null
+
+    const tsSnapshot = getVIXTermStructureSnapshot()
+    const tsBlock = tsSnapshot ? buildVIXTermStructureBlock(tsSnapshot) : null
+
+    const techSnapshot = getTechnicalSnapshot()
+
+    // Confidence scores — computed once per analysis request
+    const breakerStatuses = getBreakerStatuses()
+    // Tradier uses dynamic key names like 'tradier:getOptionChain' — reduce to worst status
+    const tradierStatus = Object.entries(breakerStatuses)
+      .filter(([k]) => k.startsWith('tradier'))
+      .map(([, v]) => v)
+      .reduce(
+        (worst, s) => s === 'OPEN' ? 'OPEN' : (worst === 'OPEN' ? 'OPEN' : s === 'HALF_OPEN' ? 'HALF_OPEN' : worst),
+        'CLOSED' as string,
+      )
+    const confidence: Record<string, ConfidenceResult> = {
+      spy:         calculateConfidence('spy',         freshness.spy,         undefined),
+      vix:         calculateConfidence('vix',         freshness.vix,         breakerStatuses['vix-finnhub']),
+      ivRank:      calculateConfidence('ivRank',      freshness.ivRank,      undefined),
+      fearGreed:   calculateConfidence('fearGreed',   freshness.fearGreed,   breakerStatuses['cnn']),
+      macro:       calculateConfidence('macro',       freshness.macro,       breakerStatuses['fred']),
+      bls:         calculateConfidence('bls',         freshness.bls,         breakerStatuses['bls']),
+      macroEvents: calculateConfidence('macroEvents', freshness.macroEvents, breakerStatuses['finnhub']),
+      headlines:   calculateConfidence('headlines',   null,                  undefined),  // no headlinesTs → score 0 → tag omitida
+      earnings:    calculateConfidence('earnings',    freshness.earnings,    undefined),
+      optionChain:  calculateConfidence('optionChain',  freshness.optionChain,       tradierStatus),
+      technicals:   calculateConfidence('technicals',   techSnapshot?.capturedAt ?? null, breakerStatuses['alphavantage']),
+    }
+
+    const techBlock = techSnapshot
+      ? buildTechBlock(techSnapshot, snapshot?.spy?.last ?? null, confidence)
+      : null
+
     const sendEvent = (event: string, data: unknown) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
     }
@@ -268,11 +537,33 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
                 'Dados marcados [RECENTE] são muito confiáveis para decisões táticas. ' +
                 'Dados marcados [SNAPSHOT] são contexto estrutural — use-os para direção de tendência, não para decisões de entrada/saída. ' +
                 'Use delta para avaliar probabilidade ITM (call ATM ≈ 0.50 ≈ 50% de chance de expirar ITM). ' +
-                'Use theta para comparar custo de carregamento diário entre strikes e expirações — theta é maior em magnitude em 0DTE.',
+                'Use theta para comparar custo de carregamento diário entre strikes e expirações — theta é maior em magnitude em 0DTE. ' +
+                'Você tem acesso às suas análises anteriores do dia. Use-as para: manter coerência narrativa, reconhecer quando mudou de opinião (e explicar por quê), e avaliar se níveis de suporte/resistência anteriores foram testados com sucesso. ' +
+                'GEX (Gamma Exposure) indica níveis de hedging de market makers. ' +
+                'Em regime de GEX positivo, MMs compram quedas e vendem altas — o mercado tende a reverter à média. ' +
+                'Em regime negativo, MMs amplificam movimentos — espere maior volatilidade direcional. ' +
+                'O GEX flip point e o Zero Gamma Level (ZGL) são os níveis mais importantes: acima deles, supressão de volatilidade; abaixo, amplificação. ' +
+                'Use o max gamma strike como nível magnético primário para análise de suporte/resistência intraday. ' +
+                'O Put/Call Ratio do dia indica o sentimento do fluxo real de opções SPY. ' +
+                'P/C > 1.2 (BEARISH): hedgers dominam — cautela com posições longas desprotegidas. ' +
+                'P/C < 0.7 (BULLISH): calls dominam — possível complacência, monitore reversão. ' +
+                'P/C 0.7–1.2 (NEUTRAL): sem sinal direcional forte no fluxo de opções. ' +
+                'VIX Term Structure: contango (vol curta < vol longa) = calma agora, medo futuro — favorecer DTEs 7-21 para capturar theta enquanto vol spot é barata. ' +
+                'Backwardation (vol curta > vol longa) = pânico agora — favorecer 0-1 DTE para capturar mean reversion rápida de vol. ' +
+                'Curva flat = vol estável — DTE neutro, focar em outros fatores. ' +
+                'Cada seção de dados inclui um score de Confiança (0-1). ' +
+                'Confiança ALTA (>=0.8): use para decisões de timing e entrada. ' +
+                'Confiança MÉDIA (0.5-0.8): use como contexto direcional. ' +
+                'Confiança BAIXA (<0.5): mencione com ressalva, pode estar desatualizado. ' +
+                'Nunca baseie uma recomendação de entrada/saída exclusivamente em dados com Confiança BAIXA. ' +
+                'RSI sobrecomprado (>70) + resistência GEX = setup de venda forte. ' +
+                'RSI sobrevendido (<30) + suporte GEX = setup de compra forte. ' +
+                'MACD crossover bullish + GEX positivo = momentum sustentável. ' +
+                'Use indicadores técnicos como confirmação, não como sinal primário.',
             },
             {
               role: 'user',
-              content: buildPrompt(snapshot, body.optionChain, body.context, freshness),
+              content: buildPrompt(snapshot, body.optionChain, body.context, freshness, memoryBlock || undefined, gexBlock, pcBlock, tsBlock, confidence, techBlock),
             },
           ],
         }),
@@ -290,6 +581,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
 
       const decoder = new TextDecoder()
       let buffer = ''
+      let fullResponse = ''
 
       while (true) {
         const { done, value } = await reader.read()
@@ -303,7 +595,19 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
           if (line.startsWith('data: ')) {
             const data = line.slice(6).trim()
             if (data === '[DONE]') {
+              // Extract structured output synchronously before closing — adds ~1-2s
+              // but the user has already seen all streaming text by this point
+              const structured = await extractStructuredOutput(fullResponse, snapshot)
+              if (structured) {
+                sendEvent('structured', structured)
+                registerAlertsFromAnalysis(userId, structured)
+              }
               sendEvent('done', {})
+              saveAnalysis(userId, fullResponse, {
+                spyPrice: snapshot?.spy?.last ?? 0,
+                vix: snapshot?.vix?.last ?? 0,
+                ivRank: snapshot?.ivRank?.value ?? 0,
+              }, structured ?? undefined).catch(() => {})
               res.end()
               reply.hijack()
               return
@@ -314,6 +618,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
               }
               const content = parsed.choices?.[0]?.delta?.content
               if (content) {
+                fullResponse += content
                 sendEvent('token', { text: content })
               }
             } catch {
@@ -323,7 +628,17 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
         }
       }
 
+      const structured = await extractStructuredOutput(fullResponse, snapshot)
+      if (structured) {
+        sendEvent('structured', structured)
+        registerAlertsFromAnalysis(userId, structured)
+      }
       sendEvent('done', {})
+      saveAnalysis(userId, fullResponse, {
+        spyPrice: snapshot?.spy?.last ?? 0,
+        vix: snapshot?.vix?.last ?? 0,
+        ivRank: snapshot?.ivRank?.value ?? 0,
+      }, structured ?? undefined).catch(() => {})
       res.end()
     } catch (err) {
       sendEvent('error', { message: (err as Error).message })

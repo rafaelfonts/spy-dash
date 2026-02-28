@@ -13,7 +13,7 @@ import type {
 } from '../types/market'
 import { persistPriceTick } from './priceHistory'
 
-const MAX_HISTORY = 60
+const MAX_HISTORY = 390  // ~6.5h de sessão (1 bar/min via Tradier restore)
 
 function vixLevel(price: number): 'low' | 'moderate' | 'high' {
   if (price < 15) return 'low'

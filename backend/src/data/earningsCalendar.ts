@@ -61,11 +61,8 @@ async function pollEarningsCalendar(): Promise<void> {
 
       const daysToEarnings = daysUntil(earningsDate)
 
-      // Only include symbols with earnings in the next 45 days (or upcoming)
-      if (daysToEarnings !== null && daysToEarnings >= 0 && daysToEarnings <= 45) {
-        items.push({ symbol, earningsDate, daysToEarnings })
-      } else if (earningsDate) {
-        // Include all with a date for completeness (even if > 45 DTE)
+      // Include symbols with earnings in the past 7 days (context) or next 90 days (upcoming)
+      if (daysToEarnings !== null && daysToEarnings >= -7 && daysToEarnings <= 90) {
         items.push({ symbol, earningsDate, daysToEarnings })
       }
     }

@@ -5,6 +5,7 @@ import { MacroData } from './MacroData'
 import { MacroCalendar } from './MacroCalendar'
 import { NewsHeadlines } from './NewsHeadlines'
 import { FearGreedGauge } from './FearGreedGauge'
+import { PutCallRatioCard } from './PutCallRatioCard'
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -18,6 +19,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 export function NewsFeedPanel() {
   const newsFeed = useMarketStore((s) => s.newsFeed)
+  const putCallRatio = useMarketStore((s) => s.putCallRatio)
 
   const hasEarnings = newsFeed.earnings.length > 0
   const hasMacro = newsFeed.macro.length > 0
@@ -67,8 +69,8 @@ export function NewsFeedPanel() {
         </div>
       )}
 
-      {/* Row 1: Earnings + Macro FRED/BLS + Sentimento */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+      {/* Row 1: Earnings + Macro FRED/BLS + Sentimento + P/C Ratio */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
         <div>
           <SectionTitle>Earnings Calendar</SectionTitle>
           <EarningsCalendar
@@ -89,6 +91,11 @@ export function NewsFeedPanel() {
         <div className="md:border-l md:border-border-subtle md:pl-4">
           <SectionTitle>Sentimento do Mercado</SectionTitle>
           <FearGreedGauge fearGreed={newsFeed.fearGreed} />
+        </div>
+
+        <div className="md:border-l md:border-border-subtle md:pl-4">
+          <SectionTitle>Put/Call Ratio</SectionTitle>
+          <PutCallRatioCard data={putCallRatio} />
         </div>
       </div>
 

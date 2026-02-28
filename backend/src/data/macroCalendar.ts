@@ -92,6 +92,8 @@ async function pollMacroCalendar(): Promise<void> {
     })
     .slice(0, 20) // cap at 20 events
 
+  console.log(`[MacroCalendar] Raw events: ${rawEvents.length} | após filtro US/impact/data: ${filtered.length}`)
+
   const items: MacroEvent[] = filtered.map((e) => ({
     event: e.event ?? 'Unknown',
     time: e.time ?? null,

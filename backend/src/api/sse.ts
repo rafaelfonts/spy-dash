@@ -1,12 +1,16 @@
 import type { FastifyInstance } from 'fastify'
 import type { IncomingMessage, ServerResponse } from 'http'
 import { emitter, marketState, newsSnapshot } from '../data/marketState'
+import { getAdvancedMetricsSnapshot } from '../data/advancedMetricsState'
+import { getVIXTermStructureSnapshot } from '../data/vixTermStructureState'
 import type { SSEClient } from '../types/market'
 import { SSEBatcher } from '../lib/sseBatcher'
+import { checkAlerts } from '../data/alertEngine'
 
 const HEARTBEAT_INTERVAL_MS = 15_000
 
 const clients = new Set<SSEClient>()
+const clientsByUser = new Map<string, SSEClient[]>()
 
 function broadcast(event: string, data: unknown): void {
   for (const client of clients) {
@@ -14,6 +18,17 @@ function broadcast(event: string, data: unknown): void {
       client.write(event, data)
     } catch {
       clients.delete(client)
+    }
+  }
+}
+
+export function broadcastToUser(userId: string, event: string, data: unknown): void {
+  const userClients = clientsByUser.get(userId) ?? []
+  for (const client of userClients) {
+    try {
+      client.write(event, data)
+    } catch {
+      // will be removed on disconnect
     }
   }
 }
@@ -43,6 +58,12 @@ emitter.on('newsfeed', (data) => {
   newsfeedBatcher.emit({ type: data.type, payload });
 })
 
+emitter.on('advanced-metrics', (data) => broadcast('advanced-metrics', data))
+emitter.on('vix-term-structure', (data) => broadcast('vix-term-structure', data))
+emitter.on('quote', (data) => {
+  if (data.last !== null) checkAlerts(data.last)
+})
+
 export function getSSEStats(): { count: number; avgConnectionAgeMs: number } {
   if (clients.size === 0) return { count: 0, avgConnectionAgeMs: 0 }
   const now = Date.now()
@@ -64,9 +85,11 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     res.write('retry: 3000\n\n')
 
     const clientId = Math.random().toString(36).slice(2)
+    const userId = (request as any).user?.sub ?? 'anonymous'
 
     const client: SSEClient = {
       id: clientId,
+      userId,
       connectedAt: Date.now(),
       write(event: string, data: unknown) {
         res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
@@ -74,6 +97,8 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     }
 
     clients.add(client)
+    const existing = clientsByUser.get(userId) ?? []
+    clientsByUser.set(userId, [...existing, client])
     console.log(`[SSE] Client connected: ${clientId} (total: ${clients.size})`)
 
     // Send current market snapshot immediately
@@ -140,6 +165,18 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
       client.write('newsfeed', { type: 'headlines', items: newsSnapshot.headlines, ts: Date.now() })
     }
 
+    // Send cached advanced metrics (GEX + VolumeProfile + P/C Ratio) snapshot
+    const advancedSnapshot = getAdvancedMetricsSnapshot()
+    if (advancedSnapshot) {
+      client.write('advanced-metrics', advancedSnapshot)
+    }
+
+    // Send cached VIX term structure snapshot
+    const tsSnapshot = getVIXTermStructureSnapshot()
+    if (tsSnapshot) {
+      client.write('vix-term-structure', tsSnapshot)
+    }
+
     // Heartbeat ping every 15s — keeps proxies from closing idle connections
     const heartbeatTimer = setInterval(() => {
       try {
@@ -158,6 +195,12 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     request.raw.on('close', () => {
       clearInterval(heartbeatTimer)
       clients.delete(client)
+      const remaining = (clientsByUser.get(userId) ?? []).filter((c) => c.id !== clientId)
+      if (remaining.length === 0) {
+        clientsByUser.delete(userId)
+      } else {
+        clientsByUser.set(userId, remaining)
+      }
       console.log(`[SSE] Client disconnected: ${clientId} (total: ${clients.size})`)
     })
 

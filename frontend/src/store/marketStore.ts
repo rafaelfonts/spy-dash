@@ -44,6 +44,70 @@ export interface NewsHeadline {
   image: string | null
 }
 
+// Analysis structured output (mirrored from backend types/market.ts)
+export interface AnalysisStructuredOutput {
+  bias: 'bullish' | 'bearish' | 'neutral'
+  confidence: number
+  timeframe: string
+  key_levels: {
+    support: number[]
+    resistance: number[]
+    gex_flip?: number
+  }
+  suggested_strategy: {
+    name: string
+    legs: Array<{ type: 'call' | 'put'; action: 'buy' | 'sell'; strike: number; dte: number }>
+    max_risk: number
+    max_reward: number
+    breakeven: number
+  } | null
+  catalysts: string[]
+  risk_factors: string[]
+}
+
+// VIX Term Structure type (mirrored from backend vixTermStructure)
+export interface VIXTermStructureData {
+  spot: number
+  curve: Array<{ dte: number; iv: number }>
+  structure: 'contango' | 'backwardation' | 'flat'
+  steepness: number
+  capturedAt: string
+  lastUpdated: number
+}
+
+// Put/Call Ratio type (mirrored from backend putCallRatio)
+export interface PutCallRatioData {
+  ratio: number
+  putVolume: number
+  callVolume: number
+  label: 'bearish' | 'neutral' | 'bullish'
+  expiration: string
+  lastUpdated: number
+}
+
+// GEX types (mirrored from backend gexCalculator)
+export interface StrikeGEX {
+  strike: number
+  callGEX: number
+  putGEX: number
+  netGEX: number
+  callOI: number
+  putOI: number
+}
+
+export interface GEXProfile {
+  byStrike: StrikeGEX[]
+  totalGEX: number
+  flipPoint: number | null
+  zeroGammaLevel: number | null
+  maxGammaStrike: number
+  minGammaStrike: number
+  callWall: number
+  putWall: number
+  regime: 'positive' | 'negative'
+  calculatedAt: string
+}
+
 // Option chain types (mirrored from backend OptionLeg/OptionExpiry)
 export interface OptionChainMeta {
   capturedAt: string
@@ -123,6 +187,15 @@ export interface IVRankData {
   lastUpdated: number
 }
 
+export interface AlertToast {
+  id: string
+  level: number
+  type: 'support' | 'resistance' | 'gex_flip'
+  alertType: 'approaching' | 'testing'
+  price: number
+  timestamp: number
+}
+
 export type WSState = 'CONNECTING' | 'OPEN' | 'RECONNECTING' | 'CLOSED'
 
 export interface ConnectionState {
@@ -139,6 +212,10 @@ interface MarketStore {
   newsFeed: NewsFeedState
   optionChain: OptionExpiry[]
   optionChainMeta: OptionChainMeta | null
+  gexProfile: GEXProfile | null
+  lastAnalysisOutput: AnalysisStructuredOutput | null
+  putCallRatio: PutCallRatioData | null
+  vixTermStructure: VIXTermStructureData | null
 
   updateSPY: (data: Partial<SPYData>) => void
   updateVIX: (data: Partial<VIXData>) => void
@@ -148,6 +225,13 @@ interface MarketStore {
   applyNewsfeedBatch: (batch: Record<string, any>) => void
   setOptionChain: (chain: OptionExpiry[]) => void
   setOptionChainMeta: (meta: OptionChainMeta) => void
+  setGEXProfile: (gex: GEXProfile | null) => void
+  setLastAnalysisOutput: (output: AnalysisStructuredOutput | null) => void
+  setPutCallRatio: (data: PutCallRatioData | null) => void
+  setVIXTermStructure: (data: VIXTermStructureData | null) => void
+  alerts: AlertToast[]
+  addAlert: (alert: AlertToast) => void
+  dismissAlert: (id: string) => void
   isDataReady: () => boolean
 }
 
@@ -202,6 +286,11 @@ export const useMarketStore = create<MarketStore>()(
     },
     optionChain: [],
     optionChainMeta: null,
+    gexProfile: null,
+    lastAnalysisOutput: null,
+    putCallRatio: null,
+    vixTermStructure: null,
+    alerts: [],
 
     updateSPY: (data) =>
       set((state) => ({ spy: { ...state.spy, ...data, lastUpdated: Date.now() } })),
@@ -234,8 +323,18 @@ export const useMarketStore = create<MarketStore>()(
         },
       })),
 
+    addAlert: (alert) =>
+      set((state) => ({ alerts: [alert, ...state.alerts].slice(0, 5) })),
+
+    dismissAlert: (id) =>
+      set((state) => ({ alerts: state.alerts.filter((a) => a.id !== id) })),
+
     setOptionChain: (chain) => set({ optionChain: chain }),
     setOptionChainMeta: (meta) => set({ optionChainMeta: meta }),
+    setGEXProfile: (gex) => set({ gexProfile: gex }),
+    setLastAnalysisOutput: (output) => set({ lastAnalysisOutput: output }),
+    setPutCallRatio: (data) => set({ putCallRatio: data }),
+    setVIXTermStructure: (data) => set({ vixTermStructure: data }),
 
     isDataReady: () => {
       return get().spy.last !== null

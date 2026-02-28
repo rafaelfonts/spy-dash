@@ -32,5 +32,9 @@ export async function requireAuth(
 
   if (error || !user) {
     reply.status(401).send({ error: 'Token inválido ou expirado' })
+    return
   }
+
+  // Attach user to request so downstream handlers can access req.user.sub
+  ;(request as any).user = user
 }

@@ -15,6 +15,7 @@ const LEVEL_CONFIG = {
 
 export const VIXCard = memo(function VIXCard() {
   const vix = useMarketStore((s) => s.vix)
+  const vixTS = useMarketStore((s) => s.vixTermStructure)
 
   const isLoaded = vix.last !== null
   const level = LEVEL_CONFIG[vix.level ?? 'null']
@@ -108,6 +109,56 @@ export const VIXCard = memo(function VIXCard() {
           height={48}
         />
       </div>
+
+      {/* VIX Term Structure */}
+      {vixTS && (
+        <div className="mt-3 pt-3 border-t border-border-subtle">
+          {/* Regime badge + steepness */}
+          <div className="flex items-center justify-between mb-2">
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+              vixTS.structure === 'contango'
+                ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                : vixTS.structure === 'backwardation'
+                ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
+            }`}>
+              {vixTS.structure.toUpperCase()}
+            </span>
+            <span className={`text-[10px] font-num ${
+              vixTS.steepness > 0 ? 'text-blue-400' :
+              vixTS.steepness < 0 ? 'text-red-400' :
+              'text-text-muted'
+            }`}>
+              {vixTS.steepness > 0 ? '+' : ''}{vixTS.steepness}%
+            </span>
+          </div>
+
+          {/* Mini IV curve: bar per DTE */}
+          <div className="flex items-end gap-1 h-10">
+            {vixTS.curve.map((point) => {
+              const maxIV = Math.max(...vixTS.curve.map((p) => p.iv))
+              const minIV = Math.min(...vixTS.curve.map((p) => p.iv))
+              const range = maxIV - minIV || 1
+              const heightPct = 20 + ((point.iv - minIV) / range) * 60 // 20–80% of 40px
+              return (
+                <div key={point.dte} className="flex flex-col items-center flex-1 gap-0.5 h-full justify-end">
+                  <div
+                    className={`w-full rounded-t-sm ${
+                      vixTS.structure === 'contango' ? 'bg-blue-500/50' :
+                      vixTS.structure === 'backwardation' ? 'bg-red-500/50' :
+                      'bg-yellow-500/50'
+                    }`}
+                    style={{ height: `${heightPct}%` }}
+                  />
+                  <span className="text-[8px] text-text-muted leading-none">
+                    {point.dte === 0 ? '0d' : `${point.dte}d`}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </motion.div>
   )
 })

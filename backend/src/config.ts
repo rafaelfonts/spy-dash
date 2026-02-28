@@ -24,4 +24,7 @@ export const CONFIG = {
   ANALYZE_COOLDOWN_MS: parseInt(process.env.ANALYZE_COOLDOWN_MS ?? '30000', 10),
   OPTION_CHAIN_THRESHOLD: parseFloat(process.env.OPTION_CHAIN_THRESHOLD ?? '0.003'),
   HEALTH_SECRET: process.env.HEALTH_SECRET ?? '',
+  TRADIER_API_KEY: process.env.TRADIER_API_KEY ?? '',
+  TRADIER_BASE_URL: process.env.TRADIER_BASE_URL ?? 'https://sandbox.tradier.com',
+  ALPHA_VANTAGE_KEY: process.env.ALPHA_VANTAGE_KEY ?? '',
 } as const

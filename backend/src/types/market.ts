@@ -44,6 +44,7 @@ export interface MarketState {
 
 export interface SSEClient {
   id: string
+  userId: string
   connectedAt: number
   write: (event: string, data: unknown) => void
 }
@@ -221,3 +222,28 @@ export const BlsResponseSchema = z.object({
   message: z.array(z.string()).optional(),
 })
 export type BlsApiResponse = z.infer<typeof BlsResponseSchema>
+
+export interface AnalysisStructuredOutput {
+  bias: 'bullish' | 'bearish' | 'neutral'
+  confidence: number           // 0.0 to 1.0
+  timeframe: string            // '0DTE' | 'intraday' | 'swing'
+  key_levels: {
+    support: number[]          // up to 3, sorted desc
+    resistance: number[]       // up to 3, sorted asc
+    gex_flip?: number
+  }
+  suggested_strategy: {
+    name: string
+    legs: Array<{
+      type: 'call' | 'put'
+      action: 'buy' | 'sell'
+      strike: number
+      dte: number
+    }>
+    max_risk: number
+    max_reward: number
+    breakeven: number
+  } | null
+  catalysts: string[]
+  risk_factors: string[]
+}

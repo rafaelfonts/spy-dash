@@ -3,13 +3,17 @@ import cors from '@fastify/cors'
 import { CONFIG } from './config'
 import { initTokenManager } from './auth/tokenManager'
 import { startDXFeedStream } from './stream/dxfeedClient'
+import { startVIXPoller } from './data/vixPoller'
 import { startIVRankPoller } from './data/ivRankPoller'
+import { startAdvancedMetricsPoller } from './data/advancedMetricsPoller'
 import { startEarningsCalendar } from './data/earningsCalendar'
 import { startFredPoller } from './data/fredPoller'
 import { startFearGreedPoller } from './data/fearGreed'
 import { startMacroCalendar } from './data/macroCalendar'
 import { startNewsAggregator } from './data/newsAggregator'
 import { startBlsPoller } from './data/blsPoller'
+import { startVIXTermStructurePoller } from './data/vixTermStructurePoller'
+import { startTechnicalIndicatorsPoller } from './data/technicalIndicatorsPoller'
 import { registerSSE } from './api/sse'
 import { registerOpenAI } from './api/openai'
 import { registerHealth } from './api/health'
@@ -17,7 +21,7 @@ import { registerPriceHistory } from './api/priceHistory'
 import { getOptionChain } from './data/optionChain'
 import { requireAuth } from './middleware/authMiddleware'
 import { restoreSnapshotsFromCache } from './lib/restoreCache'
-import { restorePriceHistory } from './data/priceHistory'
+import { restorePriceHistory, restoreFromTradier } from './data/priceHistory'
 import { cleanupExpiredCache } from './lib/cacheStore'
 import { getBreakerStatuses, resetBreaker, listBreakers } from './lib/circuitBreaker'
 
@@ -84,9 +88,14 @@ async function bootstrap(): Promise<void> {
   // Restore cached market snapshots before pollers start (independent of Tastytrade token)
   await restoreSnapshotsFromCache()
   await restorePriceHistory()
+  await restoreFromTradier()  // overwrites Supabase history with richer Tradier 1-min bars
 
   // Daily cleanup of expired cache entries
   setInterval(() => cleanupExpiredCache().catch(console.error), 24 * 60 * 60 * 1000)
+
+  // Tradier-based pollers are independent of Tastytrade — start unconditionally
+  startAdvancedMetricsPoller()
+  startTechnicalIndicatorsPoller()  // no-op if ALPHA_VANTAGE_KEY not set
 
   // Initialize token and start streaming
   console.log('[Bootstrap] Initializing Tastytrade OAuth2...')
@@ -94,6 +103,8 @@ async function bootstrap(): Promise<void> {
     await initTokenManager()
     console.log('[Bootstrap] Token acquired. Starting DXFeed stream...')
     startDXFeedStream()
+    startVIXPoller()
+    startVIXTermStructurePoller()
     startIVRankPoller()
     startEarningsCalendar()
     startFredPoller()

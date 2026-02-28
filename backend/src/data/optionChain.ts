@@ -61,6 +61,11 @@ export function getOptionChainCapturedAt(): number {
   return optionChainCache?.capturedAt ?? 0
 }
 
+/** Returns the cached option chain data, or null if not yet fetched. */
+export function getOptionChainSnapshot(): OptionExpiry[] | null {
+  return optionChainCache?.data ?? null
+}
+
 // ─── Market-hours helpers ─────────────────────────────────────────────────────
 
 function isDst(date: Date): boolean {

@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
-import type { OptionExpiry } from '../store/marketStore'
+import type { OptionExpiry, AnalysisStructuredOutput } from '../store/marketStore'
 import { supabase } from '../lib/supabase'
 
 export type AnalysisState = 'idle' | 'loading' | 'streaming' | 'done' | 'error'
@@ -12,6 +12,7 @@ export interface UseAIAnalysis {
   cooldownSeconds: number
   analyze: () => void
   reset: () => void
+  structuredOutput: AnalysisStructuredOutput | null
 }
 
 interface FreshnessBlock {
@@ -35,6 +36,7 @@ export function useAIAnalysis(): UseAIAnalysis {
   const [state, setState] = useState<AnalysisState>('idle')
   const [error, setError] = useState<string | null>(null)
   const [cooldownSeconds, setCooldownSeconds] = useState(0)
+  const [structuredOutput, setStructuredOutput] = useState<AnalysisStructuredOutput | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const optionChainCapturedAtRef = useRef<number>(0)
   const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -50,6 +52,7 @@ export function useAIAnalysis(): UseAIAnalysis {
 
     setText('')
     setError(null)
+    setStructuredOutput(null)
     setState('loading')
 
     const marketSnapshot = {
@@ -182,6 +185,18 @@ export function useAIAnalysis(): UseAIAnalysis {
               // skip
             }
           }
+          if (line.startsWith('event: structured')) {
+            const dataLine = lines[lines.indexOf(line) + 1] ?? ''
+            if (dataLine.startsWith('data: ')) {
+              try {
+                const parsed = JSON.parse(dataLine.slice(6)) as AnalysisStructuredOutput
+                setStructuredOutput(parsed)
+                useMarketStore.getState().setLastAnalysisOutput(parsed)
+              } catch {
+                // ignore malformed structured output
+              }
+            }
+          }
           if (line.startsWith('event: done')) {
             setState('done')
           }
@@ -213,5 +228,5 @@ export function useAIAnalysis(): UseAIAnalysis {
     setState('idle')
   }, [])
 
-  return { text, state, error, cooldownSeconds, analyze, reset }
+  return { text, state, error, cooldownSeconds, analyze, reset, structuredOutput }
 }

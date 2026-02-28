@@ -1,5 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { marketState } from './marketState'
+import { CONFIG } from '../config'
+import { getTradierClient } from '../lib/tradierClient'
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -60,5 +62,24 @@ export async function restorePriceHistory(): Promise<void> {
       marketState.vix.priceHistory = prices
     }
     console.log(`[PriceHistory] Restaurado ${prices.length} minutos de ${symbol}`)
+  }
+}
+
+/**
+ * Restores SPY intraday price history from Tradier 1-min time-sales.
+ * Overwrites the Supabase-based history when available, since Tradier provides
+ * richer intraday granularity (every 1-min bar since 09:30 ET).
+ * No-op if TRADIER_API_KEY is not configured.
+ */
+export async function restoreFromTradier(): Promise<void> {
+  if (!CONFIG.TRADIER_API_KEY) return
+  try {
+    const bars = await getTradierClient().getTimeSales('SPY', '1min')
+    if (!bars.length) return
+    const prices = bars.map((b) => b.close)
+    marketState.spy.priceHistory = prices.slice(-390)
+    console.log(`[PriceHistory] Restored ${prices.length} bars from Tradier timesales`)
+  } catch (err) {
+    console.error('[PriceHistory] Tradier restore failed:', (err as Error).message)
   }
 }
