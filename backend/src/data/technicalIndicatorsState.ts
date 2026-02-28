@@ -1,3 +1,5 @@
+import { emitter } from './marketState'
+
 export interface TechnicalData {
   rsi14: number
   macd: {
@@ -23,4 +25,5 @@ export function getTechnicalSnapshot(): TechnicalData | null {
 
 export function publishTechnicalData(data: TechnicalData): void {
   snapshot = data
+  emitter.emit('technical-indicators', data)
 }

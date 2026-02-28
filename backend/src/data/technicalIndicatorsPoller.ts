@@ -1,90 +1,79 @@
 /**
- * technicalIndicatorsPoller — fetches RSI, MACD, BBANDS from Alpha Vantage.
+ * technicalIndicatorsPoller — calculates RSI, MACD and Bollinger Bands locally
+ * from marketState.spy.priceHistory (390 1-minute bars from Tradier).
  *
- * Design:
- *  - Rotation strategy: 1 indicator per tick (RSI → MACD → BBANDS), cycling every 15min.
- *  - Each full cycle ≈ 45min. ~20 API calls/day — within the 25 req/day free tier.
- *  - First publish happens after all 3 indicators have been fetched at least once.
- *  - Off-hours: poller backs off to 5min checks (no-op unless tick runs).
- *  - If ALPHA_VANTAGE_KEY is not configured, poller does not start.
+ * No external API dependency. Runs every 60s, aligned with the 1-min bar cadence.
+ * Requires at least 35 prices for MACD to be reliable — waits silently if not enough data.
  */
 
-import { CONFIG } from '../config'
+import { marketState } from './marketState'
 import { publishTechnicalData } from './technicalIndicatorsState'
 import type { TechnicalData } from './technicalIndicatorsState'
-import { isMarketOpen } from '../lib/time'
-import { cacheGet, cacheSet } from '../lib/cacheStore'
-
-const CACHE_KEY = 'technical_indicators:SPY'
-const CACHE_TTL_MS = 60 * 60_000  // 60min
-
-const BASE = 'https://www.alphavantage.co/query'
-const SYMBOL = 'SPY'
-const INTERVAL = '15min'
-const POLL_INTERVAL_MS = 15 * 60_000  // 15min during market hours
-
-type Indicator = 'RSI' | 'MACD' | 'BBANDS'
-const ROTATION: Indicator[] = ['RSI', 'MACD', 'BBANDS']
-let rotationIndex = 0
-
-// In-memory accumulator — filled incrementally across 3 ticks
-const acc: Partial<TechnicalData> = {}
 
 // ---------------------------------------------------------------------------
-// Individual fetchers
+// Pure calculation helpers
 // ---------------------------------------------------------------------------
 
-async function fetchRSI(): Promise<void> {
-  const url = `${BASE}?function=RSI&symbol=${SYMBOL}&interval=${INTERVAL}&time_period=14&series_type=close&apikey=${CONFIG.ALPHA_VANTAGE_KEY}`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`RSI HTTP ${res.status}`)
-  const json = await res.json() as Record<string, unknown>
-  const values = json['Technical Analysis: RSI'] as Record<string, { RSI: string }> | undefined
-  if (!values) throw new Error('RSI: no data in response')
-  const latest = Object.values(values)[0]
-  acc.rsi14 = parseFloat(latest.RSI)
-}
-
-async function fetchMACD(): Promise<void> {
-  const url = `${BASE}?function=MACD&symbol=${SYMBOL}&interval=${INTERVAL}&series_type=close&apikey=${CONFIG.ALPHA_VANTAGE_KEY}`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`MACD HTTP ${res.status}`)
-  const json = await res.json() as Record<string, unknown>
-  const values = json['Technical Analysis: MACD'] as Record<string, { MACD: string; MACD_Signal: string; MACD_Hist: string }> | undefined
-  if (!values) throw new Error('MACD: no data in response')
-  const entries = Object.entries(values)
-  const [, latest] = entries[0]
-  const [, prev] = entries[1] ?? entries[0]
-  const histNow = parseFloat(latest.MACD_Hist)
-  const histPrev = parseFloat(prev.MACD_Hist)
-  const crossover: TechnicalData['macd']['crossover'] =
-    histPrev <= 0 && histNow > 0 ? 'bullish' :
-    histPrev >= 0 && histNow < 0 ? 'bearish' : 'none'
-  acc.macd = {
-    macd: parseFloat(latest.MACD),
-    signal: parseFloat(latest.MACD_Signal),
-    histogram: histNow,
-    crossover,
+function calcRSI(prices: number[], period = 14): number {
+  if (prices.length < period + 1) return 50
+  let gains = 0
+  let losses = 0
+  for (let i = prices.length - period; i < prices.length; i++) {
+    const diff = prices[i] - prices[i - 1]
+    if (diff > 0) gains += diff
+    else losses += Math.abs(diff)
   }
+  const avgGain = gains / period
+  const avgLoss = losses / period
+  if (avgLoss === 0) return 100
+  const rs = avgGain / avgLoss
+  return 100 - 100 / (1 + rs)
 }
 
-async function fetchBBANDS(): Promise<void> {
-  const url = `${BASE}?function=BBANDS&symbol=${SYMBOL}&interval=${INTERVAL}&time_period=20&series_type=close&apikey=${CONFIG.ALPHA_VANTAGE_KEY}`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`BBANDS HTTP ${res.status}`)
-  const json = await res.json() as Record<string, unknown>
-  const values = json['Technical Analysis: BBANDS'] as Record<string, { 'Real Upper Band': string; 'Real Middle Band': string; 'Real Lower Band': string }> | undefined
-  if (!values) throw new Error('BBANDS: no data in response')
-  const latest = Object.values(values)[0]
-  const upper = parseFloat(latest['Real Upper Band'])
-  const middle = parseFloat(latest['Real Middle Band'])
-  const lower = parseFloat(latest['Real Lower Band'])
-  // position placeholder — openai.ts refines with live SPY price via deriveBBPosition
-  acc.bbands = { upper, middle, lower, position: 'middle' }
+function calcEMA(prices: number[], period: number): number[] {
+  const k = 2 / (period + 1)
+  const ema: number[] = [prices[0]]
+  for (let i = 1; i < prices.length; i++) {
+    ema.push(prices[i] * k + ema[i - 1] * (1 - k))
+  }
+  return ema
+}
+
+function calcMACD(prices: number[]): TechnicalData['macd'] {
+  if (prices.length < 35) {
+    return { macd: 0, signal: 0, histogram: 0, crossover: 'none' }
+  }
+  const ema12 = calcEMA(prices, 12)
+  const ema26 = calcEMA(prices, 26)
+  const macdLine = ema12.map((v, i) => v - ema26[i])
+  const signalLine = calcEMA(macdLine, 9)
+  const macd = macdLine[macdLine.length - 1]
+  const signal = signalLine[signalLine.length - 1]
+  const histNow = macd - signal
+  const histPrev =
+    macdLine[macdLine.length - 2] - signalLine[signalLine.length - 2]
+  const crossover: TechnicalData['macd']['crossover'] =
+    histPrev <= 0 && histNow > 0
+      ? 'bullish'
+      : histPrev >= 0 && histNow < 0
+        ? 'bearish'
+        : 'none'
+  return { macd, signal, histogram: histNow, crossover }
+}
+
+function calcBBands(prices: number[], period = 20): TechnicalData['bbands'] {
+  const slice = prices.slice(-period)
+  if (slice.length < period) {
+    return { upper: 0, middle: 0, lower: 0, position: 'middle' }
+  }
+  const middle = slice.reduce((a, b) => a + b, 0) / period
+  const variance = slice.reduce((acc, p) => acc + (p - middle) ** 2, 0) / period
+  const stdDev = Math.sqrt(variance)
+  return { upper: middle + 2 * stdDev, middle, lower: middle - 2 * stdDev, position: 'middle' }
 }
 
 // ---------------------------------------------------------------------------
-// BB position helper (exported for use in openai.ts at analysis time)
+// BB position helper — exported for use in openai.ts at analysis time
 // ---------------------------------------------------------------------------
 
 export function deriveBBPosition(
@@ -102,56 +91,33 @@ export function deriveBBPosition(
 }
 
 // ---------------------------------------------------------------------------
-// Single poll tick
+// Single calculation tick
 // ---------------------------------------------------------------------------
 
-async function tick(): Promise<void> {
-  const indicator = ROTATION[rotationIndex % ROTATION.length]
-  rotationIndex++
-
-  try {
-    if (indicator === 'RSI') await fetchRSI()
-    else if (indicator === 'MACD') await fetchMACD()
-    else await fetchBBANDS()
-    console.log(`[TechIndicators] ${indicator} fetched`)
-  } catch (err) {
-    console.error(`[TechIndicators] ${indicator} fetch failed:`, (err as Error).message)
+function tick(): void {
+  const prices = marketState.spy.priceHistory
+  if (prices.length < 35) {
+    console.log(`[TechIndicators] Waiting for price history (${prices.length}/35 bars)`)
     return
   }
 
-  // Only publish when all 3 have been fetched at least once
-  if (acc.rsi14 == null || acc.macd == null || acc.bbands == null) {
-    console.log(`[TechIndicators] Waiting for remaining indicators before publish`)
-    return
-  }
+  const rsi14 = calcRSI(prices)
+  const macd = calcMACD(prices)
+  const bbands = calcBBands(prices)
 
   const data: TechnicalData = {
-    rsi14: acc.rsi14,
-    macd: acc.macd,
-    bbands: acc.bbands,
+    rsi14,
+    macd,
+    bbands,
     capturedAt: new Date().toISOString(),
   }
 
   publishTechnicalData(data)
-  await cacheSet(CACHE_KEY, data, CACHE_TTL_MS, 'alpha-vantage')
   console.log(
-    `[TechIndicators] Published — RSI=${data.rsi14.toFixed(2)} ` +
-    `MACD_hist=${data.macd.histogram.toFixed(4)} ` +
-    `BB_mid=${data.bbands.middle.toFixed(2)}`,
+    `[TechIndicators] RSI=${rsi14.toFixed(2)} ` +
+      `MACD_hist=${macd.histogram.toFixed(4)} ` +
+      `BB_mid=${bbands.middle.toFixed(2)}`,
   )
-}
-
-// ---------------------------------------------------------------------------
-// Adaptive scheduler
-// ---------------------------------------------------------------------------
-
-function scheduleNext(): void {
-  const delay = isMarketOpen() ? POLL_INTERVAL_MS : 5 * 60_000
-  setTimeout(() => {
-    tick()
-      .catch((e) => console.error('[TechIndicators] tick error:', e))
-      .finally(scheduleNext)
-  }, delay)
 }
 
 // ---------------------------------------------------------------------------
@@ -159,21 +125,7 @@ function scheduleNext(): void {
 // ---------------------------------------------------------------------------
 
 export function startTechnicalIndicatorsPoller(): void {
-  if (!CONFIG.ALPHA_VANTAGE_KEY) {
-    console.log('[TechIndicators] ALPHA_VANTAGE_KEY not set — skipping poller')
-    return
-  }
-  console.log('[TechIndicators] Starting poller (rotation: RSI→MACD→BBANDS, 15min)')
-  Promise.resolve()
-    .then(async () => {
-      const cached = await cacheGet<TechnicalData>(CACHE_KEY)
-      if (cached) {
-        Object.assign(acc, cached)
-        publishTechnicalData(cached)
-        console.log('[TechIndicators] Restored from cache')
-      }
-    })
-    .then(() => tick())
-    .catch((e) => console.error('[TechIndicators] Initial tick error:', e))
-    .finally(scheduleNext)
+  console.log('[TechIndicators] Starting local poller (RSI/MACD/BBands from priceHistory, 60s)')
+  tick()
+  setInterval(tick, 60_000)
 }

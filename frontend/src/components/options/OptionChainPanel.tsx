@@ -33,9 +33,19 @@ function LegCell({ leg, type }: LegCellProps) {
           Δ{fmtGreek(leg.delta)}
         </span>
       )}
+      {leg.gamma !== null && (
+        <span className="text-[10px] tabular-nums text-text-muted">
+          γ{fmtGreek(leg.gamma, 4)}
+        </span>
+      )}
       {leg.theta !== null && (
         <span className="text-[10px] tabular-nums text-text-muted">
           θ{fmtGreek(leg.theta)}
+        </span>
+      )}
+      {leg.vega !== null && (
+        <span className="text-[10px] tabular-nums text-text-muted">
+          ν{fmtGreek(leg.vega, 2)}
         </span>
       )}
     </div>
@@ -107,8 +117,8 @@ export const OptionChainPanel = memo(function OptionChainPanel() {
             {/* Column header */}
             <div className="grid grid-cols-[72px_1fr_1fr] gap-x-3 text-[9px] text-text-muted uppercase tracking-wide mb-1 px-1">
               <span>Strike</span>
-              <span>Call (bid/ask Δ θ)</span>
-              <span>Put (bid/ask Δ θ)</span>
+              <span>Call (bid/ask Δ γ θ ν)</span>
+              <span>Put (bid/ask Δ γ θ ν)</span>
             </div>
 
             {/* Strike rows */}

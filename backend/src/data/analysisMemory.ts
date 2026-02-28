@@ -38,7 +38,7 @@ export async function saveAnalysis(
       user_id: userId,
       summary,
       full_text: fullText,
-      embedding: JSON.stringify(embedding),
+      embedding: embedding,
       market_snapshot: marketSnapshot,
       bias: structured?.bias ?? null,
       structured_output: structured ?? null,

@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'http'
 import { emitter, marketState, newsSnapshot } from '../data/marketState'
 import { getAdvancedMetricsSnapshot } from '../data/advancedMetricsState'
 import { getVIXTermStructureSnapshot } from '../data/vixTermStructureState'
+import { getTechnicalSnapshot } from '../data/technicalIndicatorsState'
 import type { SSEClient } from '../types/market'
 import { SSEBatcher } from '../lib/sseBatcher'
 import { checkAlerts } from '../data/alertEngine'
@@ -34,8 +35,7 @@ export function broadcastToUser(userId: string, event: string, data: unknown): v
 }
 
 // Forward market state events to all SSE clients
-emitter.on('quote', (data) => broadcast('quote', data))
-emitter.on('vix', (data) => broadcast('vix', data))
+// Note: 'quote' and 'vix' are now served via WebSocket (/ws/ticks) — not SSE
 emitter.on('ivrank', (data) => broadcast('ivrank', data))
 emitter.on('status', (data) => broadcast('status', data))
 const newsfeedBatcher = new SSEBatcher(500, (events) => {
@@ -60,6 +60,7 @@ emitter.on('newsfeed', (data) => {
 
 emitter.on('advanced-metrics', (data) => broadcast('advanced-metrics', data))
 emitter.on('vix-term-structure', (data) => broadcast('vix-term-structure', data))
+emitter.on('technical-indicators', (data) => broadcast('technical-indicators', data))
 emitter.on('quote', (data) => {
   if (data.last !== null) checkAlerts(data.last)
 })
@@ -101,35 +102,7 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     clientsByUser.set(userId, [...existing, client])
     console.log(`[SSE] Client connected: ${clientId} (total: ${clients.size})`)
 
-    // Send current market snapshot immediately
-    if (marketState.spy.last !== null) {
-      client.write('quote', {
-        symbol: 'SPY',
-        bid: marketState.spy.bid,
-        ask: marketState.spy.ask,
-        last: marketState.spy.last,
-        change: marketState.spy.change,
-        changePct: marketState.spy.changePct,
-        volume: marketState.spy.volume,
-        dayHigh: marketState.spy.dayHigh,
-        dayLow: marketState.spy.dayLow,
-        priceHistory: marketState.spy.priceHistory,
-        timestamp: marketState.spy.lastUpdated,
-      })
-    }
-
-    if (marketState.vix.last !== null) {
-      client.write('vix', {
-        symbol: '$VIX.X',
-        last: marketState.vix.last,
-        change: marketState.vix.change,
-        changePct: marketState.vix.changePct,
-        level: marketState.vix.level,
-        priceHistory: marketState.vix.priceHistory,
-        timestamp: marketState.vix.lastUpdated,
-      })
-    }
-
+    // Note: SPY/VIX snapshots are sent via WebSocket (/ws/ticks) on connect — not SSE
     if (marketState.ivRank.value !== null) {
       client.write('ivrank', {
         ivRank: marketState.ivRank.value,
@@ -176,6 +149,12 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     const tsSnapshot = getVIXTermStructureSnapshot()
     if (tsSnapshot) {
       client.write('vix-term-structure', tsSnapshot)
+    }
+
+    // Send cached technical indicators snapshot
+    const techSnapshot = getTechnicalSnapshot()
+    if (techSnapshot) {
+      client.write('technical-indicators', techSnapshot)
     }
 
     // Heartbeat ping every 15s — keeps proxies from closing idle connections

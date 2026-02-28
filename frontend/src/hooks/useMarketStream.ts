@@ -6,8 +6,6 @@ const BASE_DELAY = 1000
 const MAX_DELAY = 15_000
 
 export function useMarketStream(): void {
-  const updateSPY = useMarketStore((s) => s.updateSPY)
-  const updateVIX = useMarketStore((s) => s.updateVIX)
   const updateIVRank = useMarketStore((s) => s.updateIVRank)
   const updateConnection = useMarketStore((s) => s.updateConnection)
   const updateNewsFeed = useMarketStore((s) => s.updateNewsFeed)
@@ -15,6 +13,7 @@ export function useMarketStream(): void {
   const setGEXProfile = useMarketStore((s) => s.setGEXProfile)
   const setPutCallRatio = useMarketStore((s) => s.setPutCallRatio)
   const setVIXTermStructure = useMarketStore((s) => s.setVIXTermStructure)
+  const setTechnicalIndicators = useMarketStore((s) => s.setTechnicalIndicators)
   const addAlert = useMarketStore((s) => s.addAlert)
 
   const esRef = useRef<EventSource | null>(null)
@@ -38,40 +37,6 @@ export function useMarketStream(): void {
 
       const es = new EventSource(url)
       esRef.current = es
-
-      es.addEventListener('quote', (e) => {
-        try {
-          const data = JSON.parse(e.data)
-          updateSPY({
-            last: data.last,
-            bid: data.bid,
-            ask: data.ask,
-            change: data.change,
-            changePct: data.changePct,
-            volume: data.volume,
-            dayHigh: data.dayHigh,
-            dayLow: data.dayLow,
-            priceHistory: data.priceHistory ?? [],
-          })
-        } catch {
-          // ignore parse errors
-        }
-      })
-
-      es.addEventListener('vix', (e) => {
-        try {
-          const data = JSON.parse(e.data)
-          updateVIX({
-            last: data.last,
-            change: data.change,
-            changePct: data.changePct,
-            level: data.level,
-            priceHistory: data.priceHistory ?? [],
-          })
-        } catch {
-          // ignore
-        }
-      })
 
       es.addEventListener('ivrank', (e) => {
         try {
@@ -223,6 +188,15 @@ export function useMarketStream(): void {
           setVIXTermStructure({ ...data, lastUpdated: Date.now() })
         } catch (err) {
           console.warn('[SSE] vix-term-structure parse error:', (err as Error).message)
+        }
+      })
+
+      es.addEventListener('technical-indicators', (e) => {
+        try {
+          const data = JSON.parse(e.data)
+          setTechnicalIndicators(data)
+        } catch {
+          // ignore parse errors
         }
       })
 

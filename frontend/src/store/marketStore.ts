@@ -65,6 +65,24 @@ export interface AnalysisStructuredOutput {
   risk_factors: string[]
 }
 
+// Technical Indicators type (mirrored from backend technicalIndicatorsState)
+export interface TechnicalIndicatorsData {
+  rsi14: number
+  macd: {
+    macd: number
+    signal: number
+    histogram: number
+    crossover: 'bullish' | 'bearish' | 'none'
+  }
+  bbands: {
+    upper: number
+    middle: number
+    lower: number
+    position: 'above_upper' | 'near_upper' | 'middle' | 'near_lower' | 'below_lower'
+  }
+  capturedAt: string
+}
+
 // VIX Term Structure type (mirrored from backend vixTermStructure)
 export interface VIXTermStructureData {
   spot: number
@@ -217,6 +235,7 @@ interface MarketStore {
   lastAnalysisOutput: AnalysisStructuredOutput | null
   putCallRatio: PutCallRatioData | null
   vixTermStructure: VIXTermStructureData | null
+  technicalIndicators: TechnicalIndicatorsData | null
 
   updateSPY: (data: Partial<SPYData>) => void
   updateVIX: (data: Partial<VIXData>) => void
@@ -230,6 +249,7 @@ interface MarketStore {
   setLastAnalysisOutput: (output: AnalysisStructuredOutput | null) => void
   setPutCallRatio: (data: PutCallRatioData | null) => void
   setVIXTermStructure: (data: VIXTermStructureData | null) => void
+  setTechnicalIndicators: (data: TechnicalIndicatorsData | null) => void
   alerts: AlertToast[]
   addAlert: (alert: AlertToast) => void
   dismissAlert: (id: string) => void
@@ -292,6 +312,7 @@ export const useMarketStore = create<MarketStore>()(
     lastAnalysisOutput: null,
     putCallRatio: null,
     vixTermStructure: null,
+    technicalIndicators: null,
     alerts: [],
 
     updateSPY: (data) =>
@@ -337,6 +358,7 @@ export const useMarketStore = create<MarketStore>()(
     setLastAnalysisOutput: (output) => set({ lastAnalysisOutput: output }),
     setPutCallRatio: (data) => set({ putCallRatio: data }),
     setVIXTermStructure: (data) => set({ vixTermStructure: data }),
+    setTechnicalIndicators: (data) => set({ technicalIndicators: data }),
 
     isDataReady: () => {
       return get().spy.last !== null
