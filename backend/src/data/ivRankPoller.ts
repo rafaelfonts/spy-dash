@@ -5,7 +5,7 @@ import { cacheGet, cacheSet } from '../lib/cacheStore'
 
 const POLL_INTERVAL = 60_000
 const CACHE_KEY = 'ivrank_snapshot'
-const CACHE_TTL_MS = 90_000  // 90s = 60s × 1.5
+const CACHE_TTL_MS = 14 * 60 * 60 * 1000  // 14h — survives overnight/weekend (IV Rank changes on daily cadence)
 
 // API returns numeric fields as strings (e.g. "0.128494281") — parse explicitly.
 function toFloat(v: unknown): number | null {
@@ -53,12 +53,15 @@ async function pollIVRank(): Promise<void> {
     // IVx — Tastytrade composite implied volatility index (absolute level, 0–1 decimal → %)
     const ivxRaw = toFloat(item['implied-volatility-index'])
 
+    const hv30Raw = toFloat(item['hv-30-day'])
+
     // Diagnostic log — raw IV fields from Tastytrade /market-metrics
     console.log('[IVRankPoller] Raw fields:', {
       'implied-volatility-index': item['implied-volatility-index'],
       'implied-volatility-index-rank': item['implied-volatility-index-rank'],
       'tw-implied-volatility-index-rank': item['tw-implied-volatility-index-rank'],
       'implied-volatility-percentile': item['implied-volatility-percentile'],
+      'hv-30-day': item['hv-30-day'],
     })
 
     if (ivRank !== null) {
@@ -66,12 +69,14 @@ async function pollIVRank(): Promise<void> {
         value: ivRank * 100,
         percentile: ivPercentile !== null ? ivPercentile * 100 : null,
         ivx: ivxRaw !== null ? ivxRaw * 100 : null,
+        hv30: hv30Raw !== null ? hv30Raw * 100 : null,
       }
       updateIVRank(payload)
       await cacheSet(CACHE_KEY, payload, CACHE_TTL_MS, 'tastytrade')
       console.log(
         `[IVRankPoller] IV Rank: ${payload.value.toFixed(1)}%` +
-        ` | IVx: ${payload.ivx !== null ? payload.ivx.toFixed(1) : 'N/A'}`,
+        ` | IVx: ${payload.ivx !== null ? payload.ivx.toFixed(1) : 'N/A'}` +
+        ` | HV30: ${payload.hv30 !== null ? payload.hv30.toFixed(1) : 'N/A'}%`,
       )
     }
   } catch (err) {

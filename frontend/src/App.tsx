@@ -13,6 +13,7 @@ import { VIXCard } from './components/cards/VIXCard'
 import { AIPanel } from './components/ai/AIPanel'
 import { OptionChainPanel } from './components/options/OptionChainPanel'
 import { GEXPanel } from './components/options/GEXPanel'
+import { TechnicalIndicatorsCard } from './components/cards/TechnicalIndicatorsCard'
 import { NewsFeedPanel } from './components/news/NewsFeedPanel'
 import { AlertOverlay } from './components/ui/AlertOverlay'
 
@@ -41,6 +42,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         </div>
         <AIPanel />
         <GEXPanel />
+        <TechnicalIndicatorsCard />
         <OptionChainPanel />
         <NewsFeedPanel />
       </main>

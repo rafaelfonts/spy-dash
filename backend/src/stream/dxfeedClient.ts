@@ -16,14 +16,21 @@ const QUOTE_FIELDS   = ['eventSymbol', 'bidPrice', 'askPrice', 'bidSize', 'askSi
 const TRADE_FIELDS   = ['eventSymbol', 'price', 'dayVolume', 'change', 'dayTurnover'] as const
 const SUMMARY_FIELDS = ['eventSymbol', 'dayHighPrice', 'dayLowPrice', 'prevDayClosePrice'] as const
 
-// Watchdog: reconnect if no SPY data arrives for this long (1.5x server keepalive of 60s)
-const STALE_THRESHOLD_MS = 90_000
+// Watchdog: reconnect if no SPY data arrives for this long.
+// 5 min gives enough headroom for weekends/after-hours when DXFeed sends the initial
+// Summary burst and then goes quiet — 90s was triggering endless reconnect loops.
+const STALE_THRESHOLD_MS = 300_000
 
 let ws: WebSocket | null = null
 let keepaliveTimer: NodeJS.Timeout | null = null
 let watchdogTimer: NodeJS.Timeout | null = null
 let state: DXLinkState = 'idle'
 let running = false
+// Tracks when DXFeed last sent a FEED_DATA packet on the current connection.
+// Reset to 0 on each new connection; set on first FEED_DATA received.
+// Watchdog only fires when > 0 — prevents false-positive reconnects on weekends
+// when DXFeed is live but sends no market data (feed is idle, not stale).
+let lastFeedDataAt = 0
 
 const reconnector = new Reconnector({
   maxAttempts: 20,
@@ -48,7 +55,10 @@ function clearWatchdog(): void {
 function resetWatchdog(): void {
   clearWatchdog()
   watchdogTimer = setInterval(() => {
-    if (state === 'subscribed' && marketState.spy.lastUpdated > 0) {
+    // Only evaluate staleness if DXFeed has sent at least one FEED_DATA packet
+    // on this connection. On weekends the feed is live but idle — lastFeedDataAt
+    // stays 0 — so we skip the check and avoid an infinite reconnect loop.
+    if (state === 'subscribed' && lastFeedDataAt > 0) {
       const age = Date.now() - marketState.spy.lastUpdated
       if (age > STALE_THRESHOLD_MS) {
         console.warn(`[DXFeed] Stale data detected (${age}ms), forcing reconnect`)
@@ -105,11 +115,18 @@ function processEventRecord(type: string, values: unknown[]): void {
     const high = values[SUMMARY_FIELDS.indexOf('dayHighPrice')]      as number | null
     const low  = values[SUMMARY_FIELDS.indexOf('dayLowPrice')]       as number | null
     const prev = values[SUMMARY_FIELDS.indexOf('prevDayClosePrice')] as number | null
+    // Guard each field — DXFeed sends NaN for these when market is closed.
+    // Unconditionally writing null would erase valid intraday values restored from cache.
     updateSPY({
-      dayHigh:   toNum(high),
-      dayLow:    toNum(low),
-      prevClose: toNum(prev),
+      ...(isValidNumber(high) && { dayHigh:   toNum(high) }),
+      ...(isValidNumber(low)  && { dayLow:    toNum(low)  }),
+      ...(isValidNumber(prev) && { prevClose: toNum(prev) }),
     })
+    // When market is closed, SPY Trade price is NaN/null. Use prevDayClosePrice as fallback
+    // so the SPY card shows the last closing value instead of blank (mirrors VIX behaviour).
+    if (isValidNumber(prev) && marketState.spy.last === null) {
+      updateSPY({ last: toNum(prev) })
+    }
   } else if (type === 'Trade' && symbol === '$VIX.X') {
     // VIX is an index — bid/ask are always NaN (not tradeable directly).
     // Use Trade price as the authoritative value.
@@ -185,6 +202,7 @@ function handleMessage(raw: string): void {
     // subscribe() is sent after FEED_CONFIG confirms the feed is configured
   } else if (type === 'FEED_CONFIG' && msg.channel === 1) {
     // Server confirmed feed configuration — now safe to subscribe
+    lastFeedDataAt = 0  // reset per-connection activity tracker
     subscribe()
     state = 'subscribed'
     console.log('[DXFeed] Feed configured and subscribed')
@@ -192,6 +210,7 @@ function handleMessage(raw: string): void {
     resetWatchdog()
     updateConnection({ wsState: 'OPEN', lastConnected: Date.now() })
   } else if (type === 'FEED_DATA' && msg.channel === 1) {
+    lastFeedDataAt = Date.now()  // mark that feed is actively sending data
     if (Array.isArray(msg.data)) {
       parseCompactFeedData(msg.data)
     }

@@ -6,7 +6,7 @@ import { cacheSet } from '../lib/cacheStore'
 
 const POLL_INTERVAL = 5 * 60 * 1000 // 5 minutes
 const CACHE_KEY = 'vix_snapshot'
-const CACHE_TTL_MS = 330_000  // 330s = 5min × 1.1
+const CACHE_TTL_MS = 14 * 60 * 60 * 1000  // 14h — survives overnight/weekend so VIX is restored on next restart
 // DXFeed is considered stale if it hasn't updated VIX in this window
 const DXFEED_STALE_MS = 5 * 60 * 1000
 

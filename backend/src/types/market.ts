@@ -1,3 +1,8 @@
+export interface PricePoint {
+  t: number   // epoch ms timestamp
+  p: number   // price
+}
+
 export interface SPYData {
   last: number | null
   bid: number | null
@@ -9,7 +14,7 @@ export interface SPYData {
   dayHigh: number | null
   dayLow: number | null
   volume: number | null
-  priceHistory: number[]
+  priceHistory: PricePoint[]
   lastUpdated: number
 }
 
@@ -18,7 +23,7 @@ export interface VIXData {
   change: number | null
   changePct: number | null
   level: 'low' | 'moderate' | 'high' | null
-  priceHistory: number[]
+  priceHistory: PricePoint[]
   lastUpdated: number
 }
 
@@ -26,6 +31,7 @@ export interface IVRankData {
   value: number | null
   percentile: number | null
   ivx: number | null           // Tastytrade composite IV index (absolute level, e.g. 24.8%)
+  hv30: number | null          // Historical Volatility 30-day (e.g. 18.5%)
   label: 'low' | 'medium' | 'high' | null
   lastUpdated: number
 }
@@ -112,7 +118,7 @@ export interface QuoteEvent {
   volume: number | null
   dayHigh: number | null
   dayLow: number | null
-  priceHistory: number[]
+  priceHistory: PricePoint[]
   timestamp: number
 }
 
@@ -122,7 +128,7 @@ export interface VIXEvent {
   change: number | null
   changePct: number | null
   level: 'low' | 'moderate' | 'high' | null
-  priceHistory: number[]
+  priceHistory: PricePoint[]
   timestamp: number
 }
 
@@ -130,6 +136,7 @@ export interface IVRankEvent {
   ivRank: number | null
   ivPercentile: number | null
   ivx: number | null
+  hv30: number | null
   label: 'low' | 'medium' | 'high' | null
   timestamp: number
 }

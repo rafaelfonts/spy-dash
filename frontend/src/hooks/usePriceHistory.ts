@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
+import type { PricePoint } from '../store/marketStore'
 import { supabase } from '../lib/supabase'
 
 interface PriceMinute {
@@ -7,7 +8,7 @@ interface PriceMinute {
   price_avg: string
 }
 
-async function fetchHistory(symbol: string, minutes: number): Promise<number[]> {
+async function fetchHistory(symbol: string, minutes: number): Promise<PricePoint[]> {
   const {
     data: { session },
   } = await supabase.auth.getSession()
@@ -19,7 +20,10 @@ async function fetchHistory(symbol: string, minutes: number): Promise<number[]> 
   if (!res.ok) return []
 
   const json = (await res.json()) as { data: PriceMinute[] }
-  return (json.data ?? []).map((d) => parseFloat(d.price_avg))
+  return (json.data ?? []).map((d) => ({
+    t: new Date(d.minute).getTime(),
+    p: parseFloat(d.price_avg),
+  }))
 }
 
 export function usePriceHistory(): void {

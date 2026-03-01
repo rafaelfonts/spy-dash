@@ -26,7 +26,7 @@ import { registerAnalysisSearch } from './api/analysisSearch'
 import { getOptionChain } from './data/optionChain'
 import { requireAuth } from './middleware/authMiddleware'
 import { restoreSnapshotsFromCache } from './lib/restoreCache'
-import { restorePriceHistory, restoreFromTradier } from './data/priceHistory'
+import { restorePriceHistory, restoreFromTradier, restoreSPYQuoteFromTradier, restoreSPYQuoteFromCache, restoreIntradayFromRedis, startIntradayCachePersistence } from './data/priceHistory'
 import { cleanupExpiredCache } from './lib/cacheStore'
 import { getBreakerStatuses, resetBreaker, listBreakers } from './lib/circuitBreaker'
 
@@ -35,6 +35,22 @@ const fastify = Fastify({
     level: 'info',
   },
 })
+
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout>
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+  })
+  try {
+    const result = await Promise.race([p, timeout])
+    clearTimeout(timer!)
+    return result as T
+  } catch (err) {
+    clearTimeout(timer!)
+    console.warn(`[Bootstrap] ${label} failed — proceeding without: ${(err as Error).message}`)
+    return null
+  }
+}
 
 async function bootstrap(): Promise<void> {
   // CORS
@@ -91,44 +107,61 @@ async function bootstrap(): Promise<void> {
     })
   })
 
-  // Start server
+  // Start server immediately — health endpoint must be available without delay.
+  // Data restores run in parallel in the background after listen() returns.
   await fastify.listen({ port: CONFIG.PORT, host: '0.0.0.0' })
   console.log(`\n🚀 SPY Dash backend running on http://localhost:${CONFIG.PORT}`)
   console.log(`   Health: http://localhost:${CONFIG.PORT}/health`)
   console.log(`   Stream: http://localhost:${CONFIG.PORT}/stream/market\n`)
 
-  // Restore cached market snapshots before pollers start (independent of Tastytrade token)
-  await restoreSnapshotsFromCache()
-  await restorePriceHistory()
-  await restoreFromTradier()  // overwrites Supabase history with richer Tradier 1-min bars
-
   // Daily cleanup of expired cache entries
   setInterval(() => cleanupExpiredCache().catch(console.error), 24 * 60 * 60 * 1000)
 
-  // Tradier-based pollers are independent of Tastytrade — start unconditionally
-  startAdvancedMetricsPoller()
-  startTechnicalIndicatorsPoller()  // no-op if ALPHA_VANTAGE_KEY not set
+  // Restore market state in parallel — non-blocking so the server stays responsive.
+  // Each operation has its own timeout so a slow/unreachable service never hangs startup.
+  console.log('[Bootstrap] Restoring market state (parallel, non-blocking)...')
+  Promise.allSettled([
+    withTimeout(initTokenManager(), 10_000, 'initTokenManager'),
+    withTimeout(restoreSnapshotsFromCache(), 8_000, 'restoreSnapshotsFromCache'),
+    // Intraday time-series: Redis first (instant, today-only), then Supabase, then Tradier
+    // (overwrites with richer data). Sequential to avoid races on priceHistory.
+    withTimeout(
+      restoreIntradayFromRedis()
+        .then(() => restorePriceHistory())
+        .then(() => restoreFromTradier()),
+      20_000,
+      'restoreIntradayHistory',
+    ),
+    // Restore SPY quote: cache first (instant, 14h TTL), then Tradier (authoritative + refreshes cache).
+    withTimeout(
+      restoreSPYQuoteFromCache().then(() => restoreSPYQuoteFromTradier()),
+      13_000,
+      'restoreSPYQuote',
+    ),
+  ]).then(() => {
+    console.log('[Bootstrap] Market state restore complete — starting pollers and streams.')
+    startIntradayCachePersistence()
 
-  // Initialize token and start streaming
-  console.log('[Bootstrap] Initializing Tastytrade OAuth2...')
-  try {
-    await initTokenManager()
-    console.log('[Bootstrap] Token acquired. Starting DXFeed stream...')
-    startDXFeedStream()
-    startVIXPoller()
-    startVIXTermStructurePoller()
-    startIVRankPoller()
-    startEarningsCalendar()
-    startFredPoller()
-    startFearGreedPoller()
-    startMacroCalendar()
-    startNewsAggregator()
-    startBlsPoller()
-  } catch (err) {
-    console.error('[Bootstrap] Failed to initialize token:', (err as Error).message)
-    console.error('[Bootstrap] The server is running but market data will not stream.')
-    console.error('[Bootstrap] Check your TT_REFRESH_TOKEN in .env')
-  }
+    // Tradier-based pollers are independent of Tastytrade — start unconditionally
+    startAdvancedMetricsPoller()
+    startTechnicalIndicatorsPoller()
+
+    // Start streaming (token was initialized above)
+    try {
+      startDXFeedStream()
+      startVIXPoller()
+      startVIXTermStructurePoller()
+      startIVRankPoller()
+      startEarningsCalendar()
+      startFredPoller()
+      startFearGreedPoller()
+      startMacroCalendar()
+      startNewsAggregator()
+      startBlsPoller()
+    } catch (err) {
+      console.error('[Bootstrap] Failed to start streaming services:', (err as Error).message)
+    }
+  }).catch(console.error)
 }
 
 bootstrap().catch((err) => {

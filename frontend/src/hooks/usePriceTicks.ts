@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
+import type { PricePoint } from '../store/marketStore'
 import { supabase } from '../lib/supabase'
 
 const BASE_DELAY = 1000
@@ -12,7 +13,7 @@ const MAX_HISTORY = 390
 function getWsUrl(token: string | undefined): string {
   const apiBase = import.meta.env.VITE_API_URL ?? ''
   const wsBase = apiBase
-    ? apiBase.replace(/^https?/, (p) => (p === 'https' ? 'wss' : 'ws'))
+    ? apiBase.replace(/^https?/, (p: string) => (p === 'https' ? 'wss' : 'ws'))
     : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
   return token
     ? `${wsBase}/ws/ticks?token=${encodeURIComponent(token)}`
@@ -28,8 +29,8 @@ export function usePriceTicks(): void {
   const attemptsRef = useRef(0)
   const mountedRef = useRef(true)
   // Local history buffers — accumulate ticks in-hook, avoid re-sending full array each tick
-  const spyHistoryRef = useRef<number[]>([])
-  const vixHistoryRef = useRef<number[]>([])
+  const spyHistoryRef = useRef<PricePoint[]>([])
+  const vixHistoryRef = useRef<PricePoint[]>([])
 
   useEffect(() => {
     mountedRef.current = true
@@ -50,47 +51,66 @@ export function usePriceTicks(): void {
           const msg = JSON.parse(e.data as string)
 
           if (msg.type === 'snapshot') {
-            // Full state snapshot sent once on connect — initialise history buffers
+            // Full state snapshot sent once on connect — initialise history buffers.
             spyHistoryRef.current = msg.spy?.priceHistory ?? []
             vixHistoryRef.current = msg.vix?.priceHistory ?? []
-            updateSPY({ ...msg.spy })
-            updateVIX({ ...msg.vix })
+            // Always sync history buffers (arrays, not scalars).
+            updateSPY({ priceHistory: [...spyHistoryRef.current] })
+            updateVIX({ priceHistory: [...vixHistoryRef.current] })
+            // Only apply scalar fields that are non-null — prevents overwriting a
+            // previously restored price (from cache/DXFeed) with null from a backend
+            // snapshot that arrived before restores completed.
+            const { priceHistory: _sh, ...spyScalars } = (msg.spy ?? {}) as Record<string, unknown>
+            const { priceHistory: _vh, ...vixScalars } = (msg.vix ?? {}) as Record<string, unknown>
+            const spyNonNull = Object.fromEntries(Object.entries(spyScalars).filter(([, v]) => v !== null))
+            const vixNonNull = Object.fromEntries(Object.entries(vixScalars).filter(([, v]) => v !== null))
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (Object.keys(spyNonNull).length) updateSPY(spyNonNull as any)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (Object.keys(vixNonNull).length) updateVIX(vixNonNull as any)
             return
           }
 
-          if (msg.t === 'q') {
-            // SPY tick — accumulate priceHistory locally
-            if (msg.l !== null) {
-              spyHistoryRef.current.push(msg.l)
-              if (spyHistoryRef.current.length > MAX_HISTORY) {
-                spyHistoryRef.current.shift()
+          // Ticks may arrive as a single object or an array (100ms batch window)
+          const ticks = Array.isArray(msg) ? msg : [msg]
+          for (const tick of ticks) {
+            if (tick.t === 'q') {
+              // SPY tick — accumulate priceHistory locally
+              if (tick.l !== null) {
+                spyHistoryRef.current.push({ t: tick.ts, p: tick.l })
+                if (spyHistoryRef.current.length > MAX_HISTORY) {
+                  spyHistoryRef.current.shift()
+                }
               }
-            }
-            updateSPY({
-              last: msg.l,
-              bid: msg.b,
-              ask: msg.a,
-              change: msg.c,
-              changePct: msg.cp,
-              volume: msg.v,
-              dayHigh: msg.dh,
-              dayLow: msg.dl,
-              priceHistory: [...spyHistoryRef.current],
-            })
-          } else if (msg.t === 'v') {
-            // VIX tick — accumulate priceHistory locally
-            if (msg.l !== null) {
-              vixHistoryRef.current.push(msg.l)
-              if (vixHistoryRef.current.length > MAX_HISTORY) {
-                vixHistoryRef.current.shift()
+              updateSPY({
+                // Only apply last when non-null — Quote/Summary-triggered ticks carry
+                // l:null when market is closed; must not clear a previously valid price.
+                ...(tick.l !== null && { last: tick.l }),
+                bid: tick.b,
+                ask: tick.a,
+                change: tick.c,
+                changePct: tick.cp,
+                volume: tick.v,
+                dayHigh: tick.dh,
+                dayLow: tick.dl,
+                priceHistory: [...spyHistoryRef.current],
+              })
+            } else if (tick.t === 'v') {
+              // VIX tick — accumulate priceHistory locally
+              if (tick.l !== null) {
+                vixHistoryRef.current.push({ t: tick.ts, p: tick.l })
+                if (vixHistoryRef.current.length > MAX_HISTORY) {
+                  vixHistoryRef.current.shift()
+                }
               }
+              updateVIX({
+                // Same guard: don't clear a valid VIX price with a null tick.
+                ...(tick.l !== null && { last: tick.l }),
+                change: tick.c,
+                changePct: tick.cp,
+                priceHistory: [...vixHistoryRef.current],
+              })
             }
-            updateVIX({
-              last: msg.l,
-              change: msg.c,
-              changePct: msg.cp,
-              priceHistory: [...vixHistoryRef.current],
-            })
           }
         } catch {
           // ignore parse errors

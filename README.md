@@ -17,15 +17,17 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 ### Dados de Mercado em Tempo Real
 - Preço, bid/ask, volume e máx./mín. do dia do SPY via WebSocket DXFeed
 - Índice VIX com fallback chain: DXFeed → Finnhub → Tradier (garantia de dado mesmo quando DXFeed não emite Trade events para índices)
-- Sparkline de preços com histórico intraday restaurado do Tradier no startup (390 bars de 1min, cobrindo ~6.5h de sessão)
-- IV Rank percentual atualizado a cada 60s via Tastytrade API
+- Sparkline de preços intraday (`PricePoint[]` com timestamp + preço) com XAxis de 30min (HH:mm ET), YAxis automático, tooltip personalizado (hora + preço), e ReferenceLine no preço de abertura da sessão
+- Histórico intraday restaurado no startup via cadeia: Redis cache (14h TTL, hoje) → Supabase (até 5 dias) → Tradier timesales (390 bars 1min); persistido no Redis a cada 60s em background
+- IV Rank e HV(30d) atualizados a cada 60s via Tastytrade API; IV Rank incluído na cache com TTL 14h para sobreviver ao fechamento do mercado
 - Flash de tick animado a cada atualização de preço
 - Indicador "AO VIVO" quando o mercado americano está aberto
 
 ### Streaming Resiliente
 - Conexão WebSocket com reconexão automática (backoff exponencial, até 20 tentativas)
 - **WebSocket dedicado `/ws/ticks`** para ticks de preço de alta frequência — payload compacto `{t,l,b,a,c,cp,v,dh,dl,ts}` (~80 bytes/tick vs. ~3KB via SSE anterior); SSE limpo de eventos `quote`/`vix`
-- Detecção de dados stale: reconecta automaticamente se não houver update por mais de 90s
+- **Batching de ticks (100ms):** ticks chegando em alta frequência são agrupados em janela de 100ms por conexão antes de serem enviados ao browser — reduz volume de frames WS durante bursts do DXFeed; frontend aceita tanto objeto único quanto array de ticks
+- Detecção de dados stale: reconecta automaticamente se não houver update por mais de **5 minutos** (`lastFeedDataAt` tracker — watchdog só avalia staleness após o primeiro `FEED_DATA` recebido na conexão, evitando loops de reconexão em fins de semana quando o feed está vivo mas não emite trades)
 - Broadcast SSE para múltiplos clientes simultâneos (global e por usuário)
 - SSE heartbeat a cada 15s para manter conexão viva em proxies
 - Batching de eventos `newsfeed` em janela de 500ms (`SSEBatcher`) para evitar flood de mensagens
@@ -35,6 +37,10 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - **Prompt base limpo:** apenas dados de mercado essenciais (SPY, VIX, IV Rank, option chain, GEX, Volume Profile, VIX Term Structure, indicadores técnicos, memória de análises)
 - **Tool Calling condicional (`fetch_24h_context`):** o modelo decide autonomamente quando buscar o contexto macro (Fear & Greed, VIX term structure, FRED, BLS, earnings, eventos econômicos). Chamado apenas quando VIX > 20, P/C ratio atípico, RSI extremo + crossover MACD, ou o usuário fizer perguntas macro — evita enviar ~3KB de dados desnecessários em análises de rotina
 - **Structured Outputs nativo via `json_schema`:** o modelo retorna diretamente o objeto estruturado `{ bias, confidence, timeframe, key_levels, suggested_strategy, catalysts, risk_factors }` em uma única chamada GPT-4o (elimina a segunda chamada `gpt-4o-mini` anterior)
+- **Histórico intraday no prompt (`buildPriceHistoryBlock`):** sessão OHLC, range %, curva amostrada a cada ~15min, tendência 1h, e estimativa de HV intraday (desvio-padrão de log-returns × √(252×390))
+- **VWAP no bloco técnico:** `buildTechBlock()` inclui `VWAP: $X.XX | SPY ACIMA/ABAIXO do VWAP em Y.YY%` quando disponível (capturado da última barra Tradier timesales via `getLastVwap()`)
+- **Ratio IV/HV(30d):** `buildPrompt()` calcula `ivRank.value / hv30` e sinaliza `[VOL CARA]` quando ratio > 1.3 — dado direto da resposta Tastytrade `hv-30-day`
+- **Aviso de mercado fechado no system prompt:** quando `isMarketOpen()` retorna `false`, o system prompt inclui nota explícita para a IA enquadrar recomendações para a próxima abertura, sem sugerir entradas imediatas
 - Contexto injetado via `buildPrompt()` com blocos numerados + confidence tags + CB statuses
 - **Confidence scores por fonte:** cada bloco do prompt é acompanhado de tag de confiança calculada por `confidenceScorer.ts`. Dados com score BAIXO são marcados como `[DADOS DESATUALIZADOS]` no prompt
 - **Circuit breaker statuses:** o prompt inclui o estado atual de cada circuit breaker para que a IA avalie quais dados podem estar indisponíveis
@@ -85,9 +91,11 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 
 ### Indicadores Técnicos (locais)
 - RSI(14), MACD (12,26,9) e Bollinger Bands (20 períodos, 2σ) calculados diretamente de `marketState.spy.priceHistory` — **sem dependência de API externa**
-- `technicalIndicatorsPoller.ts` re-escrito para cálculo local: usa os 390 bars 1min do histórico intraday em memória
+- `technicalIndicatorsPoller.ts` re-escrito para cálculo local: usa os 390 bars 1min do histórico intraday em memória (mapeados de `PricePoint[]` para `number[]` internamente)
 - `deriveBBPosition(spyPrice, bbands)`: classifica posição do preço relativa às bandas (`above_upper | near_upper | middle | near_lower | below_lower`)
+- Poll reduzido de 60s para **5min** — retry automático em 60s enquanto aguarda ≥35 bars; sem spam de log quando mercado está fechado
 - Publicado via SSE e injetado no prompt IA (bloco base — sempre presente)
+- `TechnicalIndicatorsCard.tsx` exibe RSI gauge, MACD histogram + crossover badge e BB position badge no dashboard
 
 ### Alertas de Preço em Tempo Real
 - Após cada análise IA, o `alertEngine.ts` registra os `key_levels` do structured output como alertas ativos do usuário (até 10 alertas; nova análise substitui todos os anteriores)
@@ -266,8 +274,17 @@ DXFeed WebSocket → marketState (EventEmitter) → wsTicks.ts → /ws/ticks Web
                                                → (SPY/VIX removidos do SSE)
                                                → usePriceTicks.ts → Zustand store
 
-Startup: restorePriceHistory() (Supabase) + restoreFromTradier() (Tradier timesales, 390 bars)
-         → marketState.spy.priceHistory populado antes do primeiro broadcast
+Startup (paralelo, sem bloquear listen()):
+  ├─ initTokenManager (timeout 10s)
+  ├─ restoreSnapshotsFromCache (timeout 8s)
+  ├─ intraday chain (timeout 20s):
+  │    restoreIntradayFromRedis() → restorePriceHistory() → restoreFromTradier()
+  │    (filtra apenas hoje; Supabase busca 5 dias; Tradier sobrescreve com 390 bars)
+  └─ SPY quote chain (timeout 13s):
+       restoreSPYQuoteFromCache() → restoreSPYQuoteFromTradier()
+       (14h TTL no Redis; Tradier retorna last mesmo com mercado fechado)
+
+Após restores: startIntradayCachePersistence() + pollers iniciam
 ```
 
 ### Fluxo de Dados — WebSocket Price Ticks
@@ -275,12 +292,20 @@ Startup: restorePriceHistory() (Supabase) + restoreFromTradier() (Tradier timesa
 ```
 DXFeed quote event (todo tick)
   → marketState.emitter.emit('quote', payload)
-  → wsTicks.ts — broadcast para todos os clientes /ws/ticks
-  → payload compacto: { t, l, b, a, c, cp, v, dh, dl, ts } (~80 bytes)
+  → wsTicks.ts — enfileira tick no buffer de 100ms por conexão
+  → flush: envia array de ticks (ou objeto único) para o browser
+  → payload compacto por tick: { t, l, b, a, c, cp, v, dh, dl, ts } (~80 bytes)
 
 Browser WebSocket (/ws/ticks)
-  → usePriceTicks.ts → updateSPY() + updateVIX()
+  → usePriceTicks.ts — aceita objeto único ou array de ticks
+  → para cada tick: push { t: ts, p: l } em spyHistoryRef (PricePoint[])
+    (guarda `last` apenas quando não-null — evita apagar preço válido em bid/ask-only ticks)
+  → updateSPY() + updateVIX()
   → Zustand store → React re-renders
+
+Snapshot inicial (connect):
+  → aplica scalars não-null do backend snapshot (não sobrescreve preço restaurado com null)
+  → sincroniza priceHistory[] com buffer local
 ```
 
 ### Fluxo de Dados — GEX + Volume Profile
@@ -333,6 +358,10 @@ Usuário clica "Analisar com IA"
   → GET últimas análises do Supabase (analysisMemory, últimas 24h)
   → POST /api/analyze { marketSnapshot, optionChain, context, gex, technicals }
   → buildPrompt() monta texto com blocos base + confidence tags + CB statuses
+    ├─ buildTechBlock() — RSI/MACD/BBands + VWAP + desvio VWAP%
+    ├─ buildPriceHistoryBlock() — OHLC sessão, range%, curva ~15min, tendência 1h, HV intraday
+    └─ IV/HV(30d) ratio com flag [VOL CARA] se > 1.3
+  + system prompt: aviso "mercado fechado" quando !isMarketOpen()
 
   Chamada 1 — GPT-4o stream (tool_choice: 'auto'):
     → Se modelo chamar fetch_24h_context:
@@ -400,8 +429,11 @@ Novo cliente SSE conectado:
 | `gex:daily:<sym>` | GEX completo por strike | 5min | Tradier | ✓ | — |
 | `volume_profile:<sym>` | POC / VAH / VAL / buckets | 2min | Tradier | ✓ | — |
 | `put_call_ratio:<sym>` | Ratio puts/calls + label | 90s | Tradier | — | — |
-| `ivrank_snapshot` | IV Rank % + percentil + IVx | 90s | Tastytrade | — | ✓ |
-| `vix_snapshot` | VIX last + change | 330s | Finnhub/Tradier | — | ✓ |
+| `spy_intraday` | PricePoint[] SPY (até 390 pts, 1min) | 14h | DXFeed/Tradier | ✓ | ✓ (hoje) |
+| `vix_intraday` | PricePoint[] VIX (até 390 pts, 1min) | 14h | DXFeed | ✓ | ✓ (hoje) |
+| `spy_quote_snapshot` | last/bid/ask/OHLCV/change/changePct SPY | 14h | Tradier | — | ✓ |
+| `ivrank_snapshot` | IV Rank % + percentil + IVx + HV30 | 14h | Tastytrade | — | ✓ |
+| `vix_snapshot` | VIX last + change | 14h | Finnhub/Tradier | — | ✓ |
 | `technical_indicators:SPY` | RSI14 + MACD + BBANDS | 60min | Local (priceHistory) | ✓ | ✓ |
 | `fear_greed` | Score CNN 0–100 | 4h | CNN | — | ✓ |
 | `fred_macro` | CPI/PCE/Fed Rate/Yield | 24h | FRED | ✓ | ✓ |
@@ -694,14 +726,16 @@ npm run preview # Preview do build de produção
 ### Implementado
 
 **Dados de mercado:**
-- Streaming WebSocket DXFeed (SPY + VIX) em tempo real via `/ws/ticks` (ticks compactos ~80 bytes)
+- Streaming WebSocket DXFeed (SPY + VIX) em tempo real via `/ws/ticks` (ticks compactos ~80 bytes; batching 100ms por conexão)
 - VIX com fallback chain DXFeed → Finnhub → Tradier
 - OAuth2 Tastytrade com refresh automático de token (refresh token criptografado AES-256-GCM no Redis)
-- Polling IV Rank a cada 60s
+- Polling IV Rank a cada 60s; inclui HV(30d) da Tastytrade
 - Cadeia de opções SPY com cache em memória (5min) e greeks Δ γ θ ν via Black-Scholes
 - Broadcast SSE para múltiplos clientes com reconexão automática
-- Histórico de preços intraday SPY restaurado do Tradier no startup (390 bars 1min)
+- Histórico de preços intraday SPY/VIX como `PricePoint[] ({t, p})` com restauração em cadeia: Redis (14h) → Supabase (5 dias) → Tradier (390 bars 1min); persistido no Redis a cada 60s
+- Quote SPY restaurada no startup via Redis (14h) e Tradier (funciona com mercado fechado)
 - Persistência de ticks de preço no Supabase (throttle 1min/símbolo)
+- Bootstrap não-bloqueante: `listen()` sobe imediatamente; restores paralelos com `withTimeout()`
 
 **GEX + Volume Profile + Indicadores:**
 - GEX por strike (Black-Scholes gamma) via Tradier option data — callWall, putWall, flipPoint, regime
@@ -714,6 +748,10 @@ npm run preview # Preview do build de produção
 - Painel "Análise IA" com GPT-4o streaming
 - Tool Calling condicional `fetch_24h_context` — macro context apenas quando necessário
 - Structured Outputs nativo via `json_schema` — objeto estruturado em única chamada GPT-4o
+- Histórico intraday SPY injetado no prompt base (`buildPriceHistoryBlock`): OHLC, range%, curva ~15min, tendência 1h, HV intraday estimada
+- VWAP da sessão injetado no bloco técnico (capturado da última barra Tradier)
+- Ratio IV/HV(30d) no prompt com flag `[VOL CARA]` quando > 1.3
+- Aviso explícito à IA quando mercado está fechado (system prompt dinâmico via `isMarketOpen()`)
 - Confidence scores por fonte + marcação de dados desatualizados no prompt
 - Circuit breaker statuses no contexto da IA
 - Memória de análise: 3 análises recentes injetadas no próximo prompt (últimas 24h)
@@ -738,7 +776,13 @@ npm run preview # Preview do build de produção
 **Infraestrutura:**
 - Circuit breakers para todas as APIs externas (opossum)
 - Cache Redis com TTL + compressão Brotli automática em payloads >1KB (`cacheStore.ts`)
-- Restauração de cache no startup (`restoreCache.ts`) — 8 chaves restauradas
+- Restauração de cache no startup (`restoreCache.ts`) — 8 chaves restauradas + intraday + quote SPY
+- TTLs de 14h para `ivrank_snapshot`, `vix_snapshot`, `spy_intraday`, `vix_intraday`, `spy_quote_snapshot` — sobrevivem ao fechamento do mercado e reinícios overnight
+- Bootstrap não-bloqueante: `withTimeout()` por operação garante que o servidor sobe mesmo se Redis/Supabase/Tradier estiverem lentos
+- DXFeed watchdog com `lastFeedDataAt` — evita loops de reconexão em fins de semana
+- `priceHistory` só acumula ponto quando `last` está explicitamente no payload (`updateSPY/VIX`) — elimina duplicatas em ticks de bid/ask
+- `putCallRatio`: retorna `null` quando volume total = 0 (mercado fechado / sem dados Tradier)
+- `OPTION_CHAIN_THRESHOLD` padrão alterado de 0.003 para 0.01
 - Confidence scorer por fonte de dados (`confidenceScorer.ts`)
 - SSE roteado por usuário (`broadcastToUser`) para alertas direcionados
 - RLS em `ai_analyses` e `price_ticks` (migration `20260228000000_enable_rls.sql`)
@@ -746,10 +790,13 @@ npm run preview # Preview do build de produção
 
 **UI & Autenticação:**
 - Dashboard React com 3 cards de métricas (SPY, VIX, IV Rank)
+- **TechnicalIndicatorsCard** (`TechnicalIndicatorsCard.tsx`): RSI(14) gauge, MACD histogram + crossover badge, BB position badge
+- **PriceSparkline** atualizado: XAxis com ticks de 30min (HH:mm ET), YAxis auto, tooltip personalizado (hora + preço), ReferenceLine no preço de abertura
 - Painel GEX com gráfico de barras por strike (calls/puts)
 - Cadeia de Opções com greeks Δ γ θ ν por strike
 - Alert Overlay com animação slide-in/out (Framer Motion, auto-dismiss 8s)
 - Painel "Feed de Mercado" com 6 seções em layout de 3 colunas
+- Vite dev proxy para `/ws` com `ws: true` (WebSocket direto para backend sem CORS)
 - Supabase Auth com email/senha (JWT validado no backend)
 - Animações Framer Motion + Tailwind dark theme
 - Skeletons de carregamento + Sparklines Recharts
@@ -766,7 +813,8 @@ npm run preview # Preview do build de produção
 - Finnhub free tier não autoriza uso comercial
 - GNews free tier limitado a 100 req/dia
 - VIX Term Structure depende da option chain estar fresca (≤6min); pula se stale
-- Redis Cloud free tier (30MB) sem persistência garantida — restart do Redis limpa o cache, mas os pollers repopulam automaticamente na próxima execução. IV Rank, VIX, Volume Profile, P/C Ratio e Indicadores Técnicos têm cache Redis com TTL próprio e são restaurados no startup quando disponíveis.
+- Redis Cloud free tier (30MB) sem persistência garantida — restart do Redis limpa o cache, mas os pollers repopulam automaticamente na próxima execução. IV Rank, VIX, Volume Profile, P/C Ratio, Indicadores Técnicos, e histórico intraday têm cache Redis com TTL de 14h e são restaurados no startup quando disponíveis.
+- DXFeed não emite Trade events para o SPY quando o mercado está fechado — `prevDayClosePrice` do Summary event é usado como fallback para `last`, mas os campos de bid/ask/change podem ser `null`. O `spy_quote_snapshot` (Redis 14h) garante que o card SPY exibe o preço correto após reinicialização.
 
 ---
 

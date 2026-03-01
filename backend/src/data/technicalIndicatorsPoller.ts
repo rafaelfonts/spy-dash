@@ -95,11 +95,8 @@ export function deriveBBPosition(
 // ---------------------------------------------------------------------------
 
 function tick(): void {
-  const prices = marketState.spy.priceHistory
-  if (prices.length < 35) {
-    console.log(`[TechIndicators] Waiting for price history (${prices.length}/35 bars)`)
-    return
-  }
+  const prices = marketState.spy.priceHistory.map((pt) => pt.p)
+  if (prices.length < 35) return
 
   const rsi14 = calcRSI(prices)
   const macd = calcMACD(prices)
@@ -125,7 +122,31 @@ function tick(): void {
 // ---------------------------------------------------------------------------
 
 export function startTechnicalIndicatorsPoller(): void {
-  console.log('[TechIndicators] Starting local poller (RSI/MACD/BBands from priceHistory, 60s)')
-  tick()
-  setInterval(tick, 60_000)
+  console.log('[TechIndicators] Starting local poller (RSI/MACD/BBands from priceHistory, 5min)')
+
+  // Try immediately; if not enough bars yet (e.g. Tradier restore still pending),
+  // retry every 60s until we have ≥35 bars, then hand off to the 5-min interval.
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+
+  function tryTick(): void {
+    const count = marketState.spy.priceHistory.length
+    if (count < 35) {
+      console.log(`[TechIndicators] Waiting for price history (${count}/35 bars)`)
+      if (!retryTimer) {
+        retryTimer = setTimeout(() => {
+          retryTimer = null
+          tryTick()
+        }, 60_000)
+      }
+      return
+    }
+    if (retryTimer) {
+      clearTimeout(retryTimer)
+      retryTimer = null
+    }
+    tick()
+  }
+
+  tryTick()
+  setInterval(tick, 300_000)
 }

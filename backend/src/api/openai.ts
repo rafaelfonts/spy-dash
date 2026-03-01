@@ -5,9 +5,10 @@ import { CONFIG } from '../config'
 import { marketState, newsSnapshot } from '../data/marketState'
 import type { OptionExpiry } from '../data/optionChain'
 import { getOptionChainCapturedAt } from '../data/optionChain'
-import { humanizeAge } from '../lib/time'
-import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem, AnalysisStructuredOutput } from '../types/market'
+import { humanizeAge, isMarketOpen } from '../lib/time'
+import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem, AnalysisStructuredOutput, PricePoint } from '../types/market'
 import { saveAnalysis, getRecentAnalyses } from '../data/analysisMemory'
+import { getLastVwap } from '../data/priceHistory'
 import { calculateDailyGex } from '../data/gexService'
 import type { DailyGexResult } from '../data/gexService'
 import { getAdvancedMetricsSnapshot } from '../data/advancedMetricsState'
@@ -229,6 +230,7 @@ function buildTechBlock(
   tech: TechnicalData,
   spyPrice: number | null,
   confidence?: Record<string, ConfidenceResult>,
+  vwap?: number | null,
 ): string {
   const bbands = spyPrice != null
     ? { ...tech.bbands, position: deriveBBPosition(spyPrice, tech.bbands) }
@@ -243,6 +245,11 @@ function buildTechBlock(
   block += `MACD: hist=${histSign}${tech.macd.histogram.toFixed(4)} macd=${tech.macd.macd.toFixed(4)} signal=${tech.macd.signal.toFixed(4)}${crossLabel}\n`
   block += `Bollinger(20): upper=${bbands.upper.toFixed(2)} mid=${bbands.middle.toFixed(2)} lower=${bbands.lower.toFixed(2)}\n`
   block += `  → SPY em posição: ${bbands.position.replace(/_/g, ' ').toUpperCase()}\n`
+  if (vwap != null && spyPrice != null) {
+    const vwapDev = ((spyPrice - vwap) / vwap * 100)
+    const vwapDir = vwapDev >= 0 ? 'ACIMA' : 'ABAIXO'
+    block += `VWAP: $${vwap.toFixed(2)} | SPY ${vwapDir} do VWAP em ${Math.abs(vwapDev).toFixed(2)}%\n`
+  }
   return block
 }
 
@@ -327,6 +334,62 @@ function buildMacroContextBlock(
   return block || 'Sem dados macro disponíveis neste momento.'
 }
 
+/**
+ * Builds an intraday price history summary for the AI prompt.
+ * Samples the full PricePoint[] array at ~15-min intervals (max 26 points for a full session)
+ * and computes session OHLC, intraday range, 1h trend, and a rough HV estimate.
+ */
+function buildPriceHistoryBlock(history: PricePoint[]): string {
+  if (history.length < 5) return ''
+
+  const prices = history.map((pt) => pt.p)
+  const open = prices[0]
+  const current = prices[prices.length - 1]
+  const high = Math.max(...prices)
+  const low = Math.min(...prices)
+  const range = high - low
+  const rangePct = (range / open * 100)
+
+  // Sample at ~15-min intervals (15 bars out of up to 390)
+  const step = Math.max(1, Math.floor(history.length / 26))
+  const sampled = history.filter((_, i) => i % step === 0 || i === history.length - 1)
+
+  const formatTime = (t: number) =>
+    new Date(t).toLocaleTimeString('en-US', {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York',
+    })
+
+  const curve = sampled
+    .map((pt) => `${formatTime(pt.t)}→${pt.p.toFixed(2)}`)
+    .join(' | ')
+
+  // 1h trend: last 60 bars vs current
+  const lookback = Math.min(60, history.length - 1)
+  const priceAgo = history[history.length - 1 - lookback].p
+  const trendChange = current - priceAgo
+  const trendPct = (trendChange / priceAgo * 100)
+  const trendDir = trendChange > 0 ? '↑ Alta' : trendChange < 0 ? '↓ Queda' : '→ Lateral'
+
+  // Intraday HV: std dev of 1-min log returns × √252×390 (annualized)
+  let hv = 0
+  if (prices.length >= 10) {
+    const returns = prices.slice(1).map((p, i) => Math.log(p / prices[i]))
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length
+    const variance = returns.reduce((a, r) => a + (r - mean) ** 2, 0) / returns.length
+    hv = Math.sqrt(variance * 252 * 390) * 100
+  }
+
+  let block = `\n=== HISTÓRICO INTRADAY SPY (${history.length} barras de 1-min) ===\n`
+  block += `Sessão: Open $${open.toFixed(2)} → Atual $${current.toFixed(2)} | High $${high.toFixed(2)} | Low $${low.toFixed(2)}\n`
+  block += `Range: $${range.toFixed(2)} (${rangePct.toFixed(2)}%)\n`
+  block += `Curva (cada ~15min): ${curve}\n`
+  block += `Tendência 1h: ${trendChange >= 0 ? '+' : ''}$${trendChange.toFixed(2)} (${trendPct >= 0 ? '+' : ''}${trendPct.toFixed(2)}%) — ${trendDir}\n`
+  if (hv > 0) {
+    block += `HV Intraday (estimada): ~${hv.toFixed(1)}%\n`
+  }
+  return block
+}
+
 function buildPrompt(
   snapshot: AnalyzeBody['marketSnapshot'],
   chain?: OptionExpiry[],
@@ -336,6 +399,7 @@ function buildPrompt(
   putCallRatioBlock?: string | null,
   confidence?: Record<string, ConfidenceResult>,
   techBlock?: string | null,
+  priceHistoryBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -362,7 +426,11 @@ function buildPrompt(
     prompt += `**VIX**${vixAge}${confTag(confidence?.vix)}: ${vix.last?.toFixed(2)} | Nível: ${vix.level}\n`
   }
   if (ivRank) {
-    prompt += `**IV Rank SPY**${ivAge}${confTag(confidence?.ivRank)}: ${ivRank.value?.toFixed(1)}% | Percentil: ${ivRank.percentile?.toFixed(1)}% | Classificação: ${ivRank.label}\n`
+    const hv30 = marketState.ivRank.hv30
+    const ivhvRatio = (ivRank.value != null && hv30 != null && hv30 > 0)
+      ? ` | IV/HV(30d)=${(ivRank.value / hv30).toFixed(2)}${ivRank.value / hv30 > 1.3 ? ' [VOL CARA]' : ''}`
+      : ''
+    prompt += `**IV Rank SPY**${ivAge}${confTag(confidence?.ivRank)}: ${ivRank.value?.toFixed(1)}% | Percentil: ${ivRank.percentile?.toFixed(1)}% | Classificação: ${ivRank.label}${ivhvRatio}\n`
   }
 
   // --- GEX (Gamma Exposure) ---
@@ -378,6 +446,11 @@ function buildPrompt(
   // --- Indicadores Técnicos ---
   if (techBlock) {
     prompt += techBlock
+  }
+
+  // --- Histórico Intraday ---
+  if (priceHistoryBlock) {
+    prompt += priceHistoryBlock
   }
 
   // --- Cadeia de opções: ATM ±5 strikes para as 3 expirações mais próximas ---
@@ -607,7 +680,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     // before the first GPT-4o token arrives
     res.write('event: ping\ndata: starting\n\n')
 
-    const userId = (request as any).user?.sub ?? 'unknown'
+    const userId = (request as any).user?.id ?? 'unknown'
     console.log(`[ANALYZE] user=${userId} model=gpt-4o tokens_max=1200`)
 
     // Fetch intraday memory and GEX concurrently — both gracefully degrade on failure
@@ -658,14 +731,24 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     }
 
     const techBlock = techSnapshot
-      ? buildTechBlock(techSnapshot, snapshot?.spy?.last ?? null, confidence)
+      ? buildTechBlock(techSnapshot, snapshot?.spy?.last ?? null, confidence, getLastVwap())
       : null
+
+    const priceHistoryBlock = buildPriceHistoryBlock(marketState.spy.priceHistory)
 
     const sendEvent = (event: string, data: unknown) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
     }
 
+    const marketStatusNote = isMarketOpen()
+      ? ''
+      : 'ATENÇÃO: O mercado está FECHADO no momento (fim de semana ou fora do horário de negociação NYSE). ' +
+        'Todos os dados disponíveis são da última captura antes do fechamento — não há cotações ao vivo. ' +
+        'Comece a análise mencionando isso explicitamente. ' +
+        'Enquadre qualquer recomendação para a próxima abertura de mercado; não sugira entradas ou saídas imediatas.\n\n'
+
     const systemPrompt =
+      marketStatusNote +
       'Você é um especialista sênior em opções americanas, com foco em SPY e ETFs de grande liquidez. ' +
       'Suas análises são concisas, objetivas e acionáveis. ' +
       'Use markdown para formatar suas respostas com headers, listas e destaques. ' +
@@ -715,6 +798,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
           pcBlock,
           confidence,
           techBlock,
+          priceHistoryBlock || null,
         ),
       },
     ]

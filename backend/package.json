@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^8.4.0",
-    "@fastify/websocket": "^11.2.0",
+    "@fastify/websocket": "^8.3.1",
     "@supabase/supabase-js": "^2.97.0",
     "@types/opossum": "^8.1.9",
     "dotenv": "^16.4.0",

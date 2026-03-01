@@ -10,6 +10,7 @@ import type {
   FearGreedData,
   MacroEvent,
   NewsHeadline,
+  PricePoint,
 } from '../types/market'
 import { persistPriceTick } from './priceHistory'
 
@@ -54,6 +55,7 @@ export const marketState: MarketState = {
     value: null,
     percentile: null,
     ivx: null,
+    hv30: null,
     label: null,
     lastUpdated: 0,
   },
@@ -96,9 +98,14 @@ export const newsSnapshot: {
 export function updateSPY(data: Partial<SPYData>): void {
   Object.assign(marketState.spy, data, { lastUpdated: Date.now() })
 
-  const last = marketState.spy.last
-  if (last !== null) {
-    marketState.spy.priceHistory.push(last)
+  // Only push to priceHistory when this update explicitly carries a new last price
+  // (i.e. a Trade event). Bid/ask-only Quote updates must not duplicate the same
+  // price into history on every tick — especially critical on weekends when the feed
+  // is alive but no new trades occur.
+  if ('last' in data && data.last != null) {
+    const last = data.last
+    const pt: PricePoint = { t: Date.now(), p: last }
+    marketState.spy.priceHistory.push(pt)
     if (marketState.spy.priceHistory.length > MAX_HISTORY) {
       marketState.spy.priceHistory.shift()
     }
@@ -135,10 +142,13 @@ export function updateSPY(data: Partial<SPYData>): void {
 export function updateVIX(data: Partial<VIXData>): void {
   Object.assign(marketState.vix, data, { lastUpdated: Date.now() })
 
-  const last = marketState.vix.last
-  if (last !== null) {
+  // Same guard as updateSPY: only record a new history point when a real
+  // Trade price arrives, not on every ancillary update.
+  if ('last' in data && data.last != null) {
+    const last = data.last
     marketState.vix.level = vixLevel(last)
-    marketState.vix.priceHistory.push(last)
+    const pt: PricePoint = { t: Date.now(), p: last }
+    marketState.vix.priceHistory.push(pt)
     if (marketState.vix.priceHistory.length > MAX_HISTORY) {
       marketState.vix.priceHistory.shift()
     }
@@ -179,6 +189,7 @@ export function updateIVRank(data: Partial<IVRankData>): void {
     ivRank: marketState.ivRank.value,
     ivPercentile: marketState.ivRank.percentile,
     ivx: marketState.ivRank.ivx,
+    hv30: marketState.ivRank.hv30,
     label: marketState.ivRank.label,
     timestamp: marketState.ivRank.lastUpdated,
   })

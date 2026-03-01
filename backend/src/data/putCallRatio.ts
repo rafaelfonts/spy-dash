@@ -49,6 +49,14 @@ export async function calculatePutCallRatio(symbol: string): Promise<PutCallRati
     if (opt.option_type === 'call') callVolume += opt.volume ?? 0
   }
 
+  if (putVolume + callVolume === 0) {
+    console.warn(
+      `[PutCallRatio] ${symbol} ${expiration}: volume=0 em todos os contratos — ` +
+      `mercado fechado ou Tradier sem dados de volume para esta expiração. Descartando resultado.`,
+    )
+    return null
+  }
+
   const ratio = callVolume > 0 ? Math.round((putVolume / callVolume) * 1000) / 1000 : 0
   const label = classifyRatio(ratio)
 

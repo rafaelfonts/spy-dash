@@ -22,7 +22,7 @@ export const CONFIG = {
   PORT: parseInt(process.env.PORT ?? '3001', 10),
   CORS_ORIGIN: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
   ANALYZE_COOLDOWN_MS: parseInt(process.env.ANALYZE_COOLDOWN_MS ?? '30000', 10),
-  OPTION_CHAIN_THRESHOLD: parseFloat(process.env.OPTION_CHAIN_THRESHOLD ?? '0.003'),
+  OPTION_CHAIN_THRESHOLD: parseFloat(process.env.OPTION_CHAIN_THRESHOLD ?? '0.01'),
   HEALTH_SECRET: process.env.HEALTH_SECRET ?? '',
   TRADIER_API_KEY: process.env.TRADIER_API_KEY ?? '',
   TRADIER_BASE_URL: process.env.TRADIER_BASE_URL ?? 'https://sandbox.tradier.com',

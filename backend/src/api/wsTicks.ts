@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import type { WebSocket } from 'ws'
+import type { SocketStream } from '@fastify/websocket'
 import { emitter, marketState } from '../data/marketState'
 import { requireAuth } from '../middleware/authMiddleware'
 
@@ -21,7 +21,8 @@ export async function registerWSTicks(fastify: FastifyInstance): Promise<void> {
   fastify.get(
     '/ws/ticks',
     { websocket: true, preHandler: [requireAuth] },
-    (socket: WebSocket) => {
+    (connection: SocketStream) => {
+      const socket = connection.socket
       // Send full snapshot on connect — priceHistory sent once, not on each tick
       const snapshot = {
         type: 'snapshot',
@@ -36,6 +37,23 @@ export async function registerWSTicks(fastify: FastifyInstance): Promise<void> {
       }
       socket.send(JSON.stringify(snapshot))
 
+      // Tick batching — 100ms window per connection to handle high-frequency DXFeed bursts
+      let tickBuffer: TickPayload[] = []
+      let flushTimer: ReturnType<typeof setTimeout> | null = null
+
+      function enqueueTick(tick: TickPayload): void {
+        tickBuffer.push(tick)
+        if (!flushTimer) {
+          flushTimer = setTimeout(() => {
+            if (socket.readyState === socket.OPEN && tickBuffer.length > 0) {
+              socket.send(JSON.stringify(tickBuffer.length === 1 ? tickBuffer[0] : tickBuffer))
+            }
+            tickBuffer = []
+            flushTimer = null
+          }, 100)
+        }
+      }
+
       const onQuote = (data: {
         last: number | null
         bid: number | null
@@ -48,7 +66,7 @@ export async function registerWSTicks(fastify: FastifyInstance): Promise<void> {
         timestamp: number
       }) => {
         if (socket.readyState !== socket.OPEN) return
-        const tick: TickPayload = {
+        enqueueTick({
           t: 'q',
           l: data.last,
           b: data.bid,
@@ -59,8 +77,7 @@ export async function registerWSTicks(fastify: FastifyInstance): Promise<void> {
           dh: data.dayHigh,
           dl: data.dayLow,
           ts: data.timestamp,
-        }
-        socket.send(JSON.stringify(tick))
+        })
       }
 
       const onVix = (data: {
@@ -70,7 +87,7 @@ export async function registerWSTicks(fastify: FastifyInstance): Promise<void> {
         timestamp: number
       }) => {
         if (socket.readyState !== socket.OPEN) return
-        const tick: TickPayload = {
+        enqueueTick({
           t: 'v',
           l: data.last,
           b: null,
@@ -81,14 +98,14 @@ export async function registerWSTicks(fastify: FastifyInstance): Promise<void> {
           dh: null,
           dl: null,
           ts: data.timestamp,
-        }
-        socket.send(JSON.stringify(tick))
+        })
       }
 
       emitter.on('quote', onQuote)
       emitter.on('vix', onVix)
 
       socket.on('close', () => {
+        if (flushTimer) clearTimeout(flushTimer)
         emitter.off('quote', onQuote)
         emitter.off('vix', onVix)
       })

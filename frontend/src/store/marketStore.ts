@@ -176,6 +176,11 @@ export interface NewsFeedState {
   staleFlags: StaleFlags
 }
 
+export interface PricePoint {
+  t: number   // epoch ms timestamp
+  p: number   // price
+}
+
 export interface SPYData {
   last: number | null
   bid: number | null
@@ -185,7 +190,7 @@ export interface SPYData {
   volume: number | null
   dayHigh: number | null
   dayLow: number | null
-  priceHistory: number[]
+  priceHistory: PricePoint[]
   lastUpdated: number
 }
 
@@ -194,7 +199,7 @@ export interface VIXData {
   change: number | null
   changePct: number | null
   level: 'low' | 'moderate' | 'high' | null
-  priceHistory: number[]
+  priceHistory: PricePoint[]
   lastUpdated: number
 }
 

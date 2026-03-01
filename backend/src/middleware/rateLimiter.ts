@@ -12,7 +12,7 @@ export function analysisRateLimit(
   reply: FastifyReply,
   done: () => void,
 ): void {
-  const userId = (req as any).user?.sub as string | undefined
+  const userId = (req as any).user?.id as string | undefined
   if (!userId) {
     reply.code(401).send({ error: 'Unauthorized' })
     return
