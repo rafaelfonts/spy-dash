@@ -2,12 +2,6 @@ import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 
 // News Feed types (mirrored from backend)
-export interface EarningsItem {
-  symbol: string
-  earningsDate: string | null
-  daysToEarnings: number | null
-}
-
 export interface MacroDataItem {
   seriesId: string
   name: string
@@ -174,7 +168,6 @@ export interface StaleFlags {
 }
 
 export interface NewsFeedState {
-  earnings: EarningsItem[]
   macro: MacroDataItem[]
   bls: MacroDataItem[]
   macroEvents: MacroEvent[]
@@ -312,7 +305,6 @@ export const useMarketStore = create<MarketStore>()(
       connected: false,
     },
     newsFeed: {
-      earnings: [],
       macro: [],
       bls: [],
       macroEvents: [],
@@ -353,7 +345,6 @@ export const useMarketStore = create<MarketStore>()(
         newsFeed: {
           ...state.newsFeed,
           lastUpdated: Date.now(),
-          ...(batch.earnings        && { earnings: batch.earnings }),
           ...(batch.macro           && { macro: batch.macro }),
           ...(batch.bls             && { bls: batch.bls }),
           ...(batch['macro-events'] && { macroEvents: batch['macro-events'] }),

@@ -78,9 +78,7 @@ export function useMarketStream(): void {
           }
           const stale = payload._stale === true
           const currentFlags = useMarketStore.getState().newsFeed.staleFlags
-          if (payload.type === 'earnings') {
-            updateNewsFeed({ earnings: payload.items as never, lastUpdated: payload.ts })
-          } else if (payload.type === 'macro') {
+          if (payload.type === 'macro') {
             updateNewsFeed({
               macro: payload.items as never,
               lastUpdated: payload.ts,
