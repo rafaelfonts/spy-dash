@@ -1,70 +1,66 @@
 import { memo, useMemo } from 'react'
 import { motion } from 'framer-motion'
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ReferenceLine,
+  LabelList,
+} from 'recharts'
 import { useMarketStore } from '../../store/marketStore'
-import type { StrikeGEX } from '../../store/marketStore'
 
 function fmtM(v: number): string {
   return `$${Math.abs(v).toFixed(1)}M`
 }
 
-function BarRow({ s, maxAbs }: { s: StrikeGEX; maxAbs: number }) {
-  const pct = maxAbs > 0 ? (Math.abs(s.netGEX) / maxAbs) * 100 : 0
-  const isPositive = s.netGEX >= 0
-
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function GEXCustomTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const callGex = payload.find((p: any) => p.dataKey === 'callGex')?.value ?? 0
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const putGex = payload.find((p: any) => p.dataKey === 'putGex')?.value ?? 0
+  const net = callGex - putGex
   return (
-    <div className="flex items-center gap-2 text-[10px] font-num h-5">
-      <span className="w-10 text-right text-text-secondary shrink-0">{s.strike}</span>
-      <div className="flex-1 flex items-center h-3">
-        {/* Negative bar (puts) grows left from center */}
-        <div className="w-1/2 flex justify-end">
-          {!isPositive && (
-            <div
-              className="h-full rounded-l bg-red-500/70"
-              style={{ width: `${pct}%` }}
-            />
-          )}
-        </div>
-        {/* Center divider */}
-        <div className="w-px h-full bg-border-subtle shrink-0" />
-        {/* Positive bar (calls) grows right from center */}
-        <div className="w-1/2 flex justify-start">
-          {isPositive && (
-            <div
-              className="h-full rounded-r bg-[#00ff88]/70"
-              style={{ width: `${pct}%` }}
-            />
-          )}
-        </div>
+    <div className="bg-bg-elevated border border-border rounded px-2 py-1.5 text-xs pointer-events-none">
+      <div className="text-text-secondary mb-1 font-num">Strike {label}</div>
+      <div className="text-[#00ff88]">Call: +${callGex.toFixed(1)}M</div>
+      <div className="text-red-400">Put: -${putGex.toFixed(1)}M</div>
+      <div className={`mt-0.5 font-semibold ${net >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
+        Net: {net >= 0 ? '+' : ''}{net.toFixed(1)}M
       </div>
-      <span className={`w-14 text-right shrink-0 ${isPositive ? 'text-[#00ff88]' : 'text-red-400'}`}>
-        {isPositive ? '+' : '-'}{fmtM(s.netGEX)}
-      </span>
     </div>
   )
 }
+
+const REFERENCE_LINES = [
+  { color: '#ffffff', label: 'Preço' },
+  { color: '#ffcc00', label: 'Flip Point' },
+  { color: '#cc44ff', label: 'Put Wall' },
+  { color: '#4488ff', label: 'Call Wall' },
+  { color: '#00ffcc', label: 'Max Gamma' },
+]
 
 export const GEXPanel = memo(function GEXPanel() {
   const gex = useMarketStore((s) => s.gexProfile)
   const spyLast = useMarketStore((s) => s.spy.last)
 
-  // Get top strikes by |netGEX|, centered around ATM
-  const topStrikes = useMemo(() => {
+  const chartData = useMemo(() => {
     if (!gex || !spyLast) return []
-
-    // Filter strikes near ATM (±15 from spot) and take top 20 by magnitude
-    const nearATM = gex.byStrike
+    return gex.byStrike
       .filter((s) => Math.abs(s.strike - spyLast) <= 15)
-      .sort((a, b) => Math.abs(b.netGEX) - Math.abs(a.netGEX))
-      .slice(0, 20)
-
-    // Re-sort by strike for display
-    return nearATM.sort((a, b) => a.strike - b.strike)
+      .sort((a, b) => a.strike - b.strike)
+      .map((s) => ({
+        strike: s.strike,
+        callGex: s.callGEX,
+        putGex: Math.abs(s.putGEX),
+        netGex: s.netGEX,
+      }))
   }, [gex, spyLast])
-
-  const maxAbs = useMemo(
-    () => topStrikes.reduce((max, s) => Math.max(max, Math.abs(s.netGEX)), 0),
-    [topStrikes],
-  )
 
   if (!gex) {
     return (
@@ -92,7 +88,7 @@ export const GEXPanel = memo(function GEXPanel() {
     )
   }
 
-  if (topStrikes.length === 0) {
+  if (chartData.length === 0) {
     return (
       <motion.section
         className="card mt-4"
@@ -116,6 +112,8 @@ export const GEXPanel = memo(function GEXPanel() {
   const regimeDesc = isPositive
     ? 'MMs suprimem volatilidade'
     : 'MMs amplificam volatilidade'
+
+  const currentPriceStrike = spyLast != null ? Math.round(spyLast) : null
 
   return (
     <motion.section
@@ -167,18 +165,162 @@ export const GEXPanel = memo(function GEXPanel() {
         </div>
       </div>
 
-      {/* Bar chart */}
-      <div className="border-t border-border-subtle pt-3">
-        <div className="flex items-center justify-between mb-2 text-[9px] text-text-muted uppercase tracking-wider">
-          <span>Put GEX (—)</span>
-          <span>Strike</span>
-          <span>Call GEX (+)</span>
-        </div>
-        <div className="space-y-0.5">
-          {topStrikes.map((s) => (
-            <BarRow key={s.strike} s={s} maxAbs={maxAbs} />
-          ))}
-        </div>
+      {/* Recharts bar chart */}
+      <div className="border-t border-border-subtle pt-3" style={{ height: 280 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart
+            data={chartData}
+            barGap={1}
+            barCategoryGap="20%"
+            margin={{ top: 28, right: 12, left: 0, bottom: 4 }}
+          >
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="rgba(255,255,255,0.04)"
+              vertical={false}
+            />
+            <XAxis
+              dataKey="strike"
+              tick={{ fill: '#8888aa', fontSize: 9 }}
+              axisLine={false}
+              tickLine={false}
+            />
+            <YAxis
+              tick={{ fill: '#8888aa', fontSize: 9 }}
+              axisLine={false}
+              tickLine={false}
+              tickFormatter={(v) => `$${v}M`}
+              width={44}
+            />
+            <Tooltip
+              content={<GEXCustomTooltip />}
+              cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+            />
+
+            {/* Call bars — green */}
+            <Bar
+              dataKey="callGex"
+              name="Call GEX"
+              fill="#00ff88"
+              fillOpacity={0.75}
+              maxBarSize={18}
+              isAnimationActive={false}
+            >
+              <LabelList
+                dataKey="callGex"
+                position="top"
+                formatter={(v: number) => (v > 0.5 ? `$${v.toFixed(1)}` : '')}
+                fill="#00ff88"
+                fontSize={7}
+              />
+            </Bar>
+
+            {/* Put bars — red */}
+            <Bar
+              dataKey="putGex"
+              name="Put GEX"
+              fill="#ff4444"
+              fillOpacity={0.65}
+              maxBarSize={18}
+              isAnimationActive={false}
+            >
+              <LabelList
+                dataKey="putGex"
+                position="top"
+                formatter={(v: number) => (v > 0.5 ? `$${v.toFixed(1)}` : '')}
+                fill="#ff7777"
+                fontSize={7}
+              />
+            </Bar>
+
+            {/* Current price */}
+            {currentPriceStrike != null && (
+              <ReferenceLine
+                x={currentPriceStrike}
+                stroke="#ffffff"
+                strokeWidth={1.5}
+                strokeDasharray="4 2"
+                label={{
+                  value: `Preço $${spyLast!.toFixed(0)}`,
+                  position: 'insideTopRight',
+                  fill: '#ffffff',
+                  fontSize: 9,
+                }}
+              />
+            )}
+
+            {/* Flip Point */}
+            {gex.flipPoint != null && (
+              <ReferenceLine
+                x={gex.flipPoint}
+                stroke="#ffcc00"
+                strokeWidth={1}
+                strokeDasharray="4 2"
+                label={{
+                  value: `Flip ${gex.flipPoint}`,
+                  position: 'insideTopLeft',
+                  fill: '#ffcc00',
+                  fontSize: 9,
+                }}
+              />
+            )}
+
+            {/* Put Wall */}
+            <ReferenceLine
+              x={gex.putWall}
+              stroke="#cc44ff"
+              strokeWidth={1}
+              strokeDasharray="4 2"
+              label={{
+                value: `Put Wall ${gex.putWall}`,
+                position: 'insideTopLeft',
+                fill: '#cc44ff',
+                fontSize: 9,
+              }}
+            />
+
+            {/* Call Wall */}
+            <ReferenceLine
+              x={gex.callWall}
+              stroke="#4488ff"
+              strokeWidth={1}
+              strokeDasharray="4 2"
+              label={{
+                value: `Call Wall ${gex.callWall}`,
+                position: 'insideTopRight',
+                fill: '#4488ff',
+                fontSize: 9,
+              }}
+            />
+
+            {/* Max Gamma Strike */}
+            <ReferenceLine
+              x={gex.maxGammaStrike}
+              stroke="#00ffcc"
+              strokeWidth={1}
+              strokeDasharray="3 3"
+              label={{
+                value: `Max γ ${gex.maxGammaStrike}`,
+                position: 'insideTopRight',
+                fill: '#00ffcc',
+                fontSize: 9,
+              }}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Legend for reference lines */}
+      <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">
+        {REFERENCE_LINES.map(({ color, label }) => (
+          <span key={label} className="flex items-center gap-1 text-[9px] text-text-muted">
+            <span
+              className="inline-block w-4 border-t border-dashed"
+              style={{ borderColor: color }}
+            />
+            {label}
+          </span>
+        ))}
       </div>
     </motion.section>
   )
