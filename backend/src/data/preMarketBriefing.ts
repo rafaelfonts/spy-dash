@@ -11,7 +11,7 @@
  */
 
 import { marketState, newsSnapshot, emitter } from './marketState'
-import { cacheGet, cacheSet } from '../lib/cacheStore'
+import { cacheGet, cacheSet, redis } from '../lib/cacheStore'
 import { CONFIG } from '../config'
 import type {
   PreMarketBriefing,
@@ -99,6 +99,16 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
     type === 'pre-market'
       ? `cache:premarket_briefing:${today}`
       : `cache:postclose_briefing:${today}`
+
+  // Distributed lock — prevents duplicate generation across HA instances (Fly.io 2-machine HA)
+  // Redis SET NX is atomic: only one instance acquires the lock; others return immediately.
+  // TTL of 300s ensures the lock expires if the generating instance crashes mid-flight.
+  const lockKey = `lock:briefing:${type}:${today}`
+  const acquired = await redis.set(lockKey, '1', 'EX', 300, 'NX')
+  if (!acquired) {
+    console.log(`[PreMarket] Lock '${type}' não adquirido — outra instância está gerando`)
+    return
+  }
 
   // Cooldown: skip if we already have a briefing of this type for today
   const existing = await cacheGet<PreMarketBriefing>(cacheKey)
