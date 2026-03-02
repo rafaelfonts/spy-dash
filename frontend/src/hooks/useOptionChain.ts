@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
 import type { OptionExpiry, OptionChainMeta } from '../store/marketStore'
 import { supabase } from '../lib/supabase'
+import { getApiBase } from '../lib/apiBase'
 
 const REFRESH_INTERVAL = 5 * 60_000 // 5 min — matches backend cache TTL
 
@@ -23,7 +24,7 @@ export function useOptionChain(): void {
           ? `Bearer ${session.access_token}`
           : ''
 
-        const res = await fetch('/api/option-chain', {
+        const res = await fetch(`${getApiBase()}/api/option-chain`, {
           headers: authHeader ? { Authorization: authHeader } : {},
         })
         if (!res.ok || !mountedRef.current) return

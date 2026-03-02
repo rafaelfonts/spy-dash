@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { IncomingMessage, ServerResponse } from 'http'
+import { CONFIG } from '../config'
 import { emitter, marketState, newsSnapshot } from '../data/marketState'
 import { getAdvancedMetricsSnapshot } from '../data/advancedMetricsState'
 import { getVIXTermStructureSnapshot } from '../data/vixTermStructureState'
@@ -82,6 +83,7 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     res.setHeader('Cache-Control', 'no-cache, no-transform')
     res.setHeader('Connection', 'keep-alive')
     res.setHeader('X-Accel-Buffering', 'no')
+    res.setHeader('Access-Control-Allow-Origin', CONFIG.CORS_ORIGIN)
     res.flushHeaders()
 
     // Tell the browser to reconnect after 3s if the connection drops

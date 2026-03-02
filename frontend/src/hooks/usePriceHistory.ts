@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
 import type { PricePoint } from '../store/marketStore'
 import { supabase } from '../lib/supabase'
+import { getApiBase } from '../lib/apiBase'
 
 interface PriceMinute {
   minute: string
@@ -14,7 +15,7 @@ async function fetchHistory(symbol: string, minutes: number): Promise<PricePoint
   } = await supabase.auth.getSession()
   const authHeader = session?.access_token ? `Bearer ${session.access_token}` : ''
 
-  const res = await fetch(`/api/price-history?symbol=${symbol}&minutes=${minutes}`, {
+  const res = await fetch(`${getApiBase()}/api/price-history?symbol=${symbol}&minutes=${minutes}`, {
     headers: authHeader ? { Authorization: authHeader } : {},
   })
   if (!res.ok) return []

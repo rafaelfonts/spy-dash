@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
 import { supabase } from '../lib/supabase'
+import { getApiBase } from '../lib/apiBase'
 
 const BASE_DELAY = 1000
 const MAX_DELAY = 15_000
@@ -33,8 +34,8 @@ export function useMarketStream(): void {
       const { data: { session } } = await supabase.auth.getSession()
       const token = session?.access_token
       const url = token
-        ? `/stream/market?token=${encodeURIComponent(token)}`
-        : '/stream/market'
+        ? `${getApiBase()}/stream/market?token=${encodeURIComponent(token)}`
+        : `${getApiBase()}/stream/market`
 
       const es = new EventSource(url)
       esRef.current = es

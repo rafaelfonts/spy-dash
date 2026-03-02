@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
 import type { OptionExpiry, AnalysisStructuredOutput } from '../store/marketStore'
 import { supabase } from '../lib/supabase'
+import { getApiBase } from '../lib/apiBase'
 
 export type AnalysisState = 'idle' | 'loading' | 'streaming' | 'done' | 'error'
 
@@ -82,7 +83,7 @@ export function useAIAnalysis(): UseAIAnalysis {
       // Busca a cadeia de opções (não-fatal: continua sem ela se falhar)
       let optionChain: OptionExpiry[] | undefined
       try {
-        const chainRes = await fetch('/api/option-chain', {
+        const chainRes = await fetch(`${getApiBase()}/api/option-chain`, {
           headers: authHeader ? { Authorization: authHeader } : {},
           signal: abortRef.current.signal,
         })
@@ -126,7 +127,7 @@ export function useAIAnalysis(): UseAIAnalysis {
         earnings: msToIso(newsFeed.lastUpdated),
       }
 
-      const res = await fetch('/api/analyze', {
+      const res = await fetch(`${getApiBase()}/api/analyze`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ marketSnapshot, optionChain, context, freshness }),
