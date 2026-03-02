@@ -1,7 +1,7 @@
 import { CONFIG } from '../config'
 import { ensureAccessToken } from '../auth/tokenManager'
 import { updateIVRank } from './marketState'
-import { cacheGet, cacheSet } from '../lib/cacheStore'
+import { cacheSet } from '../lib/cacheStore'
 
 const POLL_INTERVAL = 60_000
 const CACHE_KEY = 'ivrank_snapshot'
@@ -16,12 +16,8 @@ function toFloat(v: unknown): number | null {
 
 async function pollIVRank(): Promise<void> {
   try {
-    const cached = await cacheGet<{ value: number; percentile: number | null; ivx: number | null }>(CACHE_KEY)
-    if (cached) {
-      updateIVRank(cached)
-      return
-    }
-
+    // Always call the API — cache is for startup restore (restoreCache.ts) and error fallback only.
+    // A 14h TTL + early-return would freeze the value for the entire trading day.
     const token = await ensureAccessToken()
 
     const res = await fetch(`${CONFIG.TT_BASE}/market-metrics?symbols=SPY`, {
@@ -44,9 +40,9 @@ async function pollIVRank(): Promise<void> {
     const item = json.data?.items?.[0]
     if (!item) return
 
-    // Preference order: TW methodology > raw rank field.
-    const ivRank = toFloat(item['tw-implied-volatility-index-rank'])
-      ?? toFloat(item['implied-volatility-index-rank'])
+    // Standard IVR (52-week high/low formula — matches Tastytrade UI) preferred over TW proprietary rank.
+    const ivRank = toFloat(item['implied-volatility-index-rank'])
+      ?? toFloat(item['tw-implied-volatility-index-rank'])
 
     const ivPercentile = toFloat(item['implied-volatility-percentile'])
 
@@ -55,7 +51,7 @@ async function pollIVRank(): Promise<void> {
 
     const hv30Raw = toFloat(item['hv-30-day'])
 
-    // Diagnostic log — raw IV fields from Tastytrade /market-metrics
+    // Diagnostic log — both rank fields side-by-side for verification
     console.log('[IVRankPoller] Raw fields:', {
       'implied-volatility-index': item['implied-volatility-index'],
       'implied-volatility-index-rank': item['implied-volatility-index-rank'],
