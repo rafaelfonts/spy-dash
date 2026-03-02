@@ -36,48 +36,40 @@ export const IVRankCard = memo(function IVRankCard() {
         )}
       </div>
 
-      {/* IVx — valor principal */}
+      {/* IV Rank — valor principal */}
       <div className="mb-1">
         {isLoaded ? (
-          ivRank.ivx !== null ? (
-            <span className="text-4xl font-bold font-num text-text-primary tracking-tight">
-              {ivRank.ivx.toFixed(1)}
-              <span className="text-2xl text-text-secondary ml-0.5">%</span>
-            </span>
-          ) : (
-            <span className="text-4xl font-bold font-num text-text-muted tracking-tight">—</span>
-          )
+          <span className={`text-4xl font-bold font-num tracking-tight ${label.color}`}>
+            {pct.toFixed(1)}
+            <span className="text-2xl ml-0.5">%</span>
+          </span>
         ) : (
           <Skeleton className="w-24 h-10" />
         )}
       </div>
 
-      {/* IVx subtitle */}
-      <div className="mb-4 text-[10px] text-text-muted">
-        {isLoaded
-          ? 'vol implícita composta (IVx)'
-          : <Skeleton className="w-36" height="0.75rem" />}
+      {/* Barra de progresso do IV Rank */}
+      <div className="mb-4 relative h-1.5 bg-bg-elevated rounded-full overflow-hidden border border-border-subtle">
+        {isLoaded ? (
+          <motion.div
+            className={`absolute left-0 top-0 h-full rounded-full ${label.bar}`}
+            initial={{ width: 0 }}
+            animate={{ width: `${Math.min(pct, 100)}%` }}
+            transition={{ duration: 0.8, ease: 'easeOut' }}
+          />
+        ) : (
+          <div className="skeleton w-full h-full" />
+        )}
       </div>
 
-      {/* IV Rank + Percentil — seção secundária */}
+      {/* IVx + Percentil — seção secundária */}
       <div className="space-y-2">
-        {/* IV Rank row */}
+        {/* IVx row */}
         <div className="flex items-center gap-3">
-          <span className="text-[10px] text-text-muted w-16 shrink-0">IV Rank</span>
-          <div className="flex-1 relative h-1.5 bg-bg-elevated rounded-full overflow-hidden border border-border-subtle">
-            {isLoaded ? (
-              <motion.div
-                className={`absolute left-0 top-0 h-full rounded-full ${label.bar}`}
-                initial={{ width: 0 }}
-                animate={{ width: `${Math.min(pct, 100)}%` }}
-                transition={{ duration: 0.8, ease: 'easeOut' }}
-              />
-            ) : (
-              <div className="skeleton w-full h-full" />
-            )}
-          </div>
-          <span className="text-[11px] font-num font-semibold text-text-primary w-9 text-right shrink-0">
-            {isLoaded ? `${pct.toFixed(0)}%` : '—'}
+          <span className="text-[10px] text-text-muted w-16 shrink-0">IVx</span>
+          <div className="flex-1 text-[10px] text-text-muted">vol implícita composta</div>
+          <span className="text-[11px] font-num text-text-secondary w-9 text-right shrink-0">
+            {isLoaded ? (ivRank.ivx !== null ? `${ivRank.ivx.toFixed(1)}%` : '—') : '—'}
           </span>
         </div>
 
