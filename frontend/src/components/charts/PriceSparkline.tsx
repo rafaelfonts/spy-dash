@@ -26,24 +26,23 @@ function formatHHMM(epochMs: number): string {
   })
 }
 
-// Generate X-axis tick values at 30-min boundaries (NYSE session: 09:30–16:00 ET)
-function buildXTicks(data: PricePoint[]): number[] {
-  if (data.length < 2) return []
-  const first = data[0].t
-  const last = data[data.length - 1].t
-  const ticks: number[] = []
-  // Start from the nearest 30-min boundary >= first point
-  const d = new Date(first)
-  d.setSeconds(0, 0)
-  const minutes = d.getMinutes()
-  const nextHalfHour = minutes < 30 ? 30 : 60
-  d.setMinutes(nextHalfHour)
-  let t = d.getTime()
-  while (t <= last) {
-    ticks.push(t)
-    t += 30 * 60 * 1000
-  }
-  return ticks
+// Calculate NYSE session open (09:30) and close (16:00) epoch ms for the given reference timestamp
+function sessionBounds(referenceTs: number): [number, number] {
+  const ref = new Date(referenceTs)
+  // Compute UTC↔NY offset by comparing UTC ms to NY local parse
+  const utcMs = ref.getTime()
+  const nyMs = new Date(ref.toLocaleString('en-US', { timeZone: 'America/New_York' })).getTime()
+  const offsetMs = utcMs - nyMs
+
+  const nyDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(ref)
+  const open = new Date(`${nyDate}T09:30:00`).getTime() + offsetMs
+  const close = new Date(`${nyDate}T16:00:00`).getTime() + offsetMs
+  return [open, close]
+}
+
+// Generate exactly 5 evenly-spaced X-axis ticks across the session
+function buildXTicks(open: number, close: number): number[] {
+  return [0, 1, 2, 3, 4].map(i => open + Math.round(i * (close - open) / 4))
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -64,6 +63,13 @@ export function PriceSparkline({
   height = 48,
   showTooltip = true,
 }: PriceSparklineProps) {
+  // Session bounds derived from first data point's calendar date in ET
+  const refTs = data.length > 0 ? data[0].t : Date.now()
+  const [sessionOpen, sessionClose] = sessionBounds(refTs)
+
+  // Map all data — no explicit filter needed. The XAxis domain={[sessionOpen, sessionClose]}
+  // applies an SVG clipPath so points outside 09:30–16:00 are invisible.
+  // This avoids skeleton when only post-close ticks are available (e.g. VIX extended hours).
   const chartData = useMemo(
     () => data.map((pt) => ({ t: pt.t, v: pt.p })),
     [data],
@@ -84,11 +90,11 @@ export function PriceSparkline({
   const lineColor = isPositive ? '#00ff88' : '#ff4444'
   const gradientId = `gradient-${color.replace('#', '')}`
 
-  const xTicks = buildXTicks(data)
+  const xTicks = buildXTicks(sessionOpen, sessionClose)
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <AreaChart data={chartData} margin={{ top: 2, right: 0, left: 0, bottom: 2 }}>
+      <AreaChart data={chartData} margin={{ top: 2, right: 4, left: 4, bottom: 2 }}>
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={lineColor} stopOpacity={0.3} />
@@ -99,9 +105,10 @@ export function PriceSparkline({
         <XAxis
           dataKey="t"
           type="number"
-          domain={['dataMin', 'dataMax']}
+          domain={[sessionOpen, sessionClose]}
           scale="time"
           ticks={xTicks}
+          interval={0}
           tickFormatter={formatHHMM}
           tick={{ fill: '#6b7280', fontSize: 9 }}
           tickLine={false}
