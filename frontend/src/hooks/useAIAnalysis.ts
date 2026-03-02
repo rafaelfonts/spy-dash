@@ -25,7 +25,6 @@ interface FreshnessBlock {
   macro?: string
   bls?: string
   macroEvents?: string
-  earnings?: string
 }
 
 function msToIso(ms: number): string | undefined {
@@ -105,7 +104,6 @@ export function useAIAnalysis(): UseAIAnalysis {
         macro: newsFeed.macro.length > 0 ? newsFeed.macro : undefined,
         bls: newsFeed.bls.length > 0 ? newsFeed.bls : undefined,
         macroEvents: newsFeed.macroEvents.length > 0 ? newsFeed.macroEvents : undefined,
-        earnings: newsFeed.earnings.length > 0 ? newsFeed.earnings : undefined,
       }
 
       // Timestamps de captura para cada bloco de dados — permitem ao backend
@@ -119,12 +117,11 @@ export function useAIAnalysis(): UseAIAnalysis {
         fearGreed: newsFeed.fearGreed?.lastUpdated
           ? msToIso(newsFeed.fearGreed.lastUpdated)
           : undefined,
-        // macro/bls/macroEvents/earnings compartilham newsFeed.lastUpdated no frontend
+        // macro/bls/macroEvents compartilham newsFeed.lastUpdated no frontend
         // (o backend usa newsSnapshot.*Ts para maior granularidade no fallback sem payload)
         macro: msToIso(newsFeed.lastUpdated),
         bls: msToIso(newsFeed.lastUpdated),
         macroEvents: msToIso(newsFeed.lastUpdated),
-        earnings: msToIso(newsFeed.lastUpdated),
       }
 
       const res = await fetch(`${getApiBase()}/api/analyze`, {
