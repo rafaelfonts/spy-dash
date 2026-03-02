@@ -44,6 +44,14 @@ export interface NewsHeadline {
   image: string | null
 }
 
+// Pre-market / post-close briefing (mirrored from backend types/market.ts)
+export interface PreMarketBriefing {
+  type: 'pre-market' | 'post-close'
+  generatedAt: string
+  markdown: string
+  expiresAt: string
+}
+
 // Analysis structured output (mirrored from backend types/market.ts)
 export interface AnalysisStructuredOutput {
   bias: 'bullish' | 'bearish' | 'neutral'
@@ -241,6 +249,7 @@ interface MarketStore {
   putCallRatio: PutCallRatioData | null
   vixTermStructure: VIXTermStructureData | null
   technicalIndicators: TechnicalIndicatorsData | null
+  preMarketBriefing: PreMarketBriefing | null
 
   updateSPY: (data: Partial<SPYData>) => void
   updateVIX: (data: Partial<VIXData>) => void
@@ -255,6 +264,7 @@ interface MarketStore {
   setPutCallRatio: (data: PutCallRatioData | null) => void
   setVIXTermStructure: (data: VIXTermStructureData | null) => void
   setTechnicalIndicators: (data: TechnicalIndicatorsData | null) => void
+  setPreMarketBriefing: (data: PreMarketBriefing | null) => void
   alerts: AlertToast[]
   addAlert: (alert: AlertToast) => void
   dismissAlert: (id: string) => void
@@ -318,6 +328,7 @@ export const useMarketStore = create<MarketStore>()(
     putCallRatio: null,
     vixTermStructure: null,
     technicalIndicators: null,
+    preMarketBriefing: null,
     alerts: [],
 
     updateSPY: (data) =>
@@ -364,6 +375,7 @@ export const useMarketStore = create<MarketStore>()(
     setPutCallRatio: (data) => set({ putCallRatio: data }),
     setVIXTermStructure: (data) => set({ vixTermStructure: data }),
     setTechnicalIndicators: (data) => set({ technicalIndicators: data }),
+    setPreMarketBriefing: (data) => set({ preMarketBriefing: data }),
 
     isDataReady: () => {
       return get().spy.last !== null

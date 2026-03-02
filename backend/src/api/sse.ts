@@ -4,6 +4,7 @@ import { emitter, marketState, newsSnapshot } from '../data/marketState'
 import { getAdvancedMetricsSnapshot } from '../data/advancedMetricsState'
 import { getVIXTermStructureSnapshot } from '../data/vixTermStructureState'
 import { getTechnicalSnapshot } from '../data/technicalIndicatorsState'
+import { getTodaysBriefing } from '../data/preMarketBriefing'
 import type { SSEClient } from '../types/market'
 import { SSEBatcher } from '../lib/sseBatcher'
 import { checkAlerts } from '../data/alertEngine'
@@ -61,6 +62,7 @@ emitter.on('newsfeed', (data) => {
 emitter.on('advanced-metrics', (data) => broadcast('advanced-metrics', data))
 emitter.on('vix-term-structure', (data) => broadcast('vix-term-structure', data))
 emitter.on('technical-indicators', (data) => broadcast('technical-indicators', data))
+emitter.on('briefing', (data) => broadcast('briefing', data))
 emitter.on('quote', (data) => {
   if (data.last !== null) checkAlerts(data.last)
 })
@@ -155,6 +157,12 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     const techSnapshot = getTechnicalSnapshot()
     if (techSnapshot) {
       client.write('technical-indicators', techSnapshot)
+    }
+
+    // Send today's pre-market or post-close briefing if still valid
+    const briefing = getTodaysBriefing()
+    if (briefing && new Date() < new Date(briefing.expiresAt)) {
+      client.write('briefing', briefing)
     }
 
     // Heartbeat ping every 15s — keeps proxies from closing idle connections

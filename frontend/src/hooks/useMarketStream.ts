@@ -14,6 +14,7 @@ export function useMarketStream(): void {
   const setPutCallRatio = useMarketStore((s) => s.setPutCallRatio)
   const setVIXTermStructure = useMarketStore((s) => s.setVIXTermStructure)
   const setTechnicalIndicators = useMarketStore((s) => s.setTechnicalIndicators)
+  const setPreMarketBriefing = useMarketStore((s) => s.setPreMarketBriefing)
   const addAlert = useMarketStore((s) => s.addAlert)
 
   const esRef = useRef<EventSource | null>(null)
@@ -195,6 +196,15 @@ export function useMarketStream(): void {
         try {
           const data = JSON.parse(e.data)
           setTechnicalIndicators(data)
+        } catch {
+          // ignore parse errors
+        }
+      })
+
+      es.addEventListener('briefing', (e) => {
+        try {
+          const data = JSON.parse(e.data)
+          setPreMarketBriefing(data)
         } catch {
           // ignore parse errors
         }

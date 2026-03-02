@@ -11,6 +11,7 @@ import { SPYCard } from './components/cards/SPYCard'
 import { IVRankCard } from './components/cards/IVRankCard'
 import { VIXCard } from './components/cards/VIXCard'
 import { AIPanel } from './components/ai/AIPanel'
+import { PreMarketBriefing } from './components/ai/PreMarketBriefing'
 import { OptionChainPanel } from './components/options/OptionChainPanel'
 import { GEXPanel } from './components/options/GEXPanel'
 import { TechnicalIndicatorsCard } from './components/cards/TechnicalIndicatorsCard'
@@ -40,6 +41,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           <IVRankCard />
           <VIXCard />
         </div>
+        <PreMarketBriefing />
         <AIPanel />
         <GEXPanel />
         <TechnicalIndicatorsCard />

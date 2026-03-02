@@ -15,6 +15,7 @@ import { startNewsAggregator } from './data/newsAggregator'
 import { startBlsPoller } from './data/blsPoller'
 import { startVIXTermStructurePoller } from './data/vixTermStructurePoller'
 import { startTechnicalIndicatorsPoller } from './data/technicalIndicatorsPoller'
+import { startPreMarketScheduler, restoreBriefingFromCache } from './data/preMarketBriefing'
 import { registerSSE } from './api/sse'
 import { registerWSTicks } from './api/wsTicks'
 import { registerOpenAI } from './api/openai'
@@ -138,6 +139,8 @@ async function bootstrap(): Promise<void> {
       13_000,
       'restoreSPYQuote',
     ),
+    // Restore today's pre-market/post-close briefing from Redis if available
+    withTimeout(restoreBriefingFromCache(), 5_000, 'restoreBriefingFromCache'),
   ]).then(() => {
     console.log('[Bootstrap] Market state restore complete — starting pollers and streams.')
     startIntradayCachePersistence()
@@ -161,6 +164,8 @@ async function bootstrap(): Promise<void> {
     } catch (err) {
       console.error('[Bootstrap] Failed to start streaming services:', (err as Error).message)
     }
+
+    startPreMarketScheduler()
   }).catch(console.error)
 }
 

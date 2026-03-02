@@ -97,6 +97,19 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - Publicado via SSE e injetado no prompt IA (bloco base — sempre presente)
 - `TechnicalIndicatorsCard.tsx` exibe RSI gauge, MACD histogram + crossover badge e BB position badge no dashboard
 
+### Pre-Market Briefing Automático
+
+- **Briefing às 9:00 ET** (seg–sex): gerado automaticamente 30min antes da abertura via GPT-4o — sem interação do usuário
+- **Resumo pós-fechamento às 16:15 ET**: avaliação da sessão do dia e perspectiva para amanhã
+- **Cooldown diário via Redis** (`cache:premarket_briefing:YYYY-MM-DD`, TTL 14h): o briefing é gerado uma única vez por dia; reinicializações do servidor restauram o briefing do cache sem nova chamada à API
+- **Conteúdo do briefing pre-market** (4 seções): Contexto Overnight, Eventos Críticos do Dia, Níveis-Chave para Observar, Bias Preliminar e Estratégia Sugerida
+- **Conteúdo do briefing pós-fechamento** (3 seções): Resumo da Sessão, Resultado dos Eventos Macro, Perspectiva para Amanhã
+- **Preço pré-market do SPY**: capturado via Tradier timesales (`session_filter=all`, último bar antes de 09:30 ET), com fallback para preço DXFeed disponível
+- **Entrega via SSE** (`event: briefing`): clientes conectados recebem o briefing em tempo real; novos clientes recebem no snapshot inicial de conexão (se ainda válido)
+- **Discord Webhook** (`DISCORD_WEBHOOK_URL`): briefing enviado simultâneamente para o canal da equipe (fire-and-forget; falha não afeta o SSE)
+- **Expiração automática**: briefing pre-market expira às 10:30 ET; pós-fechamento às 06:00 ET do dia seguinte
+- Frontend: card destacado `PreMarketBriefing.tsx` com gradiente azul/roxo, renderização Markdown via `react-markdown`, auto-dismiss às 10:00 ET, botão "×" manual; posicionado acima do `AIPanel`
+
 ### Alertas de Preço em Tempo Real
 - Após cada análise IA, o `alertEngine.ts` registra os `key_levels` do structured output como alertas ativos do usuário (até 10 alertas; nova análise substitui todos os anteriores)
 - A cada tick de preço (via WebSocket ticks), `checkAlerts(price)` avalia todos os alertas ativos:
@@ -209,6 +222,7 @@ SPY Dash/
 │       │   ├── technicalIndicatorsPoller.ts # RSI/MACD/BBANDS calculados de priceHistory (local)
 │       │   ├── technicalIndicatorsState.ts  # Snapshot indicadores técnicos em memória
 │       │   ├── alertEngine.ts       # Alertas de preço por usuário (proximity + debounce)
+│       │   ├── preMarketBriefing.ts # Scheduler 9:00/16:15 ET + GPT-4o briefing + Discord webhook
 │       │   └── analysisMemory.ts    # Persistência análise IA no Supabase + embeddings pgvector
 │       ├── lib/                # Utilitários
 │       │   ├── circuitBreaker.ts    # Opossum wrapper: CLOSED/HALF_OPEN/OPEN; registry global
@@ -236,7 +250,7 @@ SPY Dash/
 │       │   └── useMarketOpen.ts    # Horário de mercado EUA
 │       ├── components/
 │       │   ├── cards/          # SPYCard, VIXCard, IVRankCard
-│       │   ├── ai/             # AIPanel + AnalysisResult
+│       │   ├── ai/             # AIPanel + AnalysisResult + PreMarketBriefing
 │       │   ├── options/
 │       │   │   ├── GEXPanel.tsx        # Painel GEX: gráfico byStrike + callWall/putWall/flipPoint
 │       │   │   └── OptionChainPanel.tsx # Cadeia de opções ATM com greeks Δ γ θ ν
@@ -280,11 +294,13 @@ Startup (paralelo, sem bloquear listen()):
   ├─ intraday chain (timeout 20s):
   │    restoreIntradayFromRedis() → restorePriceHistory() → restoreFromTradier()
   │    (filtra apenas hoje; Supabase busca 5 dias; Tradier sobrescreve com 390 bars)
-  └─ SPY quote chain (timeout 13s):
-       restoreSPYQuoteFromCache() → restoreSPYQuoteFromTradier()
-       (14h TTL no Redis; Tradier retorna last mesmo com mercado fechado)
+  ├─ SPY quote chain (timeout 13s):
+  │    restoreSPYQuoteFromCache() → restoreSPYQuoteFromTradier()
+  │    (14h TTL no Redis; Tradier retorna last mesmo com mercado fechado)
+  └─ restoreBriefingFromCache (timeout 5s):
+       cache:premarket_briefing:YYYY-MM-DD ou cache:postclose_briefing:YYYY-MM-DD
 
-Após restores: startIntradayCachePersistence() + pollers iniciam
+Após restores: startIntradayCachePersistence() + pollers iniciam + startPreMarketScheduler()
 ```
 
 ### Fluxo de Dados — WebSocket Price Ticks
@@ -441,6 +457,8 @@ Novo cliente SSE conectado:
 | `gnews_headlines` | 10 headlines filtradas | 30min | GNews | — | ✓ |
 | `macro_events` | Calendário econômico US | 1h | Finnhub | — | ✓ |
 | `earnings` | Earnings top 10 SPY | 6h | Tastytrade | ✓ | ✓ |
+| `cache:premarket_briefing:YYYY-MM-DD` | Briefing pre-market GPT-4o (markdown) | 14h | OpenAI | ✓ | ✓ |
+| `cache:postclose_briefing:YYYY-MM-DD` | Resumo pós-fechamento GPT-4o (markdown) | 14h | OpenAI | ✓ | ✓ |
 | `auth:tt_refresh_token` | Refresh token TT (AES-256-GCM) | 30d | Tastytrade | — | — |
 
 > Payloads >1KB são automaticamente comprimidos com Brotli por `cacheStore.ts` (prefixo `b:` para retrocompatibilidade). Reduz consumo no Redis Cloud free tier (30MB).
@@ -554,6 +572,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3001/admin/break
 | ↳ `type: macro-events` | `items: MacroEvent[]` — calendário Finnhub |
 | ↳ `type: headlines` | `items: NewsHeadline[]` — headlines GNews |
 | ↳ `type: sentiment` | `fearGreed: FearGreedData` — score CNN Fear & Greed |
+| `briefing` | `{ type: 'pre-market'\|'post-close', generatedAt, markdown, expiresAt }` — briefing automático 9:00/16:15 ET; enviado no snapshot inicial se válido |
 | `ping` | Heartbeat a cada 15s (timestamp) — mantém conexão viva em proxies |
 
 > `quote` e `vix` foram **removidos do SSE**. Ticks de preço são agora servidos exclusivamente via `/ws/ticks` WebSocket.
@@ -672,6 +691,10 @@ ENCRYPTION_KEY=<gere_com_openssl_rand_hex_32>
 # Supabase (auth, AI memory, price history, pgvector)
 SUPABASE_URL=https://<projeto>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service_role_key>
+
+# Discord Webhook — briefing pre-market + pós-fechamento (opcional)
+# Crie em: Servidor Discord → Integrações → Webhooks
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/<id>/<token>
 ```
 
 ### Variáveis de Ambiente (`frontend/.env`)

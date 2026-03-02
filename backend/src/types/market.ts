@@ -232,6 +232,13 @@ export const BlsResponseSchema = z.object({
 })
 export type BlsApiResponse = z.infer<typeof BlsResponseSchema>
 
+export interface PreMarketBriefing {
+  type: 'pre-market' | 'post-close'
+  generatedAt: string   // ISO string
+  markdown: string
+  expiresAt: string     // ISO string — 10:30 ET (pré) ou 06:00 ET próximo dia (pós)
+}
+
 export interface AnalysisStructuredOutput {
   bias: 'bullish' | 'bearish' | 'neutral'
   confidence: number           // 0.0 to 1.0
