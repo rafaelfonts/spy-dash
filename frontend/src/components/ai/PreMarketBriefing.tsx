@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useMarketStore } from '../../store/marketStore'
@@ -30,6 +30,7 @@ function formatGeneratedAt(iso: string): string {
 }
 
 export function PreMarketBriefing() {
+  const [isExpanded, setIsExpanded] = useState(false)
   const briefing = useMarketStore((s) => s.preMarketBriefing)
   const setPreMarketBriefing = useMarketStore((s) => s.setPreMarketBriefing)
   const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -40,7 +41,6 @@ export function PreMarketBriefing() {
 
     const ms = getMsUntilCollapse()
     if (ms === 0) {
-      // Already past 10:00 ET — hide immediately
       setPreMarketBriefing(null)
       return
     }
@@ -54,7 +54,6 @@ export function PreMarketBriefing() {
     }
   }, [briefing, setPreMarketBriefing])
 
-  // Don't render if no briefing or already expired
   if (!briefing) return null
   if (new Date() >= new Date(briefing.expiresAt)) return null
 
@@ -62,89 +61,133 @@ export function PreMarketBriefing() {
   const emoji = isPreMarket ? '🌅' : '🏁'
   const title = isPreMarket ? 'Pre-Market Briefing' : 'Resumo do Dia'
 
+  // Plain-text preview: first non-heading paragraph line
+  const preview = briefing.markdown
+    .replace(/^#+\s.*/gm, '')
+    .replace(/[*_`]/g, '')
+    .trim()
+    .split('\n')
+    .filter(Boolean)[0]
+    ?.slice(0, 140) ?? ''
+
   return (
-    <div className="relative rounded-lg border border-blue-700/30 bg-gradient-to-br from-blue-950/80 to-purple-950/80 p-4 mb-4">
-      {/* Header */}
-      <div className="flex items-start justify-between mb-3">
-        <div>
+    <div className="relative rounded-lg border border-[#00ff88]/20 bg-gradient-to-br from-bg-card to-[#00ff88]/[0.08] mb-4 overflow-hidden">
+
+      {/* Dismiss button — absolute to avoid nesting inside clickable header */}
+      <button
+        onClick={() => setPreMarketBriefing(null)}
+        className="absolute top-3 right-3 text-text-muted hover:text-text-secondary transition-colors text-lg leading-none z-10"
+        aria-label="Dispensar briefing"
+      >
+        ×
+      </button>
+
+      {/* Header — clicável para expandir/recolher */}
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        aria-controls="briefing-content"
+        onClick={() => setIsExpanded((v) => !v)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setIsExpanded((v) => !v) } }}
+        className="flex items-start justify-between p-4 pr-12 cursor-pointer select-none"
+      >
+        <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-base">{emoji}</span>
-            <span className="text-sm font-semibold text-blue-200">{title}</span>
-            <span className="text-xs text-blue-400/60 font-medium uppercase tracking-wide">SPY</span>
+            <span className="text-sm font-semibold text-accent-green">{title}</span>
+            <span className="text-xs text-text-muted font-medium uppercase tracking-wide">SPY</span>
           </div>
-          <p className="text-xs text-blue-400/70 mt-0.5">
+          <p className="text-xs text-text-muted mt-0.5">
             Gerado às {formatGeneratedAt(briefing.generatedAt)}
           </p>
+
+          {/* Preview — visível apenas quando colapsado */}
+          {!isExpanded && preview && (
+            <p className="text-xs text-text-secondary mt-1.5 truncate pr-2">
+              {preview}
+            </p>
+          )}
         </div>
 
-        {/* Dismiss button */}
-        <button
-          onClick={() => setPreMarketBriefing(null)}
-          className="text-blue-400/50 hover:text-blue-300 transition-colors text-lg leading-none ml-4 flex-shrink-0"
-          aria-label="Dispensar briefing"
+        {/* Chevron */}
+        <svg
+          className={`w-4 h-4 text-text-muted transition-transform duration-200 mt-0.5 flex-shrink-0 ${isExpanded ? 'rotate-180' : ''}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+          aria-hidden="true"
         >
-          ×
-        </button>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
       </div>
 
-      {/* Markdown content */}
-      <div className="prose prose-invert max-w-none text-sm leading-relaxed">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            h1: ({ children }) => (
-              <h1 className="text-base font-display font-bold text-blue-100 mb-2 mt-4 first:mt-0">
-                {children}
-              </h1>
-            ),
-            h2: ({ children }) => (
-              <h2 className="text-sm font-display font-semibold text-blue-200 mb-1.5 mt-3 first:mt-0">
-                {children}
-              </h2>
-            ),
-            h3: ({ children }) => (
-              <h3 className="text-sm font-semibold text-blue-300 mb-1 mt-2">{children}</h3>
-            ),
-            p: ({ children }) => (
-              <p className="text-blue-100/80 mb-2 last:mb-0">{children}</p>
-            ),
-            ul: ({ children }) => (
-              <ul className="space-y-1 mb-2 pl-4">{children}</ul>
-            ),
-            ol: ({ children }) => (
-              <ol className="space-y-1 mb-2 pl-4 list-decimal">{children}</ol>
-            ),
-            li: ({ children }) => (
-              <li className="text-blue-100/80 marker:text-blue-400">{children}</li>
-            ),
-            strong: ({ children }) => (
-              <strong className="text-blue-100 font-semibold">{children}</strong>
-            ),
-            em: ({ children }) => (
-              <em className="text-blue-300 not-italic">{children}</em>
-            ),
-            code: ({ children, className }) => {
-              const isBlock = className?.includes('language-')
-              return isBlock ? (
-                <code className="block bg-blue-950/60 border border-blue-800/40 rounded p-3 text-xs text-blue-100 font-mono overflow-x-auto my-2">
-                  {children}
-                </code>
-              ) : (
-                <code className="bg-blue-950/60 px-1 py-0.5 rounded text-xs text-blue-300 font-mono">
-                  {children}
-                </code>
-              )
-            },
-            blockquote: ({ children }) => (
-              <blockquote className="border-l-2 border-blue-500/40 pl-3 my-2 text-blue-100/70">
-                {children}
-              </blockquote>
-            ),
-            hr: () => <hr className="border-blue-700/30 my-3" />,
-          }}
-        >
-          {briefing.markdown}
-        </ReactMarkdown>
+      {/* Conteúdo expandível */}
+      <div
+        id="briefing-content"
+        className={`overflow-hidden transition-[max-height] duration-300 ease-in-out ${isExpanded ? 'max-h-[1200px]' : 'max-h-0'}`}
+      >
+        <div className="px-4 pb-4 border-t border-[#00ff88]/10 pt-3">
+          <div className="prose prose-invert max-w-none text-sm leading-relaxed">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                h1: ({ children }) => (
+                  <h1 className="text-base font-display font-bold text-text-primary mb-2 mt-4 first:mt-0">
+                    {children}
+                  </h1>
+                ),
+                h2: ({ children }) => (
+                  <h2 className="text-sm font-display font-semibold text-text-primary mb-1.5 mt-3 first:mt-0">
+                    {children}
+                  </h2>
+                ),
+                h3: ({ children }) => (
+                  <h3 className="text-sm font-semibold text-text-secondary mb-1 mt-2">{children}</h3>
+                ),
+                p: ({ children }) => (
+                  <p className="text-text-primary/80 mb-2 last:mb-0">{children}</p>
+                ),
+                ul: ({ children }) => (
+                  <ul className="space-y-1 mb-2 pl-4">{children}</ul>
+                ),
+                ol: ({ children }) => (
+                  <ol className="space-y-1 mb-2 pl-4 list-decimal">{children}</ol>
+                ),
+                li: ({ children }) => (
+                  <li className="text-text-primary/80 marker:text-text-muted">{children}</li>
+                ),
+                strong: ({ children }) => (
+                  <strong className="text-text-primary font-semibold">{children}</strong>
+                ),
+                em: ({ children }) => (
+                  <em className="text-text-secondary not-italic">{children}</em>
+                ),
+                code: ({ children, className }) => {
+                  const isBlock = className?.includes('language-')
+                  return isBlock ? (
+                    <code className="block bg-bg-elevated border border-border-subtle rounded p-3 text-xs text-text-primary font-mono overflow-x-auto my-2">
+                      {children}
+                    </code>
+                  ) : (
+                    <code className="bg-bg-elevated px-1 py-0.5 rounded text-xs text-text-secondary font-mono">
+                      {children}
+                    </code>
+                  )
+                },
+                blockquote: ({ children }) => (
+                  <blockquote className="border-l-2 border-[#00ff88]/30 pl-3 my-2 text-text-primary/70">
+                    {children}
+                  </blockquote>
+                ),
+                hr: () => <hr className="border-border-subtle my-3" />,
+              }}
+            >
+              {briefing.markdown}
+            </ReactMarkdown>
+          </div>
+        </div>
       </div>
     </div>
   )
