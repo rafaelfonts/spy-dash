@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
+import type { GEXProfile } from '../store/marketStore'
 import { supabase } from '../lib/supabase'
 import { getApiBase } from '../lib/apiBase'
 
@@ -18,6 +19,7 @@ export function useMarketStream(): void {
   const setVIXTermStructure = useMarketStore((s) => s.setVIXTermStructure)
   const setTechnicalIndicators = useMarketStore((s) => s.setTechnicalIndicators)
   const setPreMarketBriefing = useMarketStore((s) => s.setPreMarketBriefing)
+  const setGEXByExpiration = useMarketStore((s) => s.setGEXByExpiration)
   const addAlert = useMarketStore((s) => s.addAlert)
 
   const esRef = useRef<EventSource | null>(null)
@@ -203,6 +205,32 @@ export function useMarketStream(): void {
               label: data.putCallRatio.label,
               expiration: data.putCallRatio.expiration,
               lastUpdated: Date.now(),
+            })
+          }
+          if ((data as any).gexByExpiration) {
+            const byExp = (data as any).gexByExpiration
+            const toProfile = (bucket: any): GEXProfile | null => {
+              if (!bucket) return null
+              return {
+                byStrike: bucket.profile?.byStrike ?? [],
+                totalGEX: bucket.totalNetGamma,
+                flipPoint: bucket.flipPoint,
+                zeroGammaLevel: bucket.zeroGammaLevel,
+                maxGammaStrike: bucket.maxGexStrike,
+                minGammaStrike: bucket.minGexStrike,
+                callWall: bucket.callWall,
+                putWall: bucket.putWall,
+                regime: bucket.regime,
+                calculatedAt: bucket.calculatedAt,
+              }
+            }
+            setGEXByExpiration({
+              dte0:  toProfile(byExp.dte0),
+              dte1:  toProfile(byExp.dte1),
+              dte7:  toProfile(byExp.dte7),
+              dte21: toProfile(byExp.dte21),
+              dte45: toProfile(byExp.dte45),
+              all:   toProfile(byExp.all),
             })
           }
         } catch (err) {

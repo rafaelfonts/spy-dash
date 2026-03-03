@@ -128,6 +128,16 @@ export interface GEXProfile {
   calculatedAt: string
 }
 
+// GEX by expiration bucket (mirrored from backend gexService.GEXByExpiration)
+export interface GEXByExpirationData {
+  dte0:  GEXProfile | null
+  dte1:  GEXProfile | null
+  dte7:  GEXProfile | null
+  dte21: GEXProfile | null
+  dte45: GEXProfile | null
+  all:   GEXProfile | null
+}
+
 // Option chain types (mirrored from backend OptionLeg/OptionExpiry)
 export interface OptionChainMeta {
   capturedAt: string
@@ -231,6 +241,7 @@ interface MarketStore {
   optionChain: OptionExpiry[]
   optionChainMeta: OptionChainMeta | null
   gexProfile: GEXProfile | null
+  gexByExpiration: GEXByExpirationData | null
   lastAnalysisOutput: AnalysisStructuredOutput | null
   putCallRatio: PutCallRatioData | null
   vixTermStructure: VIXTermStructureData | null
@@ -246,6 +257,7 @@ interface MarketStore {
   setOptionChain: (chain: OptionExpiry[]) => void
   setOptionChainMeta: (meta: OptionChainMeta) => void
   setGEXProfile: (gex: GEXProfile | null) => void
+  setGEXByExpiration: (data: GEXByExpirationData | null) => void
   setLastAnalysisOutput: (output: AnalysisStructuredOutput | null) => void
   setPutCallRatio: (data: PutCallRatioData | null) => void
   setVIXTermStructure: (data: VIXTermStructureData | null) => void
@@ -307,6 +319,7 @@ export const useMarketStore = create<MarketStore>()(
     optionChain: [],
     optionChainMeta: null,
     gexProfile: null,
+    gexByExpiration: null,
     lastAnalysisOutput: null,
     putCallRatio: null,
     vixTermStructure: null,
@@ -353,6 +366,7 @@ export const useMarketStore = create<MarketStore>()(
     setOptionChain: (chain) => set({ optionChain: chain }),
     setOptionChainMeta: (meta) => set({ optionChainMeta: meta }),
     setGEXProfile: (gex) => set({ gexProfile: gex }),
+    setGEXByExpiration: (data) => set({ gexByExpiration: data }),
     setLastAnalysisOutput: (output) => set({ lastAnalysisOutput: output }),
     setPutCallRatio: (data) => set({ putCallRatio: data }),
     setVIXTermStructure: (data) => set({ vixTermStructure: data }),

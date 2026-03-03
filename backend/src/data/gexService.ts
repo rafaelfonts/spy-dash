@@ -17,6 +17,8 @@ import type { GEXProfile, ZeroGammaContract } from '../lib/gexCalculator'
 import { cacheGet, cacheSet } from '../lib/cacheStore'
 import { marketState, newsSnapshot } from './marketState'
 
+export type { GEXProfile }
+
 // ---------------------------------------------------------------------------
 // Public result shape
 // ---------------------------------------------------------------------------
@@ -199,4 +201,225 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
   await cacheSet(cacheKey, result, CACHE_TTL_MS, 'gex-service')
 
   return result
+}
+
+// ---------------------------------------------------------------------------
+// Multi-expiration GEX
+// ---------------------------------------------------------------------------
+
+export interface GEXByExpiration {
+  dte0:  DailyGexResult | null   // 0DTE (today)
+  dte1:  DailyGexResult | null   // nearest expiration ≥ 1 day
+  dte7:  DailyGexResult | null   // nearest expiration ≥ 7 days
+  dte21: DailyGexResult | null   // nearest expiration ≥ 21 days
+  dte45: DailyGexResult | null   // nearest expiration ≥ 45 days
+  all:   DailyGexResult | null   // aggregated GEX across all buckets above
+}
+
+/** Returns the nearest expiration date with DTE ≥ minDTE, or null if none found. */
+function resolveExpirationByMinDTE(
+  expirations: string[],
+  minDTE: number,
+): string | null {
+  const today = new Date().toISOString().slice(0, 10)
+  const msPerDay = 86_400_000
+
+  const candidates = expirations
+    .filter((d) => {
+      const dte = Math.round((new Date(d).getTime() - new Date(today).getTime()) / msPerDay)
+      return dte >= minDTE
+    })
+    .sort()
+
+  return candidates[0] ?? null
+}
+
+/**
+ * Calculates GEX for a specific expiration date without using the global `gex:daily` cache.
+ * Uses per-expiration cache key `gex:exp:${symbol}:${expiration}` (TTL 5min).
+ */
+async function calculateGexForExpiration(
+  symbol: string,
+  expiration: string,
+  spotPrice: number,
+): Promise<DailyGexResult | null> {
+  const cacheKey = `gex:exp:${symbol}:${expiration}`
+  const cached = await cacheGet<DailyGexResult>(cacheKey)
+  if (cached) return cached
+
+  const client = getTradierClient()
+  const options = await client.getOptionChain(symbol, expiration)
+  if (options.length === 0) {
+    console.warn(`[GexService] Empty chain for ${symbol} ${expiration}`)
+    return null
+  }
+
+  const today = new Date().toISOString().slice(0, 10)
+  const msPerDay = 86_400_000
+  const dteMs = new Date(expiration).getTime() - new Date(today).getTime()
+  const dte = Math.max(0, Math.round(dteMs / msPerDay))
+  const T = dte === 0 ? 0.5 / 365 : dte / 365
+  const r = getRiskFreeRate()
+
+  const strikeMap = new Map<
+    number,
+    { callOI: number; callGamma: number; putOI: number; putGamma: number }
+  >()
+  const zglContracts: ZeroGammaContract[] = []
+
+  for (const opt of options) {
+    const entry = strikeMap.get(opt.strike) ?? { callOI: 0, callGamma: 0, putOI: 0, putGamma: 0 }
+    if (opt.option_type === 'call') {
+      entry.callOI = opt.open_interest ?? 0
+      entry.callGamma = opt.greeks?.gamma ?? 0
+    } else {
+      entry.putOI = opt.open_interest ?? 0
+      entry.putGamma = opt.greeks?.gamma ?? 0
+    }
+    strikeMap.set(opt.strike, entry)
+
+    const oi = opt.open_interest ?? 0
+    if (oi === 0) continue
+    const iv =
+      (opt.greeks?.smv_vol ?? 0) > 0.005 ? opt.greeks!.smv_vol :
+      (opt.greeks?.mid_iv  ?? 0) > 0.005 ? opt.greeks!.mid_iv  :
+      (opt.greeks?.bid_iv  ?? 0) > 0.005 ? opt.greeks!.bid_iv  :
+      0.18
+    zglContracts.push({ strike: opt.strike, type: opt.option_type, oi, iv, T })
+  }
+
+  const strikeInputs = Array.from(strikeMap.entries()).map(([strike, data]) => ({ strike, ...data }))
+  const hasOI = strikeInputs.some((s) => s.callOI > 0 || s.putOI > 0)
+  if (!hasOI) return null
+
+  const zeroGammaLevel = await findZeroGammaLevel(zglContracts, spotPrice, r)
+  const profile = calculateGEX(strikeInputs, spotPrice, zeroGammaLevel)
+
+  const result: DailyGexResult = {
+    totalNetGamma: profile.totalGEX,
+    callWall: profile.callWall,
+    putWall: profile.putWall,
+    maxGexStrike: profile.maxGammaStrike,
+    minGexStrike: profile.minGammaStrike,
+    flipPoint: profile.flipPoint,
+    zeroGammaLevel: profile.zeroGammaLevel,
+    regime: profile.regime,
+    expiration,
+    profile,
+    calculatedAt: profile.calculatedAt,
+  }
+
+  await cacheSet(cacheKey, result, CACHE_TTL_MS, 'gex-service')
+  return result
+}
+
+/**
+ * Calculates GEX across multiple DTE buckets in parallel.
+ * Results are broadcast as `gexByExpiration` in the `advanced-metrics` SSE event.
+ */
+export async function calculateAllExpirationsGex(symbol: string): Promise<GEXByExpiration> {
+  if (!CONFIG.TRADIER_API_KEY) {
+    return { dte0: null, dte1: null, dte7: null, dte21: null, dte45: null, all: null }
+  }
+
+  const client = getTradierClient()
+  const expirations = await client.getExpirations(symbol)
+  if (expirations.length === 0) {
+    return { dte0: null, dte1: null, dte7: null, dte21: null, dte45: null, all: null }
+  }
+
+  // Resolve spot price once
+  let spotPrice = marketState.spy.last ?? 0
+  if (spotPrice <= 0) {
+    const quotes = await client.getQuotes(symbol)
+    spotPrice = quotes[0]?.last ?? 0
+  }
+  if (spotPrice <= 0) {
+    return { dte0: null, dte1: null, dte7: null, dte21: null, dte45: null, all: null }
+  }
+
+  const today = new Date().toISOString().slice(0, 10)
+  const exp0 = expirations.includes(today) ? today : null
+  const exp1   = resolveExpirationByMinDTE(expirations, 1)
+  const exp7   = resolveExpirationByMinDTE(expirations, 7)
+  const exp21  = resolveExpirationByMinDTE(expirations, 21)
+  const exp45  = resolveExpirationByMinDTE(expirations, 45)
+
+  const [r0, r1, r7, r21, r45] = await Promise.allSettled([
+    exp0  ? calculateGexForExpiration(symbol, exp0,  spotPrice) : Promise.resolve(null),
+    exp1  ? calculateGexForExpiration(symbol, exp1,  spotPrice) : Promise.resolve(null),
+    exp7  ? calculateGexForExpiration(symbol, exp7,  spotPrice) : Promise.resolve(null),
+    exp21 ? calculateGexForExpiration(symbol, exp21, spotPrice) : Promise.resolve(null),
+    exp45 ? calculateGexForExpiration(symbol, exp45, spotPrice) : Promise.resolve(null),
+  ])
+
+  const dte0  = r0.status  === 'fulfilled' ? r0.value  : null
+  const dte1  = r1.status  === 'fulfilled' ? r1.value  : null
+  const dte7  = r7.status  === 'fulfilled' ? r7.value  : null
+  const dte21 = r21.status === 'fulfilled' ? r21.value : null
+  const dte45 = r45.status === 'fulfilled' ? r45.value : null
+
+  // Build aggregated "all" GEX by combining strike maps from all non-null buckets
+  const buckets = [dte0, dte1, dte7, dte21, dte45].filter(Boolean) as DailyGexResult[]
+  let all: DailyGexResult | null = null
+
+  if (buckets.length > 0) {
+    const r = getRiskFreeRate()
+    const aggMap = new Map<number, { callOI: number; callGamma: number; putOI: number; putGamma: number }>()
+    const aggZgl: ZeroGammaContract[] = []
+
+    // Collect unique expirations to avoid double-counting when two buckets share same date
+    const seenExp = new Set<string>()
+    for (const bucket of buckets) {
+      if (seenExp.has(bucket.expiration)) continue
+      seenExp.add(bucket.expiration)
+
+      for (const s of bucket.profile.byStrike) {
+        const existing = aggMap.get(s.strike) ?? { callOI: 0, callGamma: 0, putOI: 0, putGamma: 0 }
+        existing.callOI += s.callOI
+        existing.putOI  += s.putOI
+        // Gamma per-strike is accumulated as weighted average (OI-weighted)
+        // For the aggregated profile we reuse the gamma from the first bucket that set this strike
+        if (s.callOI > 0 && existing.callGamma === 0) existing.callGamma = s.callGEX / (s.callOI * (100 * spotPrice * spotPrice / 1_000_000) || 1)
+        if (s.putOI  > 0 && existing.putGamma  === 0) existing.putGamma  = Math.abs(s.putGEX)  / (s.putOI  * (100 * spotPrice * spotPrice / 1_000_000) || 1)
+        aggMap.set(s.strike, existing)
+      }
+
+      // Collect ZGL contracts from the bucket's underlying options (using profile data as proxy)
+      // Since we don't re-fetch, we skip ZGL for the aggregated bucket
+    }
+
+    const strikeInputs = Array.from(aggMap.entries()).map(([strike, data]) => ({ strike, ...data }))
+    const hasOI = strikeInputs.some((s) => s.callOI > 0 || s.putOI > 0)
+
+    if (hasOI) {
+      const zgl = aggZgl.length > 0 ? await findZeroGammaLevel(aggZgl, spotPrice, r) : null
+      const profile = calculateGEX(strikeInputs, spotPrice, zgl)
+      all = {
+        totalNetGamma: profile.totalGEX,
+        callWall: profile.callWall,
+        putWall: profile.putWall,
+        maxGexStrike: profile.maxGammaStrike,
+        minGexStrike: profile.minGammaStrike,
+        flipPoint: profile.flipPoint,
+        zeroGammaLevel: profile.zeroGammaLevel,
+        regime: profile.regime,
+        expiration: 'ALL',
+        profile,
+        calculatedAt: profile.calculatedAt,
+      }
+    }
+  }
+
+  console.log(
+    `[GexService] Multi-exp GEX: ` +
+    `0DTE=${dte0 ? dte0.regime : 'n/a'} ` +
+    `1D=${dte1 ? dte1.regime : 'n/a'} ` +
+    `7D=${dte7 ? dte7.regime : 'n/a'} ` +
+    `21D=${dte21 ? dte21.regime : 'n/a'} ` +
+    `45D=${dte45 ? dte45.regime : 'n/a'} ` +
+    `ALL=${all ? all.regime : 'n/a'}`,
+  )
+
+  return { dte0, dte1, dte7, dte21, dte45, all }
 }

@@ -11,7 +11,7 @@
  *  - Outside market hours the poller backs off to every 5 min to save API quota.
  */
 
-import { calculateDailyGex } from './gexService'
+import { calculateDailyGex, calculateAllExpirationsGex } from './gexService'
 import { buildVolumeProfile } from './volumeProfileService'
 import { calculatePutCallRatio } from './putCallRatio'
 import { publishAdvancedMetrics } from './advancedMetricsState'
@@ -27,10 +27,11 @@ const OFFHOURS_INTERVAL_MS = 5 * 60_000  // 5 min outside market hours
 // ---------------------------------------------------------------------------
 
 async function tick(): Promise<void> {
-  const [gexResult, profileResult, pcResult] = await Promise.allSettled([
+  const [gexResult, profileResult, pcResult, gexByExpResult] = await Promise.allSettled([
     calculateDailyGex(SYMBOL),
     buildVolumeProfile(SYMBOL),
     calculatePutCallRatio(SYMBOL),
+    calculateAllExpirationsGex(SYMBOL),
   ])
 
   if (gexResult.status === 'rejected') {
@@ -42,10 +43,14 @@ async function tick(): Promise<void> {
   if (pcResult.status === 'rejected') {
     console.error('[AdvancedMetrics] P/C Ratio failed:', pcResult.reason)
   }
+  if (gexByExpResult.status === 'rejected') {
+    console.error('[AdvancedMetrics] GEX multi-exp failed:', gexByExpResult.reason)
+  }
 
   const gex = gexResult.status === 'fulfilled' ? gexResult.value : null
   const profile = profileResult.status === 'fulfilled' ? profileResult.value : null
   const pc = pcResult.status === 'fulfilled' ? pcResult.value : null
+  const gexByExp = gexByExpResult.status === 'fulfilled' ? gexByExpResult.value : null
 
   // Only publish if at least one service returned data
   if (!gex && !profile && !pc) {
@@ -53,28 +58,29 @@ async function tick(): Promise<void> {
     return
   }
 
-  const top20ByStrike = gex
-    ? [...gex.profile.byStrike]
-        .sort((a, b) => Math.abs(b.netGEX) - Math.abs(a.netGEX))
-        .slice(0, 20)
-        .map((s) => ({ strike: s.strike, netGEX: s.netGEX, callGEX: s.callGEX, putGEX: s.putGEX, callOI: s.callOI, putOI: s.putOI }))
-    : []
+  // Serialize each DailyGexResult bucket for SSE (top-20 strikes by |netGEX|)
+  function serializeGexBucket(bucket: typeof gex) {
+    if (!bucket) return null
+    const top20 = [...bucket.profile.byStrike]
+      .sort((a, b) => Math.abs(b.netGEX) - Math.abs(a.netGEX))
+      .slice(0, 20)
+      .map((s) => ({ strike: s.strike, netGEX: s.netGEX, callGEX: s.callGEX, putGEX: s.putGEX, callOI: s.callOI, putOI: s.putOI }))
+    return {
+      total: bucket.totalNetGamma,
+      callWall: bucket.callWall,
+      putWall: bucket.putWall,
+      zeroGamma: bucket.zeroGammaLevel,
+      flipPoint: bucket.flipPoint,
+      regime: bucket.regime,
+      maxGexStrike: bucket.maxGexStrike,
+      minGexStrike: bucket.minGexStrike,
+      expiration: bucket.expiration,
+      byStrike: top20,
+    }
+  }
 
   const payload: AdvancedMetricsPayload = {
-    gex: gex
-      ? {
-          total: gex.totalNetGamma,
-          callWall: gex.callWall,
-          putWall: gex.putWall,
-          zeroGamma: gex.zeroGammaLevel,
-          flipPoint: gex.flipPoint,
-          regime: gex.regime,
-          maxGexStrike: gex.maxGexStrike,
-          minGexStrike: gex.minGexStrike,
-          expiration: gex.expiration,
-          byStrike: top20ByStrike,
-        }
-      : null,
+    gex: serializeGexBucket(gex),
     profile: profile
       ? {
           poc: profile.poc,
@@ -91,6 +97,16 @@ async function tick(): Promise<void> {
           callVolume: pc.callVolume,
           label: pc.label,
           expiration: pc.expiration,
+        }
+      : null,
+    gexByExpiration: gexByExp
+      ? {
+          dte0:  gexByExp.dte0,
+          dte1:  gexByExp.dte1,
+          dte7:  gexByExp.dte7,
+          dte21: gexByExp.dte21,
+          dte45: gexByExp.dte45,
+          all:   gexByExp.all,
         }
       : null,
     timestamp: new Date().toISOString(),

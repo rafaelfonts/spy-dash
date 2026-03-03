@@ -906,4 +906,131 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
 
     reply.hijack()
   })
+
+  // ---------------------------------------------------------------------------
+  // POST /api/analyze/gex-flow — GEX flow analysis (streaming, gpt-4o-mini)
+  // ---------------------------------------------------------------------------
+
+  interface GexFlowBody {
+    selectedDte: '0DTE' | '1D' | '7D' | '21D' | '45D' | 'ALL'
+    gexData: DailyGexResult
+    spyLast: number
+    vixLast: number | null
+  }
+
+  fastify.post<{ Body: GexFlowBody }>('/api/analyze/gex-flow', async (request, reply) => {
+    const { selectedDte, gexData, spyLast, vixLast } = request.body ?? {}
+
+    if (!gexData || !spyLast) {
+      reply.code(400).send({ error: 'gexData and spyLast are required' })
+      return
+    }
+
+    const res = reply.raw as ServerResponse
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no')
+    res.flushHeaders()
+    res.write('event: ping\ndata: starting\n\n')
+
+    const sendEvent = (event: string, data: unknown) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+    }
+
+    const marketStatusNote = isMarketOpen()
+      ? ''
+      : 'ATENÇÃO: Mercado FECHADO. Dados da última captura.\n\n'
+
+    const vixStr = vixLast != null ? `VIX: ${vixLast.toFixed(2)}` : 'VIX: indisponível'
+    const regimeLabel = gexData.regime === 'positive'
+      ? 'POSITIVO (MMs suprimem volatilidade — range-bound)'
+      : 'NEGATIVO (MMs amplificam volatilidade — breakout/breakdown)'
+
+    const topStrikes = [...(gexData.profile.byStrike ?? [])]
+      .sort((a, b) => Math.abs(b.netGEX) - Math.abs(a.netGEX))
+      .slice(0, 8)
+      .map((s) => `  Strike ${s.strike}: Net ${s.netGEX >= 0 ? '+' : ''}${s.netGEX.toFixed(1)}M (Call ${s.callGEX.toFixed(1)}M / Put ${Math.abs(s.putGEX).toFixed(1)}M)`)
+      .join('\n')
+
+    const userMessage =
+      marketStatusNote +
+      `## Análise de Fluxo de Opções — ${selectedDte}\n\n` +
+      `**SPY:** $${spyLast.toFixed(2)} | **${vixStr}**\n` +
+      `**Expiração:** ${gexData.expiration}\n` +
+      `**GEX Total:** ${gexData.totalNetGamma >= 0 ? '+' : ''}${gexData.totalNetGamma.toFixed(1)}M\n` +
+      `**Regime:** ${regimeLabel}\n` +
+      `**Flip Point:** ${gexData.flipPoint ?? 'N/A'}\n` +
+      `**Zero Gamma Level:** ${gexData.zeroGammaLevel ?? 'N/A'}\n` +
+      `**Call Wall:** ${gexData.callWall}\n` +
+      `**Put Wall:** ${gexData.putWall}\n` +
+      `**Max Gamma Strike:** ${gexData.maxGexStrike}\n\n` +
+      `**Top strikes por exposição:**\n${topStrikes}\n\n` +
+      `Analise este perfil de GEX para a expiração ${selectedDte}. Explique:\n` +
+      `1. O que o regime ${gexData.regime} implica para o movimento de preço do SPY\n` +
+      `2. A importância do Flip Point / Zero Gamma Level como nível técnico\n` +
+      `3. Call Wall e Put Wall como resistência/suporte de dealers\n` +
+      `4. Strikes com maior concentração de gamma como zonas de atração ou rejeição\n` +
+      `Seja conciso, objetivo e acionável. Máximo 250 palavras.`
+
+    try {
+      const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${CONFIG.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          stream: true,
+          max_tokens: 400,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'Você é um especialista em estrutura de mercado de opções, com foco em Gamma Exposure (GEX) e posicionamento de dealers. ' +
+                'Suas análises são concisas, técnicas e acionáveis. Use markdown.',
+            },
+            { role: 'user', content: userMessage },
+          ],
+        }),
+      })
+
+      if (!openaiRes.ok || !openaiRes.body) {
+        throw new Error(`OpenAI error: ${openaiRes.status}`)
+      }
+
+      const reader = openaiRes.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const raw = line.slice(6).trim()
+          if (raw === '[DONE]') break
+          try {
+            const chunk = JSON.parse(raw)
+            const text = chunk.choices?.[0]?.delta?.content
+            if (text) sendEvent('token', { text })
+          } catch {
+            // skip malformed chunk
+          }
+        }
+      }
+
+      sendEvent('done', {})
+      res.end()
+    } catch (err) {
+      sendEvent('error', { message: (err as Error).message })
+      res.end()
+    }
+
+    reply.hijack()
+  })
 }
