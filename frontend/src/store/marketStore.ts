@@ -65,6 +65,12 @@ export interface AnalysisStructuredOutput {
   } | null
   catalysts: string[]
   risk_factors: string[]
+  recommended_dte: number | null
+  pop_estimate: number | null
+  supporting_gex_dte: string | null
+  invalidation_level: number | null
+  expected_credit: number | null
+  theta_per_day: number | null
 }
 
 // Technical Indicators type (mirrored from backend technicalIndicatorsState)

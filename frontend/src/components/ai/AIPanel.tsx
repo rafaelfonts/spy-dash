@@ -207,6 +207,76 @@ export function AIPanel() {
                   </div>
                 )}
 
+                {/* Suggested strategy */}
+                {structuredOutput.suggested_strategy && (
+                  <div className="p-3 bg-bg-elevated rounded-lg border border-border-subtle space-y-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="text-[10px] text-text-muted font-semibold tracking-wide uppercase">Estratégia Sugerida</div>
+                      <span className="text-[11px] px-2 py-0.5 rounded bg-white/[0.04] text-text-secondary border border-border-subtle font-semibold">
+                        {structuredOutput.suggested_strategy.name}
+                      </span>
+                      {structuredOutput.recommended_dte != null && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                          {structuredOutput.recommended_dte}DTE
+                        </span>
+                      )}
+                      {structuredOutput.pop_estimate != null && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/20">
+                          PoP ~{Math.round(structuredOutput.pop_estimate * 100)}%
+                        </span>
+                      )}
+                      {structuredOutput.invalidation_level != null && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">
+                          Inv. ${structuredOutput.invalidation_level}
+                        </span>
+                      )}
+                    </div>
+                    {structuredOutput.suggested_strategy.legs.length > 0 && (
+                      <div className="grid grid-cols-2 gap-1">
+                        {structuredOutput.suggested_strategy.legs.map((leg, i) => (
+                          <div key={i} className="flex items-center gap-1.5 text-[10px]">
+                            <span className={leg.action === 'sell' ? 'text-red-400 font-semibold' : 'text-[#00ff88] font-semibold'}>
+                              {leg.action.toUpperCase()}
+                            </span>
+                            <span className={leg.type === 'call' ? 'text-blue-400' : 'text-orange-400'}>
+                              {leg.type.toUpperCase()}
+                            </span>
+                            <span className="font-num text-text-secondary">${leg.strike}</span>
+                            <span className="text-text-muted">{leg.dte}d</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex gap-3 flex-wrap pt-1 border-t border-border-subtle">
+                      <div className="text-[10px]">
+                        <span className="text-text-muted">Risco máx </span>
+                        <span className="font-num text-red-400">${structuredOutput.suggested_strategy.max_risk.toFixed(2)}</span>
+                      </div>
+                      {structuredOutput.expected_credit != null ? (
+                        <div className="text-[10px]">
+                          <span className="text-text-muted">Crédito </span>
+                          <span className="font-num text-[#00ff88]">${structuredOutput.expected_credit.toFixed(2)}</span>
+                        </div>
+                      ) : (
+                        <div className="text-[10px]">
+                          <span className="text-text-muted">Lucro máx </span>
+                          <span className="font-num text-[#00ff88]">${structuredOutput.suggested_strategy.max_reward.toFixed(2)}</span>
+                        </div>
+                      )}
+                      {structuredOutput.theta_per_day != null && (
+                        <div className="text-[10px]">
+                          <span className="text-text-muted">Theta/dia </span>
+                          <span className="font-num text-purple-400">${structuredOutput.theta_per_day.toFixed(2)}</span>
+                        </div>
+                      )}
+                      <div className="text-[10px]">
+                        <span className="text-text-muted">Breakeven </span>
+                        <span className="font-num text-text-secondary">${structuredOutput.suggested_strategy.breakeven.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Catalysts + risk factors */}
                 {(structuredOutput.catalysts.length > 0 || structuredOutput.risk_factors.length > 0) && (
                   <div className="flex gap-2 flex-wrap">

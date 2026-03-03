@@ -262,4 +262,10 @@ export interface AnalysisStructuredOutput {
   } | null
   catalysts: string[]
   risk_factors: string[]
+  recommended_dte: number | null        // DTE recomendado para a estratégia principal
+  pop_estimate: number | null           // Probability of Profit 0–1 (via delta)
+  supporting_gex_dte: string | null     // bucket DTE do GEX que embasa a recomendação (ex: "21D")
+  invalidation_level: number | null     // preço de invalidação do trade
+  expected_credit: number | null        // crédito esperado $ por contrato
+  theta_per_day: number | null          // theta/dia estimado
 }
