@@ -1,9 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useAuth } from './hooks/useAuth'
 import { useMarketStream } from './hooks/useMarketStream'
-import { usePriceTicks } from './hooks/usePriceTicks'
 import { useOptionChain } from './hooks/useOptionChain'
-import { usePriceHistory } from './hooks/usePriceHistory'
 import { LoginPage } from './components/auth/LoginPage'
 import { Header } from './components/layout/Header'
 import { StatusBar } from './components/layout/StatusBar'
@@ -26,8 +24,6 @@ const queryClient = new QueryClient({
 
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   useMarketStream()
-  usePriceTicks()
-  usePriceHistory()
   useOptionChain()
 
   return (

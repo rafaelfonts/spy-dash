@@ -1,9 +1,8 @@
-import { memo, useMemo } from 'react'
+import { memo } from 'react'
 import { motion } from 'framer-motion'
 import { useMarketStore } from '../../store/marketStore'
 import { TickFlash } from '../ui/TickFlash'
 import { Skeleton } from '../ui/Skeleton'
-import { PriceSparkline } from '../charts/PriceSparkline'
 import { fmtPrice, fmtChange, fmtPct, changeClass, isUp } from '../../lib/formatters'
 
 const LEVEL_CONFIG = {
@@ -21,12 +20,6 @@ export const VIXCard = memo(function VIXCard() {
   const level = LEVEL_CONFIG[vix.level ?? 'null']
   const dirClass = changeClass(vix.change)
   const arrow = isUp(vix.change) ? '▲' : vix.change !== null && vix.change < 0 ? '▼' : ''
-
-  const sparkData = useMemo(
-    () => vix.priceHistory,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [vix.priceHistory.length, vix.priceHistory[vix.priceHistory.length - 1]],
-  )
 
   return (
     <motion.div
@@ -99,15 +92,6 @@ export const VIXCard = memo(function VIXCard() {
             <div className="opacity-70">{zone.name}</div>
           </div>
         ))}
-      </div>
-
-      {/* Sparkline */}
-      <div className="mt-auto border-t border-border-subtle pt-3">
-        <PriceSparkline
-          data={sparkData}
-          color={vix.level === 'high' ? '#ff4444' : '#ffcc00'}
-          height={48}
-        />
       </div>
 
       {/* VIX Term Structure */}

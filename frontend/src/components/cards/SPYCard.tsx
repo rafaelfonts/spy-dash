@@ -1,10 +1,9 @@
-import { memo, useMemo } from 'react'
+import { memo } from 'react'
 import { motion } from 'framer-motion'
 import { useMarketStore } from '../../store/marketStore'
 import { useMarketOpen } from '../../hooks/useMarketOpen'
 import { TickFlash } from '../ui/TickFlash'
 import { Skeleton } from '../ui/Skeleton'
-import { PriceSparkline } from '../charts/PriceSparkline'
 import {
   fmtPrice,
   fmtChange,
@@ -22,13 +21,6 @@ export const SPYCard = memo(function SPYCard() {
   const isLoaded = spy.last !== null
   const dirClass = changeClass(spy.change)
   const arrow = isUp(spy.change) ? '▲' : spy.change !== null && spy.change < 0 ? '▼' : ''
-
-  // Throttle sparkline updates — only recompute when history length changes or value differs by >0.1
-  const sparkData = useMemo(
-    () => spy.priceHistory,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [spy.priceHistory.length, spy.priceHistory[spy.priceHistory.length - 1]],
-  )
 
   return (
     <motion.div
@@ -111,10 +103,6 @@ export const SPYCard = memo(function SPYCard() {
         </div>
       </div>
 
-      {/* Sparkline */}
-      <div className="mt-auto border-t border-border-subtle pt-3">
-        <PriceSparkline data={sparkData} height={52} showTooltip />
-      </div>
     </motion.div>
   )
 })

@@ -177,11 +177,6 @@ export interface NewsFeedState {
   staleFlags: StaleFlags
 }
 
-export interface PricePoint {
-  t: number   // epoch ms timestamp
-  p: number   // price
-}
-
 export interface SPYData {
   last: number | null
   bid: number | null
@@ -191,7 +186,6 @@ export interface SPYData {
   volume: number | null
   dayHigh: number | null
   dayLow: number | null
-  priceHistory: PricePoint[]
   lastUpdated: number
 }
 
@@ -200,7 +194,6 @@ export interface VIXData {
   change: number | null
   changePct: number | null
   level: 'low' | 'moderate' | 'high' | null
-  priceHistory: PricePoint[]
   lastUpdated: number
 }
 
@@ -273,7 +266,6 @@ const initialSPY: SPYData = {
   volume: null,
   dayHigh: null,
   dayLow: null,
-  priceHistory: [],
   lastUpdated: 0,
 }
 
@@ -282,7 +274,6 @@ const initialVIX: VIXData = {
   change: null,
   changePct: null,
   level: null,
-  priceHistory: [],
   lastUpdated: 0,
 }
 

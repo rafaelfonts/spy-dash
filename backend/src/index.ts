@@ -1,6 +1,5 @@
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
-import websocket from '@fastify/websocket'
 import { CONFIG } from './config'
 import { initTokenManager } from './auth/tokenManager'
 import { startDXFeedStream } from './stream/dxfeedClient'
@@ -17,7 +16,6 @@ import { startVIXTermStructurePoller } from './data/vixTermStructurePoller'
 import { startTechnicalIndicatorsPoller } from './data/technicalIndicatorsPoller'
 import { startPreMarketScheduler, restoreBriefingFromCache } from './data/preMarketBriefing'
 import { registerSSE } from './api/sse'
-import { registerWSTicks } from './api/wsTicks'
 import { registerOpenAI } from './api/openai'
 import { registerHealth } from './api/health'
 import { registerPriceHistory } from './api/priceHistory'
@@ -60,9 +58,6 @@ async function bootstrap(): Promise<void> {
     methods: ['GET', 'POST', 'OPTIONS'],
   })
 
-  // WebSocket support (required for /ws/ticks)
-  await fastify.register(websocket)
-
   // Parse JSON bodies
   fastify.addContentTypeParser(
     'application/json',
@@ -83,7 +78,6 @@ async function bootstrap(): Promise<void> {
   await fastify.register(async (app) => {
     app.addHook('preHandler', requireAuth)
     await registerSSE(app)
-    await registerWSTicks(app)
     await registerOpenAI(app)
     await registerPriceHistory(app)
     await registerGex(app)
