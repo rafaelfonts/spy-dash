@@ -37,7 +37,6 @@ export function broadcastToUser(userId: string, event: string, data: unknown): v
 }
 
 // Forward market state events to all SSE clients
-// Note: 'quote' and 'vix' are now served via WebSocket (/ws/ticks) — not SSE
 emitter.on('ivrank', (data) => broadcast('ivrank', data))
 emitter.on('status', (data) => broadcast('status', data))
 const newsfeedBatcher = new SSEBatcher(500, (events) => {
@@ -66,6 +65,26 @@ emitter.on('technical-indicators', (data) => broadcast('technical-indicators', d
 emitter.on('briefing', (data) => broadcast('briefing', data))
 emitter.on('quote', (data) => {
   if (data.last !== null) checkAlerts(data.last)
+  broadcast('quote', {
+    bid: data.bid,
+    ask: data.ask,
+    last: data.last,
+    change: data.change,
+    changePct: data.changePct,
+    volume: data.volume,
+    dayHigh: data.dayHigh,
+    dayLow: data.dayLow,
+    timestamp: data.timestamp,
+  })
+})
+emitter.on('vix', (data) => {
+  broadcast('vix', {
+    last: data.last,
+    change: data.change,
+    changePct: data.changePct,
+    level: data.level,
+    timestamp: data.timestamp,
+  })
 })
 
 export function getSSEStats(): { count: number; avgConnectionAgeMs: number } {
@@ -106,7 +125,6 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     clientsByUser.set(userId, [...existing, client])
     console.log(`[SSE] Client connected: ${clientId} (total: ${clients.size})`)
 
-    // Note: SPY/VIX snapshots are sent via WebSocket (/ws/ticks) on connect — not SSE
     if (marketState.ivRank.value !== null) {
       client.write('ivrank', {
         ivRank: marketState.ivRank.value,
@@ -122,6 +140,30 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
       wsState: marketState.connection.wsState,
       reconnectAttempts: marketState.connection.reconnectAttempts,
     })
+
+    // Send SPY/VIX snapshot to newly connected client
+    if (marketState.spy.last !== null) {
+      client.write('quote', {
+        bid: marketState.spy.bid,
+        ask: marketState.spy.ask,
+        last: marketState.spy.last,
+        change: marketState.spy.change,
+        changePct: marketState.spy.changePct,
+        volume: marketState.spy.volume,
+        dayHigh: marketState.spy.dayHigh,
+        dayLow: marketState.spy.dayLow,
+        timestamp: marketState.spy.lastUpdated,
+      })
+    }
+    if (marketState.vix.last !== null) {
+      client.write('vix', {
+        last: marketState.vix.last,
+        change: marketState.vix.change,
+        changePct: marketState.vix.changePct,
+        level: marketState.vix.level,
+        timestamp: marketState.vix.lastUpdated,
+      })
+    }
 
     // Send cached news feed snapshot to newly connected clients
     if (newsSnapshot.earnings.length > 0) {

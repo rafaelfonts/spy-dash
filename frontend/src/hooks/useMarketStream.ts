@@ -7,6 +7,8 @@ const BASE_DELAY = 1000
 const MAX_DELAY = 15_000
 
 export function useMarketStream(): void {
+  const updateSPY = useMarketStore((s) => s.updateSPY)
+  const updateVIX = useMarketStore((s) => s.updateVIX)
   const updateIVRank = useMarketStore((s) => s.updateIVRank)
   const updateConnection = useMarketStore((s) => s.updateConnection)
   const updateNewsFeed = useMarketStore((s) => s.updateNewsFeed)
@@ -61,6 +63,38 @@ export function useMarketStream(): void {
             wsState: data.wsState,
             connected: data.connected,
             reconnectAttempts: data.reconnectAttempts ?? 0,
+          })
+        } catch {
+          // ignore
+        }
+      })
+
+      es.addEventListener('quote', (e) => {
+        try {
+          const data = JSON.parse(e.data)
+          updateSPY({
+            bid: data.bid,
+            ask: data.ask,
+            last: data.last,
+            change: data.change,
+            changePct: data.changePct,
+            volume: data.volume,
+            dayHigh: data.dayHigh,
+            dayLow: data.dayLow,
+          })
+        } catch {
+          // ignore
+        }
+      })
+
+      es.addEventListener('vix', (e) => {
+        try {
+          const data = JSON.parse(e.data)
+          updateVIX({
+            last: data.last,
+            change: data.change,
+            changePct: data.changePct,
+            level: data.level,
           })
         } catch {
           // ignore
