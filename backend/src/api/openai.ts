@@ -9,8 +9,7 @@ import { humanizeAge, isMarketOpen } from '../lib/time'
 import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem, AnalysisStructuredOutput, PricePoint } from '../types/market'
 import { saveAnalysis, getRecentAnalyses } from '../data/analysisMemory'
 import { getLastVwap } from '../data/priceHistory'
-import { calculateDailyGex } from '../data/gexService'
-import type { DailyGexResult } from '../data/gexService'
+import type { DailyGexResult, GEXByExpiration } from '../data/gexService'
 import { getAdvancedMetricsSnapshot } from '../data/advancedMetricsState'
 import { getVIXTermStructureSnapshot } from '../data/vixTermStructureState'
 import { getTechnicalSnapshot } from '../data/technicalIndicatorsState'
@@ -155,32 +154,42 @@ function confTag(c: ConfidenceResult | undefined): string {
   return ` [Confiança: ${c.score} ${c.label}]`
 }
 
-function buildGexBlock(gex: DailyGexResult): string {
-  const regimeLabel =
-    gex.regime === 'positive'
-      ? 'POSITIVO (market makers suprimem volatilidade — mercado tende a reverter à média)'
-      : 'NEGATIVO (market makers amplificam movimentos — espere maior volatilidade)'
-
-  const top5 = [...gex.profile.byStrike]
-    .sort((a, b) => Math.abs(b.netGEX) - Math.abs(a.netGEX))
-    .slice(0, 5)
-
-  let block = `\n=== GAMMA EXPOSURE (GEX) — ${gex.expiration} ===\n`
-  block += `Regime: ${regimeLabel}\n`
-  block += `GEX Total: $${gex.totalNetGamma}M\n`
-  block += `GEX Flip Point: ${gex.flipPoint ?? 'N/A'}\n`
-  block += `Zero Gamma Level (ZGL): ${gex.zeroGammaLevel ?? 'N/A'}\n`
-  block += `Call Wall (maior OI call): $${gex.callWall}\n`
-  block += `Put Wall (maior OI put): $${gex.putWall}\n`
-  block += `Max Gamma Strike (nível magnético): $${gex.maxGexStrike}\n`
-  if (top5.length > 0) {
-    block += `Top strikes por |GEX|:\n`
-    for (const s of top5) {
-      const callSign = s.callGEX >= 0 ? '+' : ''
-      const netSign = s.netGEX >= 0 ? '+' : ''
-      block += `  $${s.strike}: net=${netSign}${s.netGEX}M (call=${callSign}${s.callGEX}M / put=${s.putGEX}M)\n`
-    }
+function buildGexMultiDTEBlock(gex: GEXByExpiration): string {
+  const LABELS: Record<string, string> = {
+    dte0: '0DTE', dte1: '1D', dte7: '7D', dte21: '21D', dte45: '45D', all: 'ALL',
   }
+
+  const buckets = (['dte0', 'dte1', 'dte7', 'dte21', 'dte45', 'all'] as const).filter(
+    (k) => gex[k] != null,
+  )
+
+  if (buckets.length === 0) return ''
+
+  let block = `\n=== GEX POR EXPIRAÇÃO (Multi-DTE) ===\n`
+  block += `| DTE  | Expiração  | Regime   | GEX Total | Flip Point | Max Gamma |\n`
+  block += `|------|-----------|----------|-----------|------------|-----------|\n`
+
+  for (const key of buckets) {
+    const d = gex[key]!
+    const label = LABELS[key]
+    const expLabel = key === 'all' ? 'Agregado  ' : d.expiration
+    const regime = d.regime === 'positive' ? 'POSITIVO' : 'NEGATIVO'
+    const total = `${d.totalNetGamma >= 0 ? '+' : ''}$${d.totalNetGamma}M`
+    const flip = d.flipPoint != null ? `$${d.flipPoint.toFixed(2)}` : 'N/A'
+    block += `| ${label.padEnd(4)} | ${expLabel} | ${regime} | ${total.padEnd(9)} | ${flip.padEnd(10)} | $${d.maxGexStrike} |\n`
+  }
+
+  const wallLines: string[] = []
+  for (const key of buckets) {
+    const d = gex[key]!
+    const label = LABELS[key]
+    if (key === 'all') continue
+    wallLines.push(`- ${label}: Call Wall $${d.callWall} | Put Wall $${d.putWall}`)
+  }
+  if (wallLines.length > 0) {
+    block += `\nCall Wall / Put Wall por DTE:\n${wallLines.join('\n')}\n`
+  }
+
   return block
 }
 
@@ -395,7 +404,7 @@ function buildPrompt(
   chain?: OptionExpiry[],
   freshness?: FreshnessBlock,
   memoryBlock?: string,
-  gexBlock?: string | null,
+  gexMultiBlock?: string | null,
   putCallRatioBlock?: string | null,
   confidence?: Record<string, ConfidenceResult>,
   techBlock?: string | null,
@@ -434,8 +443,8 @@ function buildPrompt(
   }
 
   // --- GEX (Gamma Exposure) ---
-  if (gexBlock) {
-    prompt += gexBlock
+  if (gexMultiBlock) {
+    prompt += gexMultiBlock
   }
 
   // --- Put/Call Ratio ---
@@ -683,11 +692,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const userId = (request as any).user?.id ?? 'unknown'
     console.log(`[ANALYZE] user=${userId} model=gpt-4o tokens_max=1200`)
 
-    // Fetch intraday memory and GEX concurrently — both gracefully degrade on failure
-    const [pastAnalyses, gexResult] = await Promise.all([
-      getRecentAnalyses(userId, 3),
-      calculateDailyGex('SPY').catch(() => null),
-    ])
+    // Fetch intraday memory — GEX comes from in-memory snapshot (no extra API call)
+    const pastAnalyses = await getRecentAnalyses(userId, 3)
 
     const memoryBlock = pastAnalyses.length > 0
       ? pastAnalyses.map((a, i) => {
@@ -698,9 +704,10 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
         }).join('\n')
       : ''
 
-    const gexBlock = gexResult ? buildGexBlock(gexResult) : null
-
     const advancedSnapshot = getAdvancedMetricsSnapshot()
+    const gexMultiBlock = advancedSnapshot?.gexByExpiration
+      ? buildGexMultiDTEBlock(advancedSnapshot.gexByExpiration)
+      : null
     const pcBlock = advancedSnapshot?.putCallRatio
       ? buildPutCallRatioBlock(advancedSnapshot.putCallRatio)
       : null
@@ -783,7 +790,26 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       'Invoca-a APENAS se detetares: VIX acima de 20 ou em spike (>15% variação), ' +
       'Put/Call Ratio acima de 1.3 ou abaixo de 0.6, RSI em zona extrema (<30 ou >70) combinado com MACD crossover, ' +
       'ou se o utilizador mencionar macro, eventos, earnings ou contexto económico. ' +
-      'Em análises intraday rotineiras sem estes sinais, NÃO invoques a ferramenta — poupa tokens e latência.'
+      'Em análises intraday rotineiras sem estes sinais, NÃO invoques a ferramenta — poupa tokens e latência. ' +
+      'Interpretação do GEX por DTE: ' +
+      '0DTE/1D: regime determina comportamento intraday imediato — GEX negativo amplifica moves, positivo induz reversão à média; use para avaliar se 0DTE é viável. ' +
+      '7D: janela tática para debit/credit spreads semanais; flip point 7D é o nível-chave de breakeven. ' +
+      '21D: janela ideal para iron condors e vertical spreads mensais; max gamma 21D é a ancoragem dos MMs para o mês. ' +
+      '45D: contexto estrutural; use para confirmar direção de médio prazo. ' +
+      'ALL (agregado): exposição consolidada total dos MMs — indica onde a pressão de hedge é mais intensa globalmente. ' +
+      'Ao recomendar estratégias, sempre indique qual DTE/GEX embasa a recomendação. ' +
+      'Framework de análise — aplique nesta ordem: ' +
+      '(1) REGIME VOL: IV Rank + IV/HV30 + VIX term structure → ambiente de venda ou compra de volatilidade? ' +
+      '(2) REGIME GEX por DTE: para o DTE candidato, qual é o regime? Flip point e max gamma são os níveis de âncora. ' +
+      '(3) STRIKE COM PoP: use delta como proxy de PoP (delta 0.16 ≈ 84% PoP, delta 0.30 ≈ 70% PoP); posicione short strikes além dos walls de GEX do DTE escolhido. ' +
+      '(4) CONFIRMAÇÃO TÉCNICA: RSI/MACD/VWAP/BBands confirmam ou contradizem? Se contraditório, mencione o conflito. ' +
+      'Formato de saída para estratégias recomendadas: ' +
+      'Estratégia: [nome] | DTE: [X] dias | Expiração: [data] | ' +
+      'Estrutura: [legs] | PoP estimado: ~XX% (delta ≈ 0.XX) | ' +
+      'Crédito: ~$X.XX | Risco máx: ~$X.XX | Theta/dia: ~$X.XX | ' +
+      'Ancoragem GEX: [nível — put wall/call wall/flip point do DTE] | ' +
+      'Invalidação: [preço e descrição do nível] | ' +
+      'Confiança: ALTA/MÉDIA/BAIXA — [justificativa em 1 linha]'
 
     const baseMessages: Array<{ role: string; content: string }> = [
       { role: 'system', content: systemPrompt },
@@ -794,7 +820,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
           body.optionChain,
           freshness,
           memoryBlock || undefined,
-          gexBlock,
+          gexMultiBlock,
           pcBlock,
           confidence,
           techBlock,
