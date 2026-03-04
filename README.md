@@ -135,6 +135,13 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - **Endpoints API:** `GET /api/portfolio` (retorna `positions` + `capturedAt` do cache), `POST /api/portfolio/refresh` (re-enriquece com Tradier e atualiza cache), `POST /api/portfolio/analyze` (usa snapshot atual e retorna `alerts` do Claude Gestor de Risco).
 - **Painel no dashboard:** card "Carteira — Put Spreads" (`PortfolioPanel.tsx`) com tabela (estratégia, DTE, lucro %, crédito, custo fechar), badges 50% (verde) e ≤21 DTE (amarelo), botões Atualizar e Analisar carteira; hook `usePortfolio.ts` consome os três endpoints.
 
+### Análise de Risco/Retorno Assimétrica (Put Spread)
+- **Objetivo:** avaliar propostas de Bull Put Spread (21–45 DTE) cruzando o payoff matemático com o calendário macroeconômico e a parede GEX, retornando decisão CRO (APPROVED / REJECTED / NEEDS_RESTRUCTURE) e justificativa técnica.
+- **Motor de payoff:** `lib/putSpreadPayoff.ts` — `calculatePutSpreadPayoff(shortStrike, longStrike, creditReceived)` retorna `strike_width`, `max_profit`, `max_loss`, `risk_reward_ratio`, `breakeven`, `margin_required` (por contrato).
+- **Calendário macro:** `macroCalendar.ts` — `getMacroEventsForWindow(startDate, endDate)` retorna apenas eventos de **alto impacto** (ex.: FOMC, CPI, NFP, GDP) entre hoje e a data de vencimento; fonte: `newsSnapshot.macroEvents` ou cache Redis.
+- **Endpoint:** `POST /api/analyze/risk-review` (JWT + mesmo rate limit da análise). Body: `short_strike`, `long_strike`, `credit_received_per_contract`, `dte` (21–45), `expiration_date` opcional. Payload enviado ao Claude 3.5 Sonnet: `proposed_trade` (com payoff_profile), `market_context` (SPY, major_negative_gex_level do bucket GEX 21D/45D, IV Rank), `binary_risk_events`.
+- **System prompt CRO:** o modelo atua como Diretor de Risco: (1) exige crédito ≥ 1/3 da largura do spread; (2) cruza DTE com eventos binários (FOMC/CPI perto do vencimento → exige prêmio maior); (3) aprova estrutura se breakeven acima da put wall GEX, senão sugere rolagem. Resposta JSON: `decision`, `justification`.
+
 ### Alertas de Preço em Tempo Real
 - Após cada análise IA, o `alertEngine.ts` registra os `key_levels` do structured output como alertas ativos do usuário (até 10 alertas; nova análise substitui todos os anteriores)
 - A cada tick de preço (via eventos `quote` do SSE), `checkAlerts(price)` avalia todos os alertas ativos:
@@ -208,6 +215,7 @@ SPY Dash/
 │       ├── api/                # Endpoints HTTP
 │       │   ├── health.ts       # Status do servidor (público + protegido)
 │       │   ├── openai.ts       # Análise GPT-4o streaming (Tool Calling + Structured Outputs)
+│       │   ├── riskReview.ts   # POST /api/analyze/risk-review — CRO Put Spread (payoff + macro + GEX)
 │       │   ├── sse.ts          # Stream de mercado SSE (broadcast global + por usuário; quote/vix)
 │       │   ├── priceHistory.ts # GET /api/price-history
 │       │   ├── gex.ts          # GET /api/gex (snapshot) + /api/gex/detail (full Redis cache)
@@ -263,6 +271,7 @@ SPY Dash/
 │       │   ├── time.ts              # isMarketOpen() DST-aware ET — compartilhado entre pollers
 │       │   ├── tradierClient.ts     # TradierClient singleton: getQuotes(), getTimeSales(), getOptionChain(), getExpirations()
 │       │   ├── blackScholes.ts      # Black-Scholes: calcDelta, calcGamma, calcTheta, calcVega
+│       │   ├── putSpreadPayoff.ts   # Payoff Bull Put Spread: strike_width, max_profit, max_loss, breakeven, risk_reward_ratio
 │       │   └── gexCalculator.ts     # Black-Scholes gamma: Nd1(), calcGamma(), buildProfile()
 │       └── types/
 │           ├── market.ts       # Interfaces TypeScript (todos os tipos compartilhados)
@@ -541,6 +550,7 @@ O backend usa `SUPABASE_SERVICE_ROLE_KEY` (bypassa RLS) para todas as operaçõe
 | `/stream/market` | GET (SSE) | JWT | Stream de eventos macro, alertas, GEX, newsfeed, quote e vix (preço SPY/VIX) |
 | `/api/analyze` | POST (SSE) | JWT | Análise GPT-4o em streaming (Tool Calling + Structured Outputs) |
 | `/api/analyze/gex-flow` | POST (SSE) | JWT | Análise focada em GEX por DTE (streaming gpt-4o-mini) |
+| `/api/analyze/risk-review` | POST | JWT | Crítica CRO de Put Spread: payoff + eventos macro na janela DTE → decision + justification (Claude 3.5 Sonnet) |
 | `/api/search` | POST | JWT | Pesquisa semântica em análises históricas (pgvector) |
 | `/api/option-chain` | GET | JWT | Snapshot da cadeia de opções SPY com greeks Δ γ θ ν |
 | `/api/price-history` | GET | JWT | Histórico de preços por símbolo |
@@ -812,6 +822,7 @@ npm run preview # Preview do build de produção
 - Alertas de preço em tempo real (support/resistance/gex_flip) por usuário
 - Rate limiting: 5 análises/hora por usuário (sliding window)
 - **Motor de Gestão de Ciclo de Vida:** scheduler 16:00 ET para Put Spreads (posições OPEN em `portfolio_positions`); DTE + lucro % via Tradier; Claude Gestor de Risco (FECHAR_LUCRO / FECHAR_TEMPO / ROLAR / MANTER); alertas Discord com embeds (verde 50%, amarelo 21 DTE). Painel **Carteira** no dashboard com snapshot em memória, endpoints GET/POST portfolio e POST analyze, e botão "Analisar carteira" com exibição das recomendações do Gestor de Risco.
+- **Análise de Risco/Retorno Assimétrica:** `POST /api/analyze/risk-review` — motor de payoff Put Spread (`putSpreadPayoff.ts`) + eventos macro de alto impacto na janela DTE (`getMacroEventsForWindow`) + contexto GEX; Claude 3.5 Sonnet como CRO retorna decisão (APPROVED/REJECTED/NEEDS_RESTRUCTURE) e justificativa técnica.
 
 **Pesquisa Semântica:**
 - `POST /api/search` — busca em análises históricas por similaridade cosine (pgvector HNSW)

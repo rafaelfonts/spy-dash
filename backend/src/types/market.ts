@@ -91,6 +91,13 @@ export interface MacroEvent {
   unit: string | null
 }
 
+/** High-impact macro event in the option's DTE window (for risk-review payload). */
+export interface BinaryRiskEvent {
+  date: string                    // YYYY-MM-DD
+  event: string
+  impact: 'HIGH'
+}
+
 export type NewsSentiment = 'bullish' | 'bearish' | 'neutral'
 
 export interface NewsHeadline {

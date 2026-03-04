@@ -19,6 +19,7 @@ import { startPreMarketScheduler, restoreBriefingFromCache } from './data/preMar
 import { startPortfolioTrackerScheduler } from './data/portfolioTrackerService'
 import { registerSSE } from './api/sse'
 import { registerOpenAI } from './api/openai'
+import { registerRiskReview } from './api/riskReview'
 import { registerHealth } from './api/health'
 import { registerPriceHistory } from './api/priceHistory'
 import { registerGex } from './api/gex'
@@ -82,6 +83,7 @@ async function bootstrap(): Promise<void> {
     app.addHook('preHandler', requireAuth)
     await registerSSE(app)
     await registerOpenAI(app)
+    await registerRiskReview(app)
     await registerPriceHistory(app)
     await registerGex(app)
     await registerVolumeProfile(app)

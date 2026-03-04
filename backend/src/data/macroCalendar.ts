@@ -1,6 +1,6 @@
 import { CONFIG } from '../config'
 import { emitter, newsSnapshot } from './marketState'
-import type { MacroEvent, FinnhubCalendarApiResponse } from '../types/market'
+import type { MacroEvent, FinnhubCalendarApiResponse, BinaryRiskEvent } from '../types/market'
 import { FinnhubCalendarSchema } from '../types/market'
 import { createBreaker } from '../lib/circuitBreaker'
 import { cacheGet, cacheSet } from '../lib/cacheStore'
@@ -116,4 +116,35 @@ async function pollMacroCalendar(): Promise<void> {
 export function startMacroCalendar(): void {
   pollMacroCalendar().catch(console.error)
   setInterval(() => pollMacroCalendar().catch(console.error), POLL_INTERVAL)
+}
+
+/**
+ * Returns only high-impact macro events (e.g. FOMC, CPI, NFP, GDP) that fall
+ * strictly within [startDate, endDate] (inclusive, date-only comparison).
+ * Used for risk-review payload (binary risk events in the option's DTE window).
+ */
+export async function getMacroEventsForWindow(
+  startDate: Date | string,
+  endDate: Date | string,
+): Promise<BinaryRiskEvent[]> {
+  const startStr = typeof startDate === 'string' ? startDate.slice(0, 10) : startDate.toISOString().slice(0, 10)
+  const endStr = typeof endDate === 'string' ? endDate.slice(0, 10) : endDate.toISOString().slice(0, 10)
+
+  let events: MacroEvent[] = newsSnapshot.macroEvents
+  if (events.length === 0) {
+    const cached = await cacheGet<{ events: MacroEvent[] }>(CACHE_KEY)
+    events = cached?.events ?? []
+  }
+
+  return events
+    .filter((e) => e.impact === 'high')
+    .filter((e) => {
+      const eventDate = e.time ? e.time.slice(0, 10) : null
+      return eventDate !== null && eventDate >= startStr && eventDate <= endStr
+    })
+    .map((e) => ({
+      date: e.time!.slice(0, 10),
+      event: e.event,
+      impact: 'HIGH' as const,
+    }))
 }
