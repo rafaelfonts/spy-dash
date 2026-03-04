@@ -117,3 +117,20 @@ export function calcVega(
   if (!dd) return 0
   return S * normPdf(dd.d1) * Math.sqrt(T) / 100
 }
+
+/**
+ * Risk-neutral probability that spot finishes above K at expiry (short put expires OTM).
+ * Returns N(d2). Use for POP (Probability of Profit) of a sold put: POP = P(S > K) = N(d2).
+ * S, K, T, r, sigma: same conventions as other BSM functions; sigma in decimal (e.g. 0.18 for 18%).
+ * Returns value in [0, 1] (e.g. 0.72 = 72% POP).
+ */
+export function calcProbabilityOTMPut(
+  S: number, K: number, T: number, r: number, sigma: number,
+): number {
+  const dd = d1d2(S, K, T, r, sigma)
+  if (!dd) {
+    if (T <= 0) return S > K ? 1 : 0
+    return 0
+  }
+  return normCdf(dd.d2)
+}

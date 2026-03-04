@@ -23,6 +23,7 @@ import { getBreakerStatuses } from '../lib/circuitBreaker'
 import { registerAlertsFromAnalysis } from '../data/alertEngine'
 import { getExpectedMoveSnapshot } from '../data/expectedMoveState'
 import type { ExpectedMoveSnapshot } from '../data/expectedMoveState'
+import { calcProbabilityOTMPut } from '../lib/blackScholes'
 
 interface ContextData {
   fearGreed?: { score: FearGreedData['score']; label: FearGreedData['label'] }
@@ -442,6 +443,52 @@ function buildExpectedMoveBlock(snapshot: ExpectedMoveSnapshot | null, spyLast: 
   return lines.join('\n')
 }
 
+/** Risk-free rate from FRED DFF in macro snapshot; fallback 5.3%. */
+function getRiskFreeRate(): number {
+  const dff = newsSnapshot.macro.find((m) => m.seriesId === 'DFF')
+  if (dff?.value != null && isFinite(dff.value)) return dff.value / 100
+  return 0.053
+}
+
+function buildIVByExpirationBlock(): string | null {
+  const ts = getVIXTermStructureSnapshot()
+  if (!ts || !ts.curve?.length) return null
+  const curve = ts.curve
+  const iv21 = curve.reduce((best, c) => (Math.abs(c.dte - 21) < Math.abs(best.dte - 21) ? c : best))
+  const iv45 = curve.reduce((best, c) => (Math.abs(c.dte - 45) < Math.abs(best.dte - 45) ? c : best))
+  let block = '\n**IV por vencimento (term structure)** — volatilidade implícita ATM por DTE:\n'
+  block += `Curva: ${curve.map((p) => `${p.dte}d=${p.iv}%`).join(' → ')}\n`
+  block += `IV 21 DTE: ${iv21.iv}% | IV 45 DTE: ${iv45.iv}%\n`
+  block += 'Para Put Spreads 21–45 DTE, se a volatilidade implícita do vencimento escolhido estiver baixa, **vetar** a operação e sugerir aguardar um pico de medo no mercado.\n'
+  return block
+}
+
+/** POP reference for short put 2%, 3%, 4% OTM at 21 and 45 DTE. */
+function buildPOPReferenceBlock(spot: number): string | null {
+  if (spot <= 0) return null
+  const ts = getVIXTermStructureSnapshot()
+  if (!ts || !ts.curve?.length) return null
+  const curve = ts.curve
+  const r = getRiskFreeRate()
+  const otmPcts = [0.98, 0.97, 0.96] as const
+  const dtes = [21, 45] as const
+  const lines: string[] = ['\n**POP de referência (perna vendida put, OTM)** — probabilidade de expirar OTM (N(d2)):\n']
+  for (const dte of dtes) {
+    const point = curve.reduce((best, c) => (Math.abs(c.dte - dte) < Math.abs(best.dte - dte) ? c : best))
+    const sigma = point.iv / 100
+    const T = dte / 365
+    const parts = otmPcts.map((pct) => {
+      const K = Math.round(spot * pct * 100) / 100
+      const pop = calcProbabilityOTMPut(spot, K, T, r, sigma)
+      const pctOtm = Math.round((1 - pct) * 100)
+      return `$${K.toFixed(2)} (${pctOtm}% OTM) → ${(pop * 100).toFixed(1)}%`
+    })
+    lines.push(`${dte} DTE: ${parts.join('; ')}`)
+  }
+  lines.push('Put Spread: exigir POP ≥ 65–70% na perna vendida; **vetar** se abaixo.\n')
+  return lines.join('\n')
+}
+
 function buildPrompt(
   snapshot: AnalyzeBody['marketSnapshot'],
   chain?: OptionExpiry[],
@@ -453,6 +500,8 @@ function buildPrompt(
   techBlock?: string | null,
   priceHistoryBlock?: string | null,
   expectedMoveBlock?: string | null,
+  ivByExpirationBlock?: string | null,
+  popReferenceBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -549,6 +598,12 @@ function buildPrompt(
 
   if (expectedMoveBlock) {
     prompt += expectedMoveBlock
+  }
+  if (ivByExpirationBlock) {
+    prompt += ivByExpirationBlock
+  }
+  if (popReferenceBlock) {
+    prompt += popReferenceBlock
   }
 
   prompt += `\nCom base nessas condições de mercado, forneça:\n`
@@ -874,6 +929,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       expectedMoveSnapshot,
       snapshot?.spy?.last ?? 0,
     )
+    const ivByExpirationBlock = buildIVByExpirationBlock()
+    const popReferenceBlock = buildPOPReferenceBlock(snapshot?.spy?.last ?? 0)
 
     const userContent = buildPrompt(
       snapshot,
@@ -886,6 +943,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       techBlock,
       priceHistoryBlock || null,
       expectedMoveBlock,
+      ivByExpirationBlock,
+      popReferenceBlock,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     console.log(`[ANALYZE] user=${userId} primary=${useClaudePrimary ? 'claude' : 'gpt-4o'} tokens_max=1200`)
@@ -942,6 +1001,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       'Expected Move (soma Call ATM + Put ATM = straddle) por vencimento indica o movimento esperado em 1 desvio padrão (~68% de probabilidade). ' +
       'Para Put Spreads 21–45 DTE, a perna vendida deve ficar fora do cone (strike short abaixo de SPY − Expected Move). ' +
       'Se a perna vendida estiver dentro do cone, **alerte criticamente** que o risco da operação está mal calculado. ' +
+      'Se a volatilidade implícita do vencimento escolhido (21 ou 45 DTE) estiver baixa, **vetar** a operação e sugerir aguardar um pico de medo no mercado. ' +
+      'Put Spread só tem vantagem matemática com POP ≥ 65–70% na perna vendida; **vetar** se o POP estiver abaixo; use a tabela de POP de referência e o delta ao avaliar strikes. ' +
       'Framework de análise — aplique nesta ordem: ' +
       '(1) REGIME VOL: IV Rank + IV/HV30 + VIX term structure → ambiente de venda ou compra de volatilidade? ' +
       '(2) REGIME GEX por DTE: para o DTE candidato, qual é o regime? Flip point e max gamma são os níveis de âncora. ' +
