@@ -16,6 +16,7 @@ import { startBlsPoller } from './data/blsPoller'
 import { startVIXTermStructurePoller } from './data/vixTermStructurePoller'
 import { startTechnicalIndicatorsPoller } from './data/technicalIndicatorsPoller'
 import { startPreMarketScheduler, restoreBriefingFromCache } from './data/preMarketBriefing'
+import { startPortfolioTrackerScheduler } from './data/portfolioTrackerService'
 import { registerSSE } from './api/sse'
 import { registerOpenAI } from './api/openai'
 import { registerHealth } from './api/health'
@@ -162,6 +163,7 @@ async function bootstrap(): Promise<void> {
     }
 
     startPreMarketScheduler()
+    startPortfolioTrackerScheduler()
   }).catch(console.error)
 }
 

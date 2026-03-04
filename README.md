@@ -124,6 +124,14 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - **Expiração automática**: briefing pre-market expira às 10:30 ET; pós-fechamento às 06:00 ET do dia seguinte
 - Frontend: card destacado `PreMarketBriefing.tsx` com gradiente verde (design system: `#00ff88`), accordion collapse (inicia colapsado com preview da primeira linha), renderização Markdown via `react-markdown`, auto-dismiss às 10:00 ET, botão "×" manual; posicionado acima do `AIPanel`
 
+### Motor de Gestão de Ciclo de Vida (Put Spreads)
+- **Objetivo:** rastrear posições de Put Spreads abertas e aplicar a regra de saída: fechar em 50% do lucro máximo OU quando faltarem ≤21 dias para o vencimento (21 DTE), mitigando risco de cauda e convexidade do Gamma.
+- **Tabela Supabase:** `portfolio_positions` (id, symbol, strategy_type, open_date, expiration_date, short_strike, long_strike, short_option_symbol, long_option_symbol, credit_received, status OPEN/CLOSED). Migration `20260305000000_portfolio_positions.sql`.
+- **Serviço:** `portfolioTrackerService.ts` — executa **1x ao dia às 16:00 ET** (scheduler com verificação a cada 60s). Lock Redis `lock:portfolio_tracker:YYYY-MM-DD` (TTL 300s) evita duplicidade em HA.
+- **Ciclo:** (1) Busca posições com status OPEN no Supabase; (2) Calcula DTE em dias úteis (`diasUteisEntre(hoje_ET, expiration_date)`); (3) Tradier `getQuotes()` para short/long (uma chamada batelada); (4) `current_debit = short_ask - long_bid`, `profit_percentage = ((credit_received - current_debit) / credit_received) * 100`; (5) Payload enriquecido enviado ao Claude (Gestor de Risco).
+- **Agente Claude:** `portfolioLifecycleAgent.ts` — system prompt com regras: profit ≥50% → FECHAR_LUCRO; dte ≤21 → FECHAR_TEMPO ou ROLAR; senão MANTER. Resposta JSON com array `alerts` (position_id, recommendation, message).
+- **Discord:** alertas enviados via webhook com **embeds** — cor verde (50% lucro) ou amarela (21 DTE); mensagem acionável para Tastytrade (recompra Debit a mercado). Usa o mesmo `DISCORD_WEBHOOK_URL` do briefing.
+
 ### Alertas de Preço em Tempo Real
 - Após cada análise IA, o `alertEngine.ts` registra os `key_levels` do structured output como alertas ativos do usuário (até 10 alertas; nova análise substitui todos os anteriores)
 - A cada tick de preço (via eventos `quote` do SSE), `checkAlerts(price)` avalia todos os alertas ativos:
@@ -237,7 +245,9 @@ SPY Dash/
 │       │   ├── technicalIndicatorsPoller.ts # RSI/MACD/BBANDS calculados de priceHistory (local)
 │       │   ├── technicalIndicatorsState.ts  # Snapshot indicadores técnicos em memória
 │       │   ├── alertEngine.ts       # Alertas de preço por usuário (proximity + debounce)
-│       │   ├── preMarketBriefing.ts # Scheduler 9:00/16:15 ET + GPT-4o briefing + Discord webhook
+│       │   ├── preMarketBriefing.ts      # Scheduler 9:00/16:15 ET + GPT-4o briefing + Discord webhook
+│       │   ├── portfolioTrackerService.ts # Scheduler 16:00 ET + DTE + Tradier + Claude Gestor Risco + Discord
+│       │   ├── portfolioLifecycleAgent.ts  # Payload + system prompt + chamada Claude (alerts JSON)
 │       │   └── analysisMemory.ts    # Persistência análise IA no Supabase + embeddings pgvector
 │       ├── lib/                # Utilitários
 │       │   ├── circuitBreaker.ts    # Opossum wrapper: CLOSED/HALF_OPEN/OPEN; registry global
@@ -250,7 +260,8 @@ SPY Dash/
 │       │   ├── blackScholes.ts      # Black-Scholes: calcDelta, calcGamma, calcTheta, calcVega
 │       │   └── gexCalculator.ts     # Black-Scholes gamma: Nd1(), calcGamma(), buildProfile()
 │       └── types/
-│           └── market.ts       # Interfaces TypeScript (todos os tipos compartilhados)
+│           ├── market.ts       # Interfaces TypeScript (todos os tipos compartilhados)
+│           └── portfolio.ts    # Tipos portfolio_positions, EnrichedPosition, GestorRiscoResponse
 │
 ├── frontend/                   # React 18 SPA
 │   └── src/
@@ -317,7 +328,7 @@ Startup (paralelo, sem bloquear listen()):
   └─ restoreBriefingFromCache (timeout 5s):
        cache:premarket_briefing:YYYY-MM-DD ou cache:postclose_briefing:YYYY-MM-DD
 
-Após restores: startIntradayCachePersistence() + pollers iniciam + startPreMarketScheduler()
+Após restores: startIntradayCachePersistence() + pollers iniciam + startPreMarketScheduler() + startPortfolioTrackerScheduler()
 ```
 
 ### Fluxo de Dados — GEX + Volume Profile
@@ -504,6 +515,7 @@ Migration `20260228000000_enable_rls.sql` ativa RLS nas tabelas principais:
 |---|---|---|
 | `ai_analyses` | ✓ | SELECT/INSERT/UPDATE/DELETE apenas para `user_id = auth.uid()` |
 | `price_ticks` | ✓ | Sem políticas para clients — acesso exclusivo via service role key |
+| `portfolio_positions` | ✓ | Sem políticas para clients — acesso exclusivo via service role key (Motor de Ciclo de Vida) |
 | `price_sparkline` | — (matview) | Sem suporte a RLS; acesso via service role key |
 
 O backend usa `SUPABASE_SERVICE_ROLE_KEY` (bypassa RLS) para todas as operações server-side.
@@ -698,7 +710,7 @@ ENCRYPTION_KEY=<gere_com_openssl_rand_hex_32>
 SUPABASE_URL=https://<projeto>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service_role_key>
 
-# Discord Webhook — briefing pre-market + pós-fechamento (opcional)
+# Discord Webhook — briefing pre-market/pós-fechamento + alertas do Motor de Ciclo de Vida (opcional)
 # Crie em: Servidor Discord → Integrações → Webhooks
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/<id>/<token>
 ```
@@ -788,6 +800,7 @@ npm run preview # Preview do build de produção
 - Persistência de análises no Supabase com embeddings `vector(1536)` (pgvector)
 - Alertas de preço em tempo real (support/resistance/gex_flip) por usuário
 - Rate limiting: 5 análises/hora por usuário (sliding window)
+- **Motor de Gestão de Ciclo de Vida:** scheduler 16:00 ET para Put Spreads (posições OPEN em `portfolio_positions`); DTE + lucro % via Tradier; Claude Gestor de Risco (FECHAR_LUCRO / FECHAR_TEMPO / ROLAR / MANTER); alertas Discord com embeds (verde 50%, amarelo 21 DTE)
 
 **Pesquisa Semântica:**
 - `POST /api/search` — busca em análises históricas por similaridade cosine (pgvector HNSW)
