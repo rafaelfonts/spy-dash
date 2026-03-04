@@ -173,6 +173,47 @@ export async function sendPortfolioAlertToDiscord(
 }
 
 // ---------------------------------------------------------------------------
+// In-memory snapshot for dashboard (updated by cycle or by refresh)
+// ---------------------------------------------------------------------------
+
+export interface PortfolioSnapshot {
+  positions: EnrichedPosition[]
+  capturedAt: number
+}
+
+let lastEnrichedSnapshot: PortfolioSnapshot | null = null
+let refreshCooldownUntil = 0
+const REFRESH_COOLDOWN_MS = 60_000
+
+function setSnapshot(positions: EnrichedPosition[]): void {
+  lastEnrichedSnapshot = { positions, capturedAt: Date.now() }
+}
+
+/** Returns last enriched snapshot (from daily cycle or manual refresh). */
+export function getPortfolioSnapshot(): PortfolioSnapshot | null {
+  return lastEnrichedSnapshot
+}
+
+/**
+ * Refresh snapshot on demand: fetch OPEN positions, enrich via Tradier, update cache.
+ * Cooldown 60s to avoid Tradier abuse.
+ */
+export async function refreshPortfolioSnapshot(): Promise<PortfolioSnapshot | null> {
+  if (Date.now() < refreshCooldownUntil) {
+    return lastEnrichedSnapshot
+  }
+  refreshCooldownUntil = Date.now() + REFRESH_COOLDOWN_MS
+  const rows = await getOpenPositions()
+  if (rows.length === 0) {
+    setSnapshot([])
+    return lastEnrichedSnapshot
+  }
+  const enriched = await enrichPositions(rows)
+  setSnapshot(enriched)
+  return lastEnrichedSnapshot
+}
+
+// ---------------------------------------------------------------------------
 // Cycle: fetch → enrich → Claude → Discord
 // ---------------------------------------------------------------------------
 
@@ -191,11 +232,13 @@ export async function runPortfolioTrackerCycle(): Promise<void> {
 
   const rows = await getOpenPositions()
   if (rows.length === 0) {
+    setSnapshot([])
     console.log('[PortfolioTracker] No OPEN positions, skipping cycle')
     return
   }
 
   const enriched = await enrichPositions(rows)
+  setSnapshot(enriched)
   if (enriched.length === 0) {
     console.warn('[PortfolioTracker] No positions could be enriched (Tradier missing?), skipping Claude')
     return

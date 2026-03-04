@@ -131,6 +131,9 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - **Ciclo:** (1) Busca posições com status OPEN no Supabase; (2) Calcula DTE em dias úteis (`diasUteisEntre(hoje_ET, expiration_date)`); (3) Tradier `getQuotes()` para short/long (uma chamada batelada); (4) `current_debit = short_ask - long_bid`, `profit_percentage = ((credit_received - current_debit) / credit_received) * 100`; (5) Payload enriquecido enviado ao Claude (Gestor de Risco).
 - **Agente Claude:** `portfolioLifecycleAgent.ts` — system prompt com regras: profit ≥50% → FECHAR_LUCRO; dte ≤21 → FECHAR_TEMPO ou ROLAR; senão MANTER. Resposta JSON com array `alerts` (position_id, recommendation, message).
 - **Discord:** alertas enviados via webhook com **embeds** — cor verde (50% lucro) ou amarela (21 DTE); mensagem acionável para Tastytrade (recompra Debit a mercado). Usa o mesmo `DISCORD_WEBHOOK_URL` do briefing.
+- **Snapshot para o dashboard:** o ciclo das 16:00 e o refresh manual gravam o último enriquecimento em memória (`getPortfolioSnapshot` / `refreshPortfolioSnapshot`). Evita chamadas Tradier a cada abertura do painel; cooldown de 60s no refresh.
+- **Endpoints API:** `GET /api/portfolio` (retorna `positions` + `capturedAt` do cache), `POST /api/portfolio/refresh` (re-enriquece com Tradier e atualiza cache), `POST /api/portfolio/analyze` (usa snapshot atual e retorna `alerts` do Claude Gestor de Risco).
+- **Painel no dashboard:** card "Carteira — Put Spreads" (`PortfolioPanel.tsx`) com tabela (estratégia, DTE, lucro %, crédito, custo fechar), badges 50% (verde) e ≤21 DTE (amarelo), botões Atualizar e Analisar carteira; hook `usePortfolio.ts` consome os três endpoints.
 
 ### Alertas de Preço em Tempo Real
 - Após cada análise IA, o `alertEngine.ts` registra os `key_levels` do structured output como alertas ativos do usuário (até 10 alertas; nova análise substitui todos os anteriores)
@@ -168,6 +171,7 @@ Painel com cinco fontes de dados exibidas no frontend, agregadas via SSE (earnin
 ### Dashboard UI
 - Três cards principais: **SPY**, **VIX**, **IV Rank** (IV Rank % em destaque; IVx e Percentil como secundários)
 - **GEX Panel:** gráfico de barras por strike (calls/puts), seletor de tabs por DTE (0DTE/1D/7D/21D/45D/ALL), métricas callWall/putWall/flipPoint, regime, P/C Ratio com barra visual, botão "Analisar Fluxo" para análise focada em GEX
+- **Carteira (Put Spreads):** painel com posições OPEN enriquecidas (DTE, lucro %, crédito, custo fechar), badges de regra 50%/21 DTE, botão "Atualizar" (refresh com cooldown 60s) e "Analisar carteira" (recomendações do Gestor de Risco exibidas em lista).
 - **Card "Estratégia Sugerida":** exibe pernas da estratégia (call/put, buy/sell, strike, DTE), badges de DTE/PoP/invalidação e métricas de risco/crédito/theta/breakeven
 - **Cadeia de Opções:** calls e puts ATM ±n strikes com bid/ask + greeks completos **Δ γ θ ν** por strike (calculados via Black-Scholes no backend, exibidos por `OptionChainPanel.tsx`)
 - **Alert Overlay:** notificações de alerta de preço em overlay fixo, animadas com Framer Motion
@@ -208,7 +212,8 @@ SPY Dash/
 │       │   ├── priceHistory.ts # GET /api/price-history
 │       │   ├── gex.ts          # GET /api/gex (snapshot) + /api/gex/detail (full Redis cache)
 │       │   ├── volumeProfile.ts # GET /api/volume-profile (snapshot) + /detail (full)
-│       │   └── analysisSearch.ts # POST /api/search — pesquisa semântica pgvector
+│       │   ├── analysisSearch.ts # POST /api/search — pesquisa semântica pgvector
+│       │   └── portfolio.ts   # GET/POST /api/portfolio + POST /api/portfolio/analyze
 │       ├── auth/               # OAuth2 Tastytrade
 │       │   ├── tokenManager.ts # Refresh automático + AES-256-GCM encryption no Redis
 │       │   └── streamerToken.ts
@@ -272,13 +277,16 @@ SPY Dash/
 │       │   ├── useMarketStream.ts  # EventSource → store (eventos SSE: macro, alertas, GEX, quote, vix)
 │       │   ├── useAIAnalysis.ts    # Streaming GPT-4o + coleta option chain
 │       │   ├── useAuth.ts          # Supabase Auth
-│       │   └── useMarketOpen.ts    # Horário de mercado EUA
+│       │   ├── useMarketOpen.ts    # Horário de mercado EUA
+│       │   └── usePortfolio.ts     # GET portfolio, refresh, analyze (Carteira Put Spreads)
 │       ├── components/
 │       │   ├── cards/          # SPYCard, VIXCard, IVRankCard
 │       │   ├── ai/             # AIPanel + AnalysisResult + PreMarketBriefing
 │       │   ├── options/
 │       │   │   ├── GEXPanel.tsx        # Painel GEX: gráfico byStrike + callWall/putWall/flipPoint
 │       │   │   └── OptionChainPanel.tsx # Cadeia de opções ATM com greeks Δ γ θ ν
+│       │   ├── portfolio/
+│       │   │   └── PortfolioPanel.tsx  # Carteira Put Spreads: tabela, badges, Analisar carteira
 │       │   ├── news/           # NewsFeedPanel e subcomponentes
 │       │   │   ├── NewsFeedPanel.tsx      # Container (5 seções visíveis; earnings só no backend)
 │       │   │   ├── MacroData.tsx
@@ -540,6 +548,9 @@ O backend usa `SUPABASE_SERVICE_ROLE_KEY` (bypassa RLS) para todas as operaçõe
 | `/api/gex/detail` | GET | JWT | GEX completo com todos os strikes (lê do cache Redis) |
 | `/api/volume-profile` | GET | JWT | Snapshot Volume Profile atual (in-memory, atualizado a cada 60s) |
 | `/api/volume-profile/detail` | GET | JWT | Volume Profile completo com todos os buckets |
+| `/api/portfolio` | GET | JWT | Snapshot das posições enriquecidas (cache em memória; atualizado no ciclo 16:00 ou em refresh) |
+| `/api/portfolio/refresh` | POST | JWT | Re-enriquece posições OPEN via Tradier e atualiza cache (cooldown 60s) |
+| `/api/portfolio/analyze` | POST | JWT | Retorna recomendações do Claude Gestor de Risco (`alerts`) para as posições atuais |
 | `/admin/breakers` | GET | JWT | Lista circuit breakers com status e nomes |
 | `/admin/breakers/:name/reset` | POST | JWT | Reseta manualmente um circuit breaker para CLOSED |
 
@@ -800,7 +811,7 @@ npm run preview # Preview do build de produção
 - Persistência de análises no Supabase com embeddings `vector(1536)` (pgvector)
 - Alertas de preço em tempo real (support/resistance/gex_flip) por usuário
 - Rate limiting: 5 análises/hora por usuário (sliding window)
-- **Motor de Gestão de Ciclo de Vida:** scheduler 16:00 ET para Put Spreads (posições OPEN em `portfolio_positions`); DTE + lucro % via Tradier; Claude Gestor de Risco (FECHAR_LUCRO / FECHAR_TEMPO / ROLAR / MANTER); alertas Discord com embeds (verde 50%, amarelo 21 DTE)
+- **Motor de Gestão de Ciclo de Vida:** scheduler 16:00 ET para Put Spreads (posições OPEN em `portfolio_positions`); DTE + lucro % via Tradier; Claude Gestor de Risco (FECHAR_LUCRO / FECHAR_TEMPO / ROLAR / MANTER); alertas Discord com embeds (verde 50%, amarelo 21 DTE). Painel **Carteira** no dashboard com snapshot em memória, endpoints GET/POST portfolio e POST analyze, e botão "Analisar carteira" com exibição das recomendações do Gestor de Risco.
 
 **Pesquisa Semântica:**
 - `POST /api/search` — busca em análises históricas por similaridade cosine (pgvector HNSW)

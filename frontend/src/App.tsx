@@ -12,6 +12,7 @@ import { AIPanel } from './components/ai/AIPanel'
 import { PreMarketBriefing } from './components/ai/PreMarketBriefing'
 import { OptionChainPanel } from './components/options/OptionChainPanel'
 import { GEXPanel } from './components/options/GEXPanel'
+import { PortfolioPanel } from './components/portfolio/PortfolioPanel'
 import { TechnicalIndicatorsCard } from './components/cards/TechnicalIndicatorsCard'
 import { NewsFeedPanel } from './components/news/NewsFeedPanel'
 import { AlertOverlay } from './components/ui/AlertOverlay'
@@ -40,6 +41,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         <PreMarketBriefing />
         <AIPanel />
         <GEXPanel />
+        <PortfolioPanel />
         <TechnicalIndicatorsCard />
         <OptionChainPanel />
         <NewsFeedPanel />

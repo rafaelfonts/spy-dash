@@ -24,6 +24,7 @@ import { registerPriceHistory } from './api/priceHistory'
 import { registerGex } from './api/gex'
 import { registerVolumeProfile } from './api/volumeProfile'
 import { registerAnalysisSearch } from './api/analysisSearch'
+import { registerPortfolio } from './api/portfolio'
 import { getOptionChain } from './data/optionChain'
 import { requireAuth } from './middleware/authMiddleware'
 import { restoreSnapshotsFromCache } from './lib/restoreCache'
@@ -85,6 +86,7 @@ async function bootstrap(): Promise<void> {
     await registerGex(app)
     await registerVolumeProfile(app)
     await registerAnalysisSearch(app)
+    await registerPortfolio(app)
     app.get('/api/option-chain', async () => {
       return await getOptionChain()
     })
