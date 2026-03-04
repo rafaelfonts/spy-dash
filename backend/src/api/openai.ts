@@ -7,7 +7,7 @@ import type { OptionExpiry } from '../data/optionChain'
 import { getOptionChainCapturedAt } from '../data/optionChain'
 import { humanizeAge, isMarketOpen } from '../lib/time'
 import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem, AnalysisStructuredOutput, PricePoint } from '../types/market'
-import { saveAnalysis, getRecentAnalyses } from '../data/analysisMemory'
+import { saveAnalysis, buildMemoryBlock } from '../data/analysisMemory'
 import { getLastVwap } from '../data/priceHistory'
 import type { DailyGexResult, GEXByExpiration } from '../data/gexService'
 import { getAdvancedMetricsSnapshot } from '../data/advancedMetricsState'
@@ -703,19 +703,12 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const userId = (request as any).user?.id ?? 'unknown'
     console.log(`[ANALYZE] user=${userId} model=gpt-4o tokens_max=1200`)
 
-    // Fetch intraday memory — GEX comes from in-memory snapshot (no extra API call)
-    const pastAnalyses = await getRecentAnalyses(userId, 3)
-
-    const memoryBlock = pastAnalyses.length > 0
-      ? pastAnalyses.map((a, i) => {
-          const age = humanizeAge(a.created_at)
-          const spyThen = a.market_snapshot?.spyPrice
-          const spyStr = spyThen ? ` SPY era $${spyThen.toFixed(2)}.` : ''
-          return `[Análise ${i + 1} — ${age}] Bias: ${a.bias ?? 'N/A'}.${spyStr} ${a.summary}`
-        }).join('\n')
-      : ''
-
     const advancedSnapshot = getAdvancedMetricsSnapshot()
+    const memoryBlock = await buildMemoryBlock(userId, {
+      ivRank: snapshot?.ivRank?.value ?? 0,
+      vix: snapshot?.vix?.last ?? 0,
+      gexRegime: advancedSnapshot?.gexByExpiration?.all?.regime,
+    })
     const gexMultiBlock = advancedSnapshot?.gexByExpiration
       ? buildGexMultiDTEBlock(advancedSnapshot.gexByExpiration)
       : null
@@ -935,6 +928,109 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
         vix: snapshot?.vix?.last ?? 0,
         ivRank: snapshot?.ivRank?.value ?? 0,
       }, structured ?? undefined).catch(() => {})
+      res.end()
+    } catch (err) {
+      sendEvent('error', { message: (err as Error).message })
+      res.end()
+    }
+
+    reply.hijack()
+  })
+
+  // ---------------------------------------------------------------------------
+  // POST /api/chat-followup — follow-up questions on current analysis (gpt-4o-mini, no rate limit)
+  // ---------------------------------------------------------------------------
+
+  interface ChatFollowupBody {
+    question: string
+    analysisId?: string
+    structuredOutput: AnalysisStructuredOutput
+    chatHistory: Array<{ role: 'user' | 'assistant'; content: string }>
+  }
+
+  fastify.post<{ Body: ChatFollowupBody }>('/api/chat-followup', async (request, reply) => {
+    const body = request.body ?? {}
+    const { question, structuredOutput: so, chatHistory = [] } = body
+    if (!question?.trim() || !so) {
+      reply.code(400).send({ error: 'question and structuredOutput are required' })
+      return
+    }
+
+    const keyLevels = so.key_levels
+    const levelsStr = [
+      ...(keyLevels.support ?? []),
+      ...(keyLevels.resistance ?? []),
+      keyLevels.gex_flip,
+    ].filter(Boolean).join(', ')
+
+    const systemContent =
+      'Você é o mesmo especialista em opções SPY que gerou a análise anterior. ' +
+      'Responda perguntas de follow-up de forma concisa (máx 150 palavras). ' +
+      `Análise atual: bias=${so.bias}, estratégia="${so.suggested_strategy?.name ?? 'N/A'}", ` +
+      `níveis-chave=${levelsStr || 'N/A'}, confiança=${so.confidence}`
+
+    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      { role: 'system', content: systemContent },
+      ...chatHistory.slice(-6).map((m) => ({ role: m.role, content: m.content })),
+      { role: 'user', content: question.trim() },
+    ]
+
+    const res = reply.raw as ServerResponse
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no')
+    res.flushHeaders()
+    res.write('event: ping\ndata: starting\n\n')
+
+    const sendEvent = (event: string, data: unknown) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+    }
+
+    try {
+      const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${CONFIG.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          stream: true,
+          max_tokens: 200,
+          messages,
+        }),
+      })
+
+      if (!openaiRes.ok || !openaiRes.body) {
+        throw new Error(`OpenAI error: ${openaiRes.status}`)
+      }
+
+      const reader = openaiRes.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const raw = line.slice(6).trim()
+          if (raw === '[DONE]') continue
+          try {
+            const chunk = JSON.parse(raw) as { choices?: Array<{ delta?: { content?: string } }> }
+            const text = chunk.choices?.[0]?.delta?.content
+            if (text) sendEvent('token', { text })
+          } catch {
+            // skip
+          }
+        }
+      }
+
+      sendEvent('done', {})
       res.end()
     } catch (err) {
       sendEvent('error', { message: (err as Error).message })
