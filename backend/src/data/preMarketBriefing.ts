@@ -10,6 +10,7 @@
  * without calling OpenAI again.
  */
 
+import Anthropic from '@anthropic-ai/sdk'
 import { marketState, newsSnapshot, emitter } from './marketState'
 import { cacheGet, cacheSet, redis } from '../lib/cacheStore'
 import { CONFIG } from '../config'
@@ -159,7 +160,7 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
 
     const systemContent =
       type === 'pre-market'
-        ? `Você é um estrategista sênior de opções americanas. Gere um briefing pre-market conciso para operadores de SPY. Formato Markdown. Idioma: Português do Brasil. Use as seguintes seções obrigatórias na ordem abaixo:
+        ? `Você é um estrategista sênior de opções americanas. Foco em SWING TRADE 21-45 DTE (não 0 DTE). Gere um briefing pre-market conciso para operadores de SPY. Destaque GEX, Theta, Vega e contexto macro quando relevante. Formato Markdown. Idioma: Português do Brasil. Use as seguintes seções obrigatórias na ordem abaixo:
 
 ## 🌅 Contexto Overnight
 ## 📅 Eventos Críticos do Dia
@@ -167,7 +168,7 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
 ## 🎯 Bias Preliminar e Estratégia Sugerida
 
 Seja objetivo e acionável. Máximo 600 tokens.`
-        : `Você é um estrategista sênior de opções americanas. Gere um resumo pós-fechamento conciso para operadores de SPY. Formato Markdown. Idioma: Português do Brasil. Use as seguintes seções obrigatórias na ordem abaixo:
+        : `Você é um estrategista sênior de opções americanas. Foco em SWING TRADE 21-45 DTE. Gere um resumo pós-fechamento conciso para operadores de SPY. Inclua GEX/macro quando relevante. Formato Markdown. Idioma: Português do Brasil. Use as seguintes seções obrigatórias na ordem abaixo:
 
 ## 📈 Resumo da Sessão
 ## 📋 Resultado dos Eventos Macro
@@ -175,34 +176,54 @@ Seja objetivo e acionável. Máximo 600 tokens.`
 
 Seja objetivo e acionável. Máximo 600 tokens.`
 
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${CONFIG.OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o',
-        max_tokens: 800,
-        messages: [
-          { role: 'system', content: systemContent },
-          { role: 'user', content: userPrompt },
-        ],
-      }),
-    })
+    let markdown = ''
+    const useClaude = Boolean(CONFIG.ANTHROPIC_API_KEY)
 
-    if (!res.ok) {
-      const body = await res.text()
-      throw new Error(`OpenAI HTTP ${res.status}: ${body.slice(0, 200)}`)
+    if (useClaude) {
+      try {
+        const anthropic = new Anthropic({ apiKey: CONFIG.ANTHROPIC_API_KEY })
+        const msg = await anthropic.messages.create({
+          model: 'claude-3-5-sonnet-20241022',
+          max_tokens: 800,
+          system: systemContent,
+          messages: [{ role: 'user', content: userPrompt }],
+        })
+        const textBlock = msg.content.find((b): b is { type: 'text'; text: string } => b.type === 'text')
+        markdown = textBlock?.text?.trim() ?? ''
+        if (markdown) console.log('[PreMarket] Briefing gerado via Claude')
+      } catch (err) {
+        console.warn('[PreMarket] Claude falhou, fallback para GPT-4o:', (err as Error).message)
+      }
     }
-
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>
-    }
-    const markdown = json.choices?.[0]?.message?.content ?? ''
 
     if (!markdown) {
-      throw new Error('OpenAI retornou conteúdo vazio')
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${CONFIG.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          max_tokens: 800,
+          messages: [
+            { role: 'system', content: systemContent },
+            { role: 'user', content: userPrompt },
+          ],
+        }),
+      })
+      if (!res.ok) {
+        const body = await res.text()
+        throw new Error(`OpenAI HTTP ${res.status}: ${body.slice(0, 200)}`)
+      }
+      const json = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>
+      }
+      markdown = json.choices?.[0]?.message?.content ?? ''
+    }
+
+    if (!markdown) {
+      throw new Error('Nem Claude nem OpenAI retornaram conteúdo')
     }
 
     const expiresAt =
@@ -349,11 +370,12 @@ function buildPreMarketPrompt(ctx: BriefingContext): string {
     lines.push('')
   }
 
-  // Headlines
+  // Headlines (use summary when enriched by gpt-4o-mini pipeline)
   if (ctx.headlines.length > 0) {
     lines.push('### Headlines Recentes')
     for (const h of ctx.headlines) {
-      lines.push(`- ${h.title} (${h.source})`)
+      const text = h.summary ? `${h.summary} [${h.sentiment ?? 'neutral'}]` : `${h.title} (${h.source})`
+      lines.push(`- ${text}`)
     }
     lines.push('')
   }

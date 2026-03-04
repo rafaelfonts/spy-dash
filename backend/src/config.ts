@@ -15,6 +15,7 @@ export const CONFIG = {
   TT_CLIENT_SECRET: requireEnv('TT_CLIENT_SECRET'),
   TT_REFRESH_TOKEN: requireEnv('TT_REFRESH_TOKEN'),
   OPENAI_API_KEY: requireEnv('OPENAI_API_KEY'),
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '',
   FRED_API_KEY: process.env.FRED_API_KEY ?? '',
   FINNHUB_API_KEY: process.env.FINNHUB_API_KEY ?? '',
   GNEWS_API_KEY: process.env.GNEWS_API_KEY ?? '',

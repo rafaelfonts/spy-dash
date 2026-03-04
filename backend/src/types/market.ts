@@ -91,6 +91,8 @@ export interface MacroEvent {
   unit: string | null
 }
 
+export type NewsSentiment = 'bullish' | 'bearish' | 'neutral'
+
 export interface NewsHeadline {
   title: string
   description: string | null
@@ -98,6 +100,10 @@ export interface NewsHeadline {
   source: string
   publishedAt: string             // ISO 8601
   image: string | null
+  /** Filled by gpt-4o-mini preprocessing pipeline (newsAggregator). */
+  sentiment?: NewsSentiment
+  /** One-line summary (max ~15 words) from gpt-4o-mini. */
+  summary?: string
 }
 
 export interface NewsFeedEvent {

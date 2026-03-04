@@ -4,6 +4,9 @@
 -- Phase 2 Enhancement: compact_summary, analysis_date, is_archived, analysis_session_id
 -- =============================================================================
 
+-- Requer ~61 MB para criação dos índices; default maintenance_work_mem pode ser 32 MB
+SET LOCAL maintenance_work_mem = '64MB';
+
 ALTER TABLE ai_analyses ADD COLUMN IF NOT EXISTS analysis_date DATE DEFAULT CURRENT_DATE;
 ALTER TABLE ai_analyses ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT FALSE;
 ALTER TABLE ai_analyses ADD COLUMN IF NOT EXISTS compact_summary TEXT;
