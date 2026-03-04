@@ -128,7 +128,7 @@ export function AIPanel() {
                 ) : cooldownSeconds > 0 ? (
                   `Aguarde ${cooldownSeconds}s...`
                 ) : (
-                  '🤖 Analisar com IA'
+                  'Analisar com IA'
                 )}
               </button>
             </div>

@@ -254,13 +254,20 @@ export const GEXPanel = memo(function GEXPanel() {
         <button
           onClick={analyzeFlow}
           disabled={flowState === 'streaming' || !activeGex}
-          className={`ml-2 text-[10px] font-semibold px-2.5 py-1 rounded border transition-colors whitespace-nowrap ${
+          className={`ml-2 px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 whitespace-nowrap ${
             flowState === 'streaming' || !activeGex
-              ? 'border-border-subtle text-text-muted cursor-not-allowed'
-              : 'border-[#00ff88]/30 text-[#00ff88] hover:bg-[#00ff88]/5'
+              ? 'bg-bg-elevated text-text-muted cursor-not-allowed border border-border-subtle'
+              : 'bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/30 hover:bg-[#00ff88]/20 hover:border-[#00ff88]/50 active:scale-95'
           }`}
         >
-          {flowState === 'streaming' ? '⏳ Analisando...' : '⚡ Analisar Fluxo'}
+          {flowState === 'streaming' ? (
+            <span className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+              Analisando...
+            </span>
+          ) : (
+            'Analisar Fluxo'
+          )}
         </button>
       </div>
 
