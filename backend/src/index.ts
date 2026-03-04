@@ -6,6 +6,7 @@ import { startDXFeedStream } from './stream/dxfeedClient'
 import { startVIXPoller } from './data/vixPoller'
 import { startIVRankPoller } from './data/ivRankPoller'
 import { startAdvancedMetricsPoller } from './data/advancedMetricsPoller'
+import { startExpectedMovePoller } from './data/expectedMovePoller'
 import { startEarningsCalendar } from './data/earningsCalendar'
 import { startFredPoller } from './data/fredPoller'
 import { startFearGreedPoller } from './data/fearGreed'
@@ -141,6 +142,7 @@ async function bootstrap(): Promise<void> {
 
     // Tradier-based pollers are independent of Tastytrade — start unconditionally
     startAdvancedMetricsPoller()
+    startExpectedMovePoller()
     startTechnicalIndicatorsPoller()
 
     // Start streaming (token was initialized above)

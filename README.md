@@ -71,6 +71,14 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - Filtro por `user_id` — cada usuário vê apenas as suas próprias análises
 - Migration `20260228000001_pgvector_search.sql`: ativa extensão `vector`, migra coluna `embedding TEXT → vector(1536)`, cria índice HNSW e função RPC
 
+### Expected Move (Cone de Probabilidade) — Put Spreads 21–45 DTE
+- **Cálculo:** soma do preço da Call ATM e da Put ATM (straddle) por vencimento, a partir da cadeia Tradier para 21 e 45 DTE
+- **Serviço:** `expectedMoveService.ts` — resolve vencimentos 21/45 DTE, obtém cadeia Tradier, define strike ATM (menor `|strike - spot|`), Expected Move = call_mid + put_mid (mid = (bid+ask)/2, fallback `last`)
+- **Estado:** `expectedMoveState.ts` — snapshot em memória `byExpiry` + `capturedAt`; consumido pelo prompt da IA
+- **Poller:** `expectedMovePoller.ts` — primeiro tick após 10s, depois 60s (mercado aberto) / 5min (fora); atualiza snapshot sem zerar em falha
+- **Integração IA:** bloco **Expected Move (1σ)** no prompt com cone (SPY − EM a SPY + EM) por vencimento; instrução no system prompt para **alertar criticamente** se a perna vendida do Put Spread estiver dentro do cone (risco mal dimensionado)
+- Foco em operações estruturais (trava de alta com puts): a perna vendida deve ficar fora do cone de 1 desvio padrão (~68% probabilidade)
+
 ### GEX + Volume Profile
 - **GEX (Gamma Exposure):** calculado a partir de option data real da Tradier (`tradierOptionData.ts` + `gexCalculator.ts`)
   - Modelo Black-Scholes para gamma via `gexService.ts`
@@ -220,6 +228,9 @@ SPY Dash/
 │       │   ├── volumeProfileService.ts  # Volume Profile: POC/VAH/VAL via time-sales
 │       │   ├── advancedMetricsPoller.ts # GEX + VolumeProfile + P/C Ratio (poll independente)
 │       │   ├── advancedMetricsState.ts  # Snapshot GEX/Volume/PCR em memória + SSE emit
+│       │   ├── expectedMoveService.ts   # Expected Move (straddle ATM) 21/45 DTE via Tradier
+│       │   ├── expectedMoveState.ts     # Snapshot Expected Move em memória (prompt IA)
+│       │   ├── expectedMovePoller.ts   # Poll 60s/5min; primeiro tick 10s após startup
 │       │   ├── vixTermStructure.ts      # inferTermStructure() a partir de option chain
 │       │   ├── vixTermStructurePoller.ts # Poll 5min; aguarda option chain no startup
 │       │   ├── vixTermStructureState.ts  # Snapshot VIX term structure em memória
@@ -324,6 +335,16 @@ Tradier API (option chain + time-sales)
   → GEXPanel.tsx re-renders
 ```
 
+### Fluxo de Dados — Expected Move (21/45 DTE)
+
+```
+Tradier API (getExpirations + getOptionChain por 21/45 DTE)
+  → expectedMoveService.ts (straddle ATM = Call_mid + Put_mid por expiração)
+  → expectedMovePoller.ts (60s mercado aberto / 5min fora; primeiro tick 10s)
+  → expectedMoveState.ts (snapshot byExpiry + capturedAt)
+  → openai.ts buildExpectedMoveBlock() → prompt IA + system prompt (alerta perna vendida dentro do cone)
+```
+
 ### Fluxo de Dados — VIX Term Structure
 
 ```
@@ -361,6 +382,7 @@ Usuário clica "Analisar com IA"
   → buildPrompt() monta texto com blocos base + confidence tags + CB statuses
     ├─ buildTechBlock() — RSI/MACD/BBands + VWAP + desvio VWAP%
     ├─ buildPriceHistoryBlock() — OHLC sessão, range%, curva ~15min, tendência 1h, HV intraday
+    ├─ buildExpectedMoveBlock() — Expected Move (1σ) por vencimento 21/45 DTE, cone SPY±EM, regra perna vendida fora do cone
     └─ IV/HV(30d) ratio com flag [VOL CARA] se > 1.3
   + system prompt: aviso "mercado fechado" quando !isMarketOpen()
 
@@ -744,10 +766,11 @@ npm run preview # Preview do build de produção
 - Persistência de ticks de preço no Supabase (throttle 1min/símbolo)
 - Bootstrap não-bloqueante: `listen()` sobe imediatamente; restores paralelos com `withTimeout()`
 
-**GEX + Volume Profile + Indicadores:**
+**GEX + Volume Profile + Indicadores + Expected Move:**
 - GEX por strike (Black-Scholes gamma) via Tradier option data — callWall, putWall, flipPoint, regime
 - Volume Profile intraday (POC, VAH, VAL) via Tradier time-sales
 - Put/Call Ratio com barra visual por expiração
+- **Expected Move (1σ)** para 21 e 45 DTE (straddle ATM via Tradier); bloco no prompt IA e regra de alerta quando perna vendida do Put Spread está dentro do cone
 - VIX Term Structure inferida da option chain (normal/inverted/flat, steepness%)
 - Indicadores técnicos RSI(14), MACD, BBANDS calculados localmente de `priceHistory` (sem API externa)
 

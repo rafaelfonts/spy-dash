@@ -1,8 +1,10 @@
 import type { FastifyInstance } from 'fastify'
 import type { ServerResponse } from 'http'
+import Anthropic from '@anthropic-ai/sdk'
 import { analysisRateLimit } from '../middleware/rateLimiter'
 import { CONFIG } from '../config'
 import { marketState, newsSnapshot } from '../data/marketState'
+import { createBreaker } from '../lib/circuitBreaker'
 import type { OptionExpiry } from '../data/optionChain'
 import { getOptionChainCapturedAt } from '../data/optionChain'
 import { humanizeAge, isMarketOpen } from '../lib/time'
@@ -19,6 +21,8 @@ import { calculateConfidence } from '../lib/confidenceScorer'
 import type { ConfidenceResult } from '../lib/confidenceScorer'
 import { getBreakerStatuses } from '../lib/circuitBreaker'
 import { registerAlertsFromAnalysis } from '../data/alertEngine'
+import { getExpectedMoveSnapshot } from '../data/expectedMoveState'
+import type { ExpectedMoveSnapshot } from '../data/expectedMoveState'
 
 interface ContextData {
   fearGreed?: { score: FearGreedData['score']; label: FearGreedData['label'] }
@@ -68,6 +72,18 @@ const FETCH_CONTEXT_TOOL = {
       'user explicitly asks about macro drivers, earnings, or economic events.',
     parameters: { type: 'object', properties: {}, required: [] },
   },
+}
+
+// Anthropic tool format (name, description, input_schema)
+const ANTHROPIC_FETCH_CONTEXT_TOOL = {
+  name: 'fetch_24h_context',
+  description:
+    'Retrieve 24h macro context: FRED economic data, BLS employment data, Fear & Greed index, ' +
+    'VIX term structure, upcoming SPY component earnings (≤7 days), and high-impact macro events (≤48h). ' +
+    'Call this tool ONLY when you detect: VIX above 20 or spiking (>15% change), unusual P/C ratio ' +
+    '(>1.3 or <0.6), RSI in extreme zone (<30 or >70) combined with MACD crossover, or when the ' +
+    'user explicitly asks about macro drivers, earnings, or economic events.',
+  input_schema: { type: 'object' as const, properties: {}, required: [] },
 }
 
 // ---------------------------------------------------------------------------
@@ -410,6 +426,22 @@ function buildPriceHistoryBlock(history: PricePoint[]): string {
   return block
 }
 
+function buildExpectedMoveBlock(snapshot: ExpectedMoveSnapshot | null, spyLast: number): string | null {
+  if (!snapshot || Object.keys(snapshot.byExpiry).length === 0) return null
+  const lines: string[] = []
+  lines.push('\n**Expected Move (1σ)** — cone de probabilidade implícito (Call ATM + Put ATM = straddle):')
+  for (const [expirationDate, data] of Object.entries(snapshot.byExpiry)) {
+    const lower = spyLast - data.expectedMove
+    const upper = spyLast + data.expectedMove
+    lines.push(
+      `- ${expirationDate} (${data.dte} DTE): $${data.expectedMove.toFixed(2)} (strike ATM: $${data.atmStrike}). ` +
+      `Cone 1σ: $${lower.toFixed(2)} a $${upper.toFixed(2)}. ` +
+      `Para Put Spreads, a perna vendida deve ficar **fora** do cone (abaixo de $${lower.toFixed(2)}); se estiver dentro, o risco está mal dimensionado.`,
+    )
+  }
+  return lines.join('\n')
+}
+
 function buildPrompt(
   snapshot: AnalyzeBody['marketSnapshot'],
   chain?: OptionExpiry[],
@@ -420,6 +452,7 @@ function buildPrompt(
   confidence?: Record<string, ConfidenceResult>,
   techBlock?: string | null,
   priceHistoryBlock?: string | null,
+  expectedMoveBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -512,6 +545,10 @@ function buildPrompt(
         prompt += `${callStr} | ${putStr}\n`
       }
     }
+  }
+
+  if (expectedMoveBlock) {
+    prompt += expectedMoveBlock
   }
 
   prompt += `\nCom base nessas condições de mercado, forneça:\n`
@@ -646,6 +683,94 @@ async function streamTokens(
 }
 
 // ---------------------------------------------------------------------------
+// Claude 3.5 Sonnet streaming — same contract as OpenAI path (fullResponse + toolCallName)
+// ---------------------------------------------------------------------------
+
+const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022'
+const CLAUDE_MAX_TOKENS = 1200
+
+type SendEventFn = (event: string, data: unknown) => void
+
+interface ClaudeStreamParams {
+  system: string
+  messages: Array<{ role: 'user' | 'assistant'; content: string | unknown[] }>
+  sendEvent: SendEventFn
+  /** When false, omit tools (e.g. follow-up after tool result). */
+  includeTools?: boolean
+}
+
+async function streamClaudeAnalyze(params: ClaudeStreamParams): Promise<{ fullResponse: string; toolCallName: string | null }> {
+  const { system, messages, sendEvent, includeTools = true } = params
+  const anthropic = new Anthropic({ apiKey: CONFIG.ANTHROPIC_API_KEY })
+
+  const anthropicMessages: Array<{ role: 'user' | 'assistant'; content: string | unknown[] }> = messages.map((m) => {
+    if (typeof m.content === 'string') return { role: m.role, content: m.content }
+    return { role: m.role, content: m.content }
+  })
+
+  const body: Record<string, unknown> = {
+    model: CLAUDE_MODEL,
+    max_tokens: CLAUDE_MAX_TOKENS,
+    system,
+    messages: anthropicMessages,
+    stream: true,
+  }
+  if (includeTools) {
+    body.tools = [ANTHROPIC_FETCH_CONTEXT_TOOL]
+    body.tool_choice = { type: 'auto' }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rawStream = await anthropic.messages.create(body as any)
+  const stream = rawStream as unknown as AsyncIterable<{
+    type: string
+    content_block?: { type: string; id?: string; name?: string; input?: unknown }
+    delta?: { type: string; text?: string; partial_json?: string; stop_reason?: string }
+  }>
+  let fullResponse = ''
+  let toolCallName: string | null = null
+  let currentToolUse: { id: string; name: string; input: string } | null = null
+
+  for await (const event of stream) {
+    if (event.type === 'content_block_start' && 'content_block' in event) {
+      const block = event.content_block as { type: string; id?: string; name?: string; input?: unknown }
+      if (block.type === 'tool_use' && block.id && block.name) {
+        currentToolUse = { id: block.id, name: block.name, input: typeof block.input === 'string' ? block.input : JSON.stringify(block.input ?? {}) }
+      }
+    }
+    if (event.type === 'content_block_delta' && 'delta' in event) {
+      const delta = event.delta as { type: string; text?: string; partial_json?: string }
+      if (delta.type === 'text_delta' && delta.text) {
+        fullResponse += delta.text
+        sendEvent('token', { text: delta.text })
+      }
+      if (delta.type === 'input_json_delta' && currentToolUse && delta.partial_json) {
+        currentToolUse.input += delta.partial_json
+      }
+    }
+    if (event.type === 'content_block_stop' && currentToolUse) {
+      toolCallName = currentToolUse.name
+      currentToolUse = null
+    }
+    if (event.type === 'message_delta' && 'delta' in event) {
+      const d = event.delta as { stop_reason?: string }
+      if (d.stop_reason === 'tool_use') toolCallName = toolCallName ?? 'fetch_24h_context'
+    }
+  }
+
+  return { fullResponse, toolCallName }
+}
+
+/** Circuit breaker for Claude (primary). Fallback returns null → caller uses OpenAI. */
+const claudeAnalysisBreaker = createBreaker(
+  async (params: ClaudeStreamParams): Promise<{ fullResponse: string; toolCallName: string | null }> => {
+    return streamClaudeAnalyze(params)
+  },
+  'claude-primary',
+  { timeout: 65_000, resetTimeout: 120_000 },
+)
+
+// ---------------------------------------------------------------------------
 // Route registration
 // ---------------------------------------------------------------------------
 
@@ -701,8 +826,6 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     res.write('event: ping\ndata: starting\n\n')
 
     const userId = (request as any).user?.id ?? 'unknown'
-    console.log(`[ANALYZE] user=${userId} model=gpt-4o tokens_max=1200`)
-
     const advancedSnapshot = getAdvancedMetricsSnapshot()
     const memoryBlock = await buildMemoryBlock(userId, {
       ivRank: snapshot?.ivRank?.value ?? 0,
@@ -746,6 +869,26 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       : null
 
     const priceHistoryBlock = buildPriceHistoryBlock(marketState.spy.priceHistory)
+    const expectedMoveSnapshot = getExpectedMoveSnapshot()
+    const expectedMoveBlock = buildExpectedMoveBlock(
+      expectedMoveSnapshot,
+      snapshot?.spy?.last ?? 0,
+    )
+
+    const userContent = buildPrompt(
+      snapshot,
+      body.optionChain,
+      freshness,
+      memoryBlock || undefined,
+      gexMultiBlock,
+      pcBlock,
+      confidence,
+      techBlock,
+      priceHistoryBlock || null,
+      expectedMoveBlock,
+    )
+    const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
+    console.log(`[ANALYZE] user=${userId} primary=${useClaudePrimary ? 'claude' : 'gpt-4o'} tokens_max=1200`)
 
     const sendEvent = (event: string, data: unknown) => {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
@@ -760,6 +903,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
 
     const systemPrompt =
       marketStatusNote +
+      'Foco da plataforma: SWING TRADE com expirações 21 a 45 DTE (não operações 0 DTE de alta frequência). ' +
+      'Centra a análise em: Gamma Exposure (GEX), decaimento (Theta), exposição à volatilidade (Vega), Volume Profile e contexto macroeconómico. ' +
       'Você é um especialista sênior em opções americanas, com foco em SPY e ETFs de grande liquidez. ' +
       'Suas análises são concisas, objetivas e acionáveis. ' +
       'Use markdown para formatar suas respostas com headers, listas e destaques. ' +
@@ -767,41 +912,36 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       'Dados marcados [RECENTE] são muito confiáveis para decisões táticas. ' +
       'Dados marcados [SNAPSHOT] são contexto estrutural — use-os para direção de tendência, não para decisões de entrada/saída. ' +
       'Use delta para avaliar probabilidade ITM (call ATM ≈ 0.50 ≈ 50% de chance de expirar ITM). ' +
-      'Use theta para comparar custo de carregamento diário entre strikes e expirações — theta é maior em magnitude em 0DTE. ' +
+      'Theta: custo de carregamento diário; em swing 21-45 DTE o theta é mais suave — priorize ancoragem GEX e Vega. ' +
+      'Vega: em 21-45 DTE a exposição à volatilidade é relevante; IV Rank e term structure indicam se vol está cara ou barata. ' +
       'Você tem acesso às suas análises anteriores do dia. Use-as para: manter coerência narrativa, reconhecer quando mudou de opinião (e explicar por quê), e avaliar se níveis de suporte/resistência anteriores foram testados com sucesso. ' +
       'GEX (Gamma Exposure) indica níveis de hedging de market makers. ' +
       'Em regime de GEX positivo, MMs compram quedas e vendem altas — o mercado tende a reverter à média. ' +
       'Em regime negativo, MMs amplificam movimentos — espere maior volatilidade direcional. ' +
       'O GEX flip point e o Zero Gamma Level (ZGL) são os níveis mais importantes: acima deles, supressão de volatilidade; abaixo, amplificação. ' +
-      'Use o max gamma strike como nível magnético primário para análise de suporte/resistência intraday. ' +
+      'Use o max gamma strike como nível magnético primário. Volume Profile (fluxo de opções) complementa GEX para níveis-chave. ' +
       'O Put/Call Ratio do dia indica o sentimento do fluxo real de opções SPY. ' +
       'P/C > 1.2 (BEARISH): hedgers dominam — cautela com posições longas desprotegidas. ' +
       'P/C < 0.7 (BULLISH): calls dominam — possível complacência, monitore reversão. ' +
       'P/C 0.7–1.2 (NEUTRAL): sem sinal direcional forte no fluxo de opções. ' +
-      'VIX Term Structure: contango (vol curta < vol longa) = calma agora, medo futuro — favorecer DTEs 7-21 para capturar theta enquanto vol spot é barata. ' +
-      'Backwardation (vol curta > vol longa) = pânico agora — favorecer 0-1 DTE para capturar mean reversion rápida de vol. ' +
-      'Curva flat = vol estável — DTE neutro, focar em outros fatores. ' +
+      'VIX Term Structure: contango = favorecer DTEs 21-45 para theta; backwardation = vol spot alta, considerar Vega. ' +
       'Cada seção de dados inclui um score de Confiança (0-1). ' +
       'Confiança ALTA (>=0.8): use para decisões de timing e entrada. ' +
       'Confiança MÉDIA (0.5-0.8): use como contexto direcional. ' +
       'Confiança BAIXA (<0.5): mencione com ressalva, pode estar desatualizado. ' +
       'Nunca baseie uma recomendação de entrada/saída exclusivamente em dados com Confiança BAIXA. ' +
-      'RSI sobrecomprado (>70) + resistência GEX = setup de venda forte. ' +
-      'RSI sobrevendido (<30) + suporte GEX = setup de compra forte. ' +
-      'MACD crossover bullish + GEX positivo = momentum sustentável. ' +
-      'Use indicadores técnicos como confirmação, não como sinal primário. ' +
-      'Tens à disposição a ferramenta fetch_24h_context. ' +
-      'Invoca-a APENAS se detetares: VIX acima de 20 ou em spike (>15% variação), ' +
-      'Put/Call Ratio acima de 1.3 ou abaixo de 0.6, RSI em zona extrema (<30 ou >70) combinado com MACD crossover, ' +
-      'ou se o utilizador mencionar macro, eventos, earnings ou contexto económico. ' +
-      'Em análises intraday rotineiras sem estes sinais, NÃO invoques a ferramenta — poupa tokens e latência. ' +
-      'Interpretação do GEX por DTE: ' +
-      '0DTE/1D: regime determina comportamento intraday imediato — GEX negativo amplifica moves, positivo induz reversão à média; use para avaliar se 0DTE é viável. ' +
-      '7D: janela tática para debit/credit spreads semanais; flip point 7D é o nível-chave de breakeven. ' +
-      '21D: janela ideal para iron condors e vertical spreads mensais; max gamma 21D é a ancoragem dos MMs para o mês. ' +
-      '45D: contexto estrutural; use para confirmar direção de médio prazo. ' +
-      'ALL (agregado): exposição consolidada total dos MMs — indica onde a pressão de hedge é mais intensa globalmente. ' +
-      'Ao recomendar estratégias, sempre indique qual DTE/GEX embasa a recomendação. ' +
+      'RSI sobrecomprado (>70) + resistência GEX = setup de venda forte. RSI sobrevendido (<30) + suporte GEX = setup de compra forte. ' +
+      'MACD crossover bullish + GEX positivo = momentum sustentável. Use indicadores técnicos como confirmação, não como sinal primário. ' +
+      'Tens à disposição a ferramenta fetch_24h_context para contexto macro (FRED, BLS, Fear & Greed, eventos, earnings). ' +
+      'Invoca-a quando: VIX acima de 20 ou spike (>15%), P/C acima de 1.3 ou abaixo de 0.6, RSI extremo com MACD crossover, ou quando o utilizador pedir macro/earnings. ' +
+      'Interpretação do GEX por DTE (foco swing 21-45): ' +
+      '21D: janela principal para iron condors e vertical spreads mensais; max gamma 21D é a ancoragem dos MMs; flip point 21D é nível de breakeven. ' +
+      '45D: contexto estrutural para direção de médio prazo; use para confirmar bias e níveis. ' +
+      '7D/0DTE/1D: contexto tático secundário. ALL (agregado): exposição consolidada dos MMs. ' +
+      'Ao recomendar estratégias, priorize 21-45 DTE e indique qual DTE/GEX embasa a recomendação. ' +
+      'Expected Move (soma Call ATM + Put ATM = straddle) por vencimento indica o movimento esperado em 1 desvio padrão (~68% de probabilidade). ' +
+      'Para Put Spreads 21–45 DTE, a perna vendida deve ficar fora do cone (strike short abaixo de SPY − Expected Move). ' +
+      'Se a perna vendida estiver dentro do cone, **alerte criticamente** que o risco da operação está mal calculado. ' +
       'Framework de análise — aplique nesta ordem: ' +
       '(1) REGIME VOL: IV Rank + IV/HV30 + VIX term structure → ambiente de venda ou compra de volatilidade? ' +
       '(2) REGIME GEX por DTE: para o DTE candidato, qual é o regime? Flip point e max gamma são os níveis de âncora. ' +
@@ -817,79 +957,29 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
 
     const baseMessages: Array<{ role: string; content: string }> = [
       { role: 'system', content: systemPrompt },
-      {
-        role: 'user',
-        content: buildPrompt(
-          snapshot,
-          body.optionChain,
-          freshness,
-          memoryBlock || undefined,
-          gexMultiBlock,
-          pcBlock,
-          confidence,
-          techBlock,
-          priceHistoryBlock || null,
-        ),
-      },
+      { role: 'user', content: userContent },
     ]
 
     try {
-      // First call — with tool available, streaming enabled
-      const firstRes = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${CONFIG.OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o',
-          stream: true,
-          max_tokens: 1200,
-          tools: [FETCH_CONTEXT_TOOL],
-          tool_choice: 'auto',
-          messages: baseMessages,
-        }),
-      })
+      let firstResponse = ''
+      let toolCallName: string | null = null
+      let usedClaude = false
 
-      if (!firstRes.ok) {
-        const text = await firstRes.text()
-        sendEvent('error', { message: `OpenAI error: ${firstRes.status} — ${text}` })
-        res.end()
-        return
+      if (useClaudePrimary) {
+        const claudeResult = (await claudeAnalysisBreaker.fire({
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userContent }],
+          sendEvent,
+        })) as { fullResponse: string; toolCallName: string | null } | null
+        if (claudeResult != null) {
+          usedClaude = true
+          firstResponse = claudeResult.fullResponse
+          toolCallName = claudeResult.toolCallName
+        }
       }
 
-      const { fullResponse: firstResponse, toolCallName } = await streamTokens(firstRes, sendEvent)
-
-      let fullResponse = firstResponse
-
-      // If the model requested the fetch_24h_context tool, provide macro context and continue
-      if (toolCallName === 'fetch_24h_context') {
-        console.log(`[ANALYZE] user=${userId} tool_call=fetch_24h_context → injecting macro context`)
-        const macroBlock = buildMacroContextBlock(body.context, freshness, confidence)
-
-        const followUpMessages = [
-          ...baseMessages,
-          // The assistant turn that triggered the tool call
-          {
-            role: 'assistant',
-            content: '',
-            tool_calls: [
-              {
-                id: 'call_macro',
-                type: 'function',
-                function: { name: 'fetch_24h_context', arguments: '{}' },
-              },
-            ],
-          } as any,
-          // Tool result
-          {
-            role: 'tool',
-            tool_call_id: 'call_macro',
-            content: macroBlock,
-          } as any,
-        ]
-
-        const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      if (!usedClaude) {
+        const firstRes = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -899,19 +989,80 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
             model: 'gpt-4o',
             stream: true,
             max_tokens: 1200,
-            messages: followUpMessages,
+            tools: [FETCH_CONTEXT_TOOL],
+            tool_choice: 'auto',
+            messages: baseMessages,
           }),
         })
-
-        if (!secondRes.ok) {
-          const text = await secondRes.text()
-          sendEvent('error', { message: `OpenAI error (follow-up): ${secondRes.status} — ${text}` })
+        if (!firstRes.ok) {
+          const text = await firstRes.text()
+          sendEvent('error', { message: `OpenAI error: ${firstRes.status} — ${text}` })
           res.end()
           return
         }
+        const openaiFirst = await streamTokens(firstRes, sendEvent)
+        firstResponse = openaiFirst.fullResponse
+        toolCallName = openaiFirst.toolCallName
+      }
 
-        const { fullResponse: secondResponse } = await streamTokens(secondRes, sendEvent)
-        fullResponse = secondResponse
+      let fullResponse = firstResponse!
+
+      if (toolCallName === 'fetch_24h_context') {
+        console.log(`[ANALYZE] user=${userId} tool_call=fetch_24h_context → injecting macro context`)
+        const macroBlock = buildMacroContextBlock(body.context, freshness, confidence)
+
+        if (usedClaude) {
+          const claudeFollowUp = await streamClaudeAnalyze({
+            system: systemPrompt,
+            messages: [
+              { role: 'user', content: userContent },
+              {
+                role: 'assistant',
+                content: [{ type: 'tool_use', id: 'call_macro', name: 'fetch_24h_context', input: {} }],
+              },
+              {
+                role: 'user',
+                content: [{ type: 'tool_result', tool_use_id: 'call_macro', content: macroBlock }],
+              },
+            ],
+            sendEvent,
+            includeTools: false,
+          })
+          fullResponse = claudeFollowUp.fullResponse
+        } else {
+          const followUpMessages = [
+            ...baseMessages,
+            {
+              role: 'assistant',
+              content: '',
+              tool_calls: [
+                { id: 'call_macro', type: 'function', function: { name: 'fetch_24h_context', arguments: '{}' } },
+              ],
+            } as any,
+            { role: 'tool', tool_call_id: 'call_macro', content: macroBlock } as any,
+          ]
+          const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${CONFIG.OPENAI_API_KEY}`,
+            },
+            body: JSON.stringify({
+              model: 'gpt-4o',
+              stream: true,
+              max_tokens: 1200,
+              messages: followUpMessages,
+            }),
+          })
+          if (!secondRes.ok) {
+            const text = await secondRes.text()
+            sendEvent('error', { message: `OpenAI error (follow-up): ${secondRes.status} — ${text}` })
+            res.end()
+            return
+          }
+          const { fullResponse: secondResponse } = await streamTokens(secondRes, sendEvent)
+          fullResponse = secondResponse
+        }
       } else {
         console.log(`[ANALYZE] user=${userId} tool_call=none → base context only`)
       }
