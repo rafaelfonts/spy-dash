@@ -8,7 +8,7 @@ Dashboard de trading em tempo real focado em opções de SPY, com streaming de d
 
 SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análise GPT-4o e um feed de contexto completo (earnings, dados macro, eventos econômicos, headlines, sentimento de mercado, GEX, Volume Profile, VIX Term Structure e indicadores técnicos), entregando um painel profissional para operadores de opções que precisam de velocidade e contexto ao mesmo tempo.
 
-**Stack:** React 18 + Vite no frontend, Fastify + TypeScript no backend, comunicação via Server-Sent Events (SSE) para dados macro/alertas e WebSocket dedicado para ticks de preço. Cache de dados de mercado em Redis (ioredis) com compressão Brotli automática, persistência de usuário e autenticação via Supabase.
+**Stack:** React 18 + Vite no frontend, Fastify + TypeScript no backend, comunicação via Server-Sent Events (SSE) para dados macro/alertas e preço SPY/VIX em tempo real. Cache de dados de mercado em Redis (ioredis) com compressão Brotli automática, persistência de usuário e autenticação via Supabase.
 
 ---
 
@@ -17,16 +17,14 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 ### Dados de Mercado em Tempo Real
 - Preço, bid/ask, volume e máx./mín. do dia do SPY via WebSocket DXFeed
 - Índice VIX com fallback chain: DXFeed → Finnhub → Tradier (garantia de dado mesmo quando DXFeed não emite Trade events para índices)
-- Sparkline de preços intraday (`PricePoint[]` com timestamp + preço) com XAxis de 30min (HH:mm ET), YAxis automático, tooltip personalizado (hora + preço), e ReferenceLine no preço de abertura da sessão
-- Histórico intraday restaurado no startup via cadeia: Redis cache (14h TTL, hoje) → Supabase (até 5 dias) → Tradier timesales (390 bars 1min); persistido no Redis a cada 60s em background
-- IV Rank e HV(30d) atualizados a cada 60s via Tastytrade API; IV Rank incluído na cache com TTL 14h para sobreviver ao fechamento do mercado
+- Histórico intraday restaurado no startup via cadeia: Redis cache (14h TTL, hoje) → Supabase (até 5 dias) → Tradier timesales (390 bars 1min); persistido no Redis a cada 60s em background (usado no backend para indicadores técnicos e prompt IA; preço SPY/VIX ao vivo via SSE)
+- IV Rank e HV(30d) atualizados a cada 60s via Tastytrade API; IV Rank % em destaque no card (IVx e Percentil como métricas secundárias); cache com TTL 14h para sobreviver ao fechamento do mercado
 - Flash de tick animado a cada atualização de preço
 - Indicador "AO VIVO" quando o mercado americano está aberto
 
 ### Streaming Resiliente
-- Conexão WebSocket com reconexão automática (backoff exponencial, até 20 tentativas)
-- **WebSocket dedicado `/ws/ticks`** para ticks de preço de alta frequência — payload compacto `{t,l,b,a,c,cp,v,dh,dl,ts}` (~80 bytes/tick vs. ~3KB via SSE anterior); SSE limpo de eventos `quote`/`vix`
-- **Batching de ticks (100ms):** ticks chegando em alta frequência são agrupados em janela de 100ms por conexão antes de serem enviados ao browser — reduz volume de frames WS durante bursts do DXFeed; frontend aceita tanto objeto único quanto array de ticks
+- Conexão WebSocket DXFeed com reconexão automática (backoff exponencial, até 20 tentativas)
+- **SPY e VIX em tempo real via SSE:** eventos `quote` e `vix` são enviados pelo stream SSE (`/stream/market`); snapshot de preço SPY/VIX enviado na conexão inicial do cliente
 - Detecção de dados stale: reconecta automaticamente se não houver update por mais de **5 minutos** (`lastFeedDataAt` tracker — watchdog só avalia staleness após o primeiro `FEED_DATA` recebido na conexão, evitando loops de reconexão em fins de semana quando o feed está vivo mas não emite trades)
 - Broadcast SSE para múltiplos clientes simultâneos (global e por usuário)
 - SSE heartbeat a cada 15s para manter conexão viva em proxies
@@ -36,7 +34,7 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 ### Análise por IA (GPT-4o)
 - **Prompt base limpo:** apenas dados de mercado essenciais (SPY, VIX, IV Rank, option chain, GEX, Volume Profile, VIX Term Structure, indicadores técnicos, memória de análises)
 - **Tool Calling condicional (`fetch_24h_context`):** o modelo decide autonomamente quando buscar o contexto macro (Fear & Greed, VIX term structure, FRED, BLS, earnings, eventos econômicos). Chamado apenas quando VIX > 20, P/C ratio atípico, RSI extremo + crossover MACD, ou o usuário fizer perguntas macro — evita enviar ~3KB de dados desnecessários em análises de rotina
-- **Structured Outputs nativo via `json_schema`:** o modelo retorna diretamente o objeto estruturado `{ bias, confidence, timeframe, key_levels, suggested_strategy, catalysts, risk_factors }` em uma única chamada GPT-4o (elimina a segunda chamada `gpt-4o-mini` anterior)
+- **Structured Outputs nativo via `json_schema`:** o modelo retorna diretamente o objeto estruturado em uma única chamada GPT-4o: `bias`, `confidence`, `timeframe`, `key_levels`, `suggested_strategy` (com pernas call/put, strike, DTE), `catalysts`, `risk_factors`; campos de estratégia: `recommended_dte`, `pop_estimate`, `supporting_gex_dte`, `invalidation_level`, `expected_credit`, `theta_per_day`
 - **Histórico intraday no prompt (`buildPriceHistoryBlock`):** sessão OHLC, range %, curva amostrada a cada ~15min, tendência 1h, e estimativa de HV intraday (desvio-padrão de log-returns × √(252×390))
 - **VWAP no bloco técnico:** `buildTechBlock()` inclui `VWAP: $X.XX | SPY ACIMA/ABAIXO do VWAP em Y.YY%` quando disponível (capturado da última barra Tradier timesales via `getLastVwap()`)
 - **Ratio IV/HV(30d):** `buildPrompt()` calcula `ivRank.value / hv30` e sinaliza `[VOL CARA]` quando ratio > 1.3 — dado direto da resposta Tastytrade `hv-30-day`
@@ -50,13 +48,20 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 
 ### Memória de Análise IA
 - Ao fim de cada análise, `analysisMemory.ts` salva no Supabase (`ai_analyses`):
-  - Texto completo da análise
-  - Resumo gerado por GPT-4o-mini (2-3 frases com bias, níveis-chave e estratégia)
+  - Texto completo da análise (`full_text`)
+  - Resumo gerado por GPT-4o-mini (2-3 frases) e **resumo compacto** (`compact_summary`) para contexto no prompt
   - Embedding vetorial do resumo via `text-embedding-3-small` (armazenado como `vector(1536)` nativo via pgvector)
   - Snapshot de mercado no momento (spyPrice, vix, ivRank)
-  - Structured output (bias + key_levels)
-- As últimas 3 análises das últimas 24h são injetadas no próximo prompt como contexto histórico
+  - Structured output (bias + key_levels + campos de estratégia)
+  - **Metadados de memória:** `analysis_date`, `is_archived`, `analysis_session_id` (para agrupamento e poda)
+- As últimas 3 análises das últimas 24h são injetadas no próximo prompt como contexto histórico (usa `compact_summary` quando disponível)
 - Falha de persistência não bloqueia o fluxo principal (try/catch silencioso)
+
+**Política de retenção e poda:**
+- **7 dias:** todas as análises mantidas completas
+- **8–30 dias:** 1 análise por dia por usuário (a de maior confidence), demais arquivadas (`is_archived = TRUE`)
+- **Após 90 dias:** `full_text` é limpo (`NULL`) nas linhas arquivadas para liberar espaço; metadados, summary e embedding permanecem
+- **Edge Function `prune-analyses`:** chama a função SQL `prune_old_analyses()` diariamente (agendamento recomendado: 02:00 UTC no Supabase Dashboard ou cron externo)
 
 ### Pesquisa Semântica (pgvector)
 - `POST /api/search` recebe uma query em linguagem natural e retorna as análises históricas semanticamente mais relevantes
@@ -69,9 +74,10 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 ### GEX + Volume Profile
 - **GEX (Gamma Exposure):** calculado a partir de option data real da Tradier (`tradierOptionData.ts` + `gexCalculator.ts`)
   - Modelo Black-Scholes para gamma via `gexService.ts`
-  - Métricas publicadas: `total` (net GEX em $M), `callWall`, `putWall`, `zeroGamma` (zero gamma level via BS), `flipPoint` (sign-change cumulativo), `regime` (positive/negative), `maxGexStrike`, `minGexStrike`
+  - **Multi-DTE:** GEX por bucket de expiração (0DTE, 1D, 7D, 21D, 45D, ALL) — `calculateAllExpirationsGex()` em `gexService.ts`; cache por expiração (`gex:exp:{symbol}:{exp}`, TTL 5min); publicado como `gexByExpiration` no evento SSE `advanced-metrics`
+  - Métricas por bucket: `total`, `callWall`, `putWall`, `flipPoint`, `regime`, `maxGexStrike`; formato tabular injetado no prompt IA via `buildGexMultiDTEBlock()` (framework de 4 camadas: regime vol → GEX DTE → strike PoP → técnico)
   - `byStrike`: top 20 strikes por `|netGEX|` enviados via SSE com `{ strike, netGEX, callGEX, putGEX, callOI, putOI }`
-  - Expiração mais próxima usada para cálculo
+- **Análise focada em GEX:** `POST /api/analyze/gex-flow` — endpoint SSE em streaming com gpt-4o-mini para análise da estrutura de GEX por DTE (acionado pelo botão "Analisar Fluxo" no GEXPanel)
 - **Volume Profile:** calculado a partir de time-sales intraday do Tradier
   - POC (Point of Control) — strike com maior volume
   - VAH (Value Area High) e VAL (Value Area Low) — 70% do volume total
@@ -108,11 +114,11 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - **Entrega via SSE** (`event: briefing`): clientes conectados recebem o briefing em tempo real; novos clientes recebem no snapshot inicial de conexão (se ainda válido)
 - **Discord Webhook** (`DISCORD_WEBHOOK_URL`): briefing enviado simultâneamente para o canal da equipe (fire-and-forget; falha não afeta o SSE)
 - **Expiração automática**: briefing pre-market expira às 10:30 ET; pós-fechamento às 06:00 ET do dia seguinte
-- Frontend: card destacado `PreMarketBriefing.tsx` com gradiente azul/roxo, renderização Markdown via `react-markdown`, auto-dismiss às 10:00 ET, botão "×" manual; posicionado acima do `AIPanel`
+- Frontend: card destacado `PreMarketBriefing.tsx` com gradiente verde (design system: `#00ff88`), accordion collapse (inicia colapsado com preview da primeira linha), renderização Markdown via `react-markdown`, auto-dismiss às 10:00 ET, botão "×" manual; posicionado acima do `AIPanel`
 
 ### Alertas de Preço em Tempo Real
 - Após cada análise IA, o `alertEngine.ts` registra os `key_levels` do structured output como alertas ativos do usuário (até 10 alertas; nova análise substitui todos os anteriores)
-- A cada tick de preço (via WebSocket ticks), `checkAlerts(price)` avalia todos os alertas ativos:
+- A cada tick de preço (via eventos `quote` do SSE), `checkAlerts(price)` avalia todos os alertas ativos:
   - `approaching`: preço dentro de 0.2% do nível (`PROXIMITY_WARN`)
   - `testing`: preço dentro de 0.05% do nível (`PROXIMITY_TEST`)
   - Debounce de 60s por alerta para evitar spam
@@ -121,18 +127,17 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - Frontend: `AlertOverlay.tsx` exibe notificações em overlay fixo (top-right), slide-in/out com Framer Motion, auto-dismiss em 8s, dismissível por clique
 
 ### Feed de Mercado
-Painel com seis fontes de dados agregadas via SSE:
+Painel com cinco fontes de dados exibidas no frontend, agregadas via SSE (earnings apenas no backend/IA):
 
 | Seção | Fonte | Frequência |
 |---|---|---|
-| **Earnings Calendar** | Tastytrade API | A cada 6h |
 | **Dados Macro (FRED)** | Federal Reserve St. Louis | A cada 24h |
 | **Dados Macro (BLS)** | Bureau of Labor Statistics | A cada 24h |
 | **Eventos Macro** | Finnhub Economic Calendar | A cada 1h |
 | **Headlines** | GNews | A cada 30min |
 | **Fear & Greed** | CNN (endpoint público) | A cada 4h |
 
-**Earnings Calendar:** próximos earnings dos 10 maiores componentes do SPY (janela -7 a +90 dias), ordenados por DTE, com alertas de urgência (≤3 dias = vermelho, ≤14 dias = amarelo).
+**Earnings (backend/IA):** poller a cada 6h com 50 símbolos em 5 setores (janela -7 a +90 dias); usado no pre-market briefing, tool calling da IA (DTE≤7) e contexto macro — sem componente visual no Feed de Mercado.
 
 **Dados Macro FRED:** CPI All Items, Core CPI, PCE Deflator, Fed Funds Rate e Yield Curve (T10Y2Y), com direção vs. leitura anterior e color-coding semântico.
 
@@ -145,10 +150,10 @@ Painel com seis fontes de dados agregadas via SSE:
 **Fear & Greed:** gauge semicircular SVG com score 0–100 e 5 zonas de cor (Medo Extremo → Ganância Extrema).
 
 ### Dashboard UI
-- Três cards principais: **SPY**, **VIX**, **IV Rank**
-- **GEX Panel:** gráfico de barras por strike (calls/puts), métricas callWall/putWall/flipPoint, regime, P/C Ratio com barra visual
+- Três cards principais: **SPY**, **VIX**, **IV Rank** (IV Rank % em destaque; IVx e Percentil como secundários)
+- **GEX Panel:** gráfico de barras por strike (calls/puts), seletor de tabs por DTE (0DTE/1D/7D/21D/45D/ALL), métricas callWall/putWall/flipPoint, regime, P/C Ratio com barra visual, botão "Analisar Fluxo" para análise focada em GEX
+- **Card "Estratégia Sugerida":** exibe pernas da estratégia (call/put, buy/sell, strike, DTE), badges de DTE/PoP/invalidação e métricas de risco/crédito/theta/breakeven
 - **Cadeia de Opções:** calls e puts ATM ±n strikes com bid/ask + greeks completos **Δ γ θ ν** por strike (calculados via Black-Scholes no backend, exibidos por `OptionChainPanel.tsx`)
-- Sparklines com tooltips (Recharts)
 - **Alert Overlay:** notificações de alerta de preço em overlay fixo, animadas com Framer Motion
 - Tema escuro customizado com Tailwind CSS
 - Animações de entrada/saída com Framer Motion
@@ -183,8 +188,7 @@ SPY Dash/
 │       ├── api/                # Endpoints HTTP
 │       │   ├── health.ts       # Status do servidor (público + protegido)
 │       │   ├── openai.ts       # Análise GPT-4o streaming (Tool Calling + Structured Outputs)
-│       │   ├── sse.ts          # Stream de mercado SSE (broadcast global + por usuário)
-│       │   ├── wsTicks.ts      # WebSocket /ws/ticks — ticks de preço compactos (~80 bytes)
+│       │   ├── sse.ts          # Stream de mercado SSE (broadcast global + por usuário; quote/vix)
 │       │   ├── priceHistory.ts # GET /api/price-history
 │       │   ├── gex.ts          # GET /api/gex (snapshot) + /api/gex/detail (full Redis cache)
 │       │   ├── volumeProfile.ts # GET /api/volume-profile (snapshot) + /detail (full)
@@ -204,7 +208,7 @@ SPY Dash/
 │       │   ├── ivRankPoller.ts      # Poll IV Rank 60s (Tastytrade)
 │       │   ├── optionChain.ts       # Fetch + cache de options (Tastytrade)
 │       │   ├── priceHistory.ts      # Persistência Supabase + restoreFromTradier()
-│       │   ├── earningsCalendar.ts  # Earnings top 10 SPY (Tastytrade, 6h; janela -7..90d)
+│       │   ├── earningsCalendar.ts  # Earnings 50 símbolos (Tastytrade, 6h; janela -7..90d; backend/IA)
 │       │   ├── fredPoller.ts        # CPI/PCE/Fed Rate/Yield Curve (FRED, 24h)
 │       │   ├── blsPoller.ts         # NFP/Desemprego/PPI/Earnings (BLS, 24h)
 │       │   ├── macroCalendar.ts     # Eventos econômicos EUA (Finnhub, 1h)
@@ -243,8 +247,7 @@ SPY Dash/
 │       ├── store/
 │       │   └── marketStore.ts  # Zustand (estado global: mercado + newsFeed + GEX + alerts)
 │       ├── hooks/
-│       │   ├── useMarketStream.ts  # EventSource → store (eventos SSE: macro, alertas, GEX…)
-│       │   ├── usePriceTicks.ts    # WebSocket /ws/ticks → store (SPY price, VIX em tempo real)
+│       │   ├── useMarketStream.ts  # EventSource → store (eventos SSE: macro, alertas, GEX, quote, vix)
 │       │   ├── useAIAnalysis.ts    # Streaming GPT-4o + coleta option chain
 │       │   ├── useAuth.ts          # Supabase Auth
 │       │   └── useMarketOpen.ts    # Horário de mercado EUA
@@ -255,14 +258,13 @@ SPY Dash/
 │       │   │   ├── GEXPanel.tsx        # Painel GEX: gráfico byStrike + callWall/putWall/flipPoint
 │       │   │   └── OptionChainPanel.tsx # Cadeia de opções ATM com greeks Δ γ θ ν
 │       │   ├── news/           # NewsFeedPanel e subcomponentes
-│       │   │   ├── NewsFeedPanel.tsx      # Container (6 seções)
-│       │   │   ├── EarningsCalendar.tsx
+│       │   │   ├── NewsFeedPanel.tsx      # Container (5 seções visíveis; earnings só no backend)
 │       │   │   ├── MacroData.tsx
 │       │   │   ├── MacroCalendar.tsx
 │       │   │   ├── NewsHeadlines.tsx
 │       │   │   ├── FearGreedGauge.tsx
 │       │   │   └── PutCallRatioCard.tsx   # P/C Ratio com barra visual
-│       │   ├── charts/         # PriceSparkline (Recharts)
+│       │   ├── charts/         # Recharts (GEXPanel)
 │       │   ├── layout/         # Header + StatusBar
 │       │   ├── ui/             # ConnectionDot, TickFlash, Skeleton, AlertOverlay
 │       │   │   └── AlertOverlay.tsx       # Overlay de alertas de preço (Framer Motion)
@@ -272,9 +274,13 @@ SPY Dash/
 │           └── supabase.ts     # Cliente Supabase
 │
 ├── supabase/
-│   └── migrations/
-│       ├── 20260228000000_enable_rls.sql        # RLS em ai_analyses + price_ticks
-│       └── 20260228000001_pgvector_search.sql   # pgvector, HNSW index, RPC search
+│   ├── migrations/
+│   │   ├── 20260228000000_enable_rls.sql        # RLS em ai_analyses + price_ticks
+│   │   ├── 20260228000001_pgvector_search.sql   # pgvector, HNSW index, RPC search
+│   │   ├── 20260304000000_ai_analyses_memory_columns.sql  # compact_summary, analysis_date, is_archived, analysis_session_id
+│   │   └── 20260304000001_prune_old_analyses.sql # Função prune_old_analyses() — retenção e archive
+│   └── functions/
+│       └── prune-analyses/   # Edge Function: chama prune_old_analyses() (cron 02:00 UTC)
 │
 ├── legacy/                     # Versão anterior HTML/JS
 ├── start.sh                    # Script de inicialização unificado
@@ -284,9 +290,9 @@ SPY Dash/
 ### Fluxo de Dados — Mercado em Tempo Real
 
 ```
-DXFeed WebSocket → marketState (EventEmitter) → wsTicks.ts → /ws/ticks WebSocket
-                                               → (SPY/VIX removidos do SSE)
-                                               → usePriceTicks.ts → Zustand store
+DXFeed WebSocket → marketState (EventEmitter) → sse.ts (listeners quote + vix)
+                                               → broadcast + snapshot na conexão
+                                               → useMarketStream.ts → Zustand store
 
 Startup (paralelo, sem bloquear listen()):
   ├─ initTokenManager (timeout 10s)
@@ -301,27 +307,6 @@ Startup (paralelo, sem bloquear listen()):
        cache:premarket_briefing:YYYY-MM-DD ou cache:postclose_briefing:YYYY-MM-DD
 
 Após restores: startIntradayCachePersistence() + pollers iniciam + startPreMarketScheduler()
-```
-
-### Fluxo de Dados — WebSocket Price Ticks
-
-```
-DXFeed quote event (todo tick)
-  → marketState.emitter.emit('quote', payload)
-  → wsTicks.ts — enfileira tick no buffer de 100ms por conexão
-  → flush: envia array de ticks (ou objeto único) para o browser
-  → payload compacto por tick: { t, l, b, a, c, cp, v, dh, dl, ts } (~80 bytes)
-
-Browser WebSocket (/ws/ticks)
-  → usePriceTicks.ts — aceita objeto único ou array de ticks
-  → para cada tick: push { t: ts, p: l } em spyHistoryRef (PricePoint[])
-    (guarda `last` apenas quando não-null — evita apagar preço válido em bid/ask-only ticks)
-  → updateSPY() + updateVIX()
-  → Zustand store → React re-renders
-
-Snapshot inicial (connect):
-  → aplica scalars não-null do backend snapshot (não sobrescreve preço restaurado com null)
-  → sincroniza priceHistory[] com buffer local
 ```
 
 ### Fluxo de Dados — GEX + Volume Profile
@@ -410,7 +395,7 @@ GPT-4o structured output { key_levels: { support, resistance, gex_flip } }
   → registerAlertsFromAnalysis(userId, structured)
   → alertsByUser Map<userId, ActiveAlert[]>
 
-WebSocket tick (todo tick de preço via /ws/ticks)
+Evento quote do SSE (atualização de preço SPY/VIX)
   → checkAlerts(price)
   → priceDiff ≤ PROXIMITY_TEST (0.05%) → 'testing'
   → priceDiff ≤ PROXIMITY_WARN (0.2%) → 'approaching'
@@ -511,9 +496,9 @@ O backend usa `SUPABASE_SERVICE_ROLE_KEY` (bypassa RLS) para todas as operaçõe
 |---|---|---|---|
 | `/health` | GET | — | Status binário: `{ "status": "ok" \| "degraded" }` |
 | `/health/details` | GET | `X-Health-Token` | Detalhes completos: dataAge, circuit breakers, SSE clients, uptime |
-| `/stream/market` | GET (SSE) | JWT | Stream de eventos macro, alertas, GEX, newsfeed |
-| `/ws/ticks` | WebSocket | JWT | Ticks de preço compactos SPY/VIX em alta frequência |
+| `/stream/market` | GET (SSE) | JWT | Stream de eventos macro, alertas, GEX, newsfeed, quote e vix (preço SPY/VIX) |
 | `/api/analyze` | POST (SSE) | JWT | Análise GPT-4o em streaming (Tool Calling + Structured Outputs) |
+| `/api/analyze/gex-flow` | POST (SSE) | JWT | Análise focada em GEX por DTE (streaming gpt-4o-mini) |
 | `/api/search` | POST | JWT | Pesquisa semântica em análises históricas (pgvector) |
 | `/api/option-chain` | GET | JWT | Snapshot da cadeia de opções SPY com greeks Δ γ θ ν |
 | `/api/price-history` | GET | JWT | Histórico de preços por símbolo |
@@ -575,7 +560,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3001/admin/break
 | `briefing` | `{ type: 'pre-market'\|'post-close', generatedAt, markdown, expiresAt }` — briefing automático 9:00/16:15 ET; enviado no snapshot inicial se válido |
 | `ping` | Heartbeat a cada 15s (timestamp) — mantém conexão viva em proxies |
 
-> `quote` e `vix` foram **removidos do SSE**. Ticks de preço são agora servidos exclusivamente via `/ws/ticks` WebSocket.
+> Preço SPY e VIX em tempo real são servidos via eventos `quote` e `vix` do SSE (`/stream/market`), com snapshot na conexão inicial.
 
 ---
 
@@ -587,7 +572,6 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3001/admin/break
 |---|---|---|
 | Node.js | 20+ | Runtime |
 | Fastify | 4.26 | Servidor HTTP |
-| @fastify/websocket | — | WebSocket `/ws/ticks` |
 | TypeScript | 5.3 | Linguagem |
 | ws | — | WebSocket DXFeed |
 | OpenAI SDK | — | GPT-4o (Tool Calling + Structured Outputs) + text-embedding-3-small |
@@ -606,7 +590,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3001/admin/break
 | Zustand | 4.5 | Estado global |
 | TanStack Query | 5.18 | Data fetching |
 | Tailwind CSS | 3.4 | Estilização |
-| Recharts | 2.12 | Sparklines + GEX chart |
+| Recharts | 2.12 | Gráfico GEX (barras por strike) |
 | Framer Motion | 11 | Animações + AlertOverlay |
 | react-markdown | 9 | Renderização da IA |
 | Supabase JS | — | Autenticação |
@@ -749,7 +733,7 @@ npm run preview # Preview do build de produção
 ### Implementado
 
 **Dados de mercado:**
-- Streaming WebSocket DXFeed (SPY + VIX) em tempo real via `/ws/ticks` (ticks compactos ~80 bytes; batching 100ms por conexão)
+- Streaming DXFeed (SPY + VIX) em tempo real via SSE (eventos `quote` e `vix` no `/stream/market`; snapshot na conexão)
 - VIX com fallback chain DXFeed → Finnhub → Tradier
 - OAuth2 Tastytrade com refresh automático de token (refresh token criptografado AES-256-GCM no Redis)
 - Polling IV Rank a cada 60s; inclui HV(30d) da Tastytrade
@@ -787,7 +771,7 @@ npm run preview # Preview do build de produção
 - Filtro por usuário + threshold configurável
 
 **Feed de Mercado:**
-- Earnings Calendar dos top 10 componentes do SPY via Tastytrade (6h; janela -7..90d)
+- Earnings via Tastytrade (6h; 50 símbolos em 5 setores; janela -7..90d) — backend/IA apenas; sem componente no frontend
 - Dados Macro via FRED: CPI, Core CPI, PCE, Fed Funds Rate, Yield Curve T10Y2Y (24h)
 - Dados Macro via BLS: Unemployment Rate, Nonfarm Payrolls, Avg Hourly Earnings, PPI Final Demand (24h)
 - Calendário de Eventos Econômicos via Finnhub: US high/medium impact (1h)
@@ -814,7 +798,6 @@ npm run preview # Preview do build de produção
 **UI & Autenticação:**
 - Dashboard React com 3 cards de métricas (SPY, VIX, IV Rank)
 - **TechnicalIndicatorsCard** (`TechnicalIndicatorsCard.tsx`): RSI(14) gauge, MACD histogram + crossover badge, BB position badge
-- **PriceSparkline** atualizado: XAxis com ticks de 30min (HH:mm ET), YAxis auto, tooltip personalizado (hora + preço), ReferenceLine no preço de abertura
 - Painel GEX com gráfico de barras por strike (calls/puts)
 - Cadeia de Opções com greeks Δ γ θ ν por strike
 - Alert Overlay com animação slide-in/out (Framer Motion, auto-dismiss 8s)
@@ -822,7 +805,7 @@ npm run preview # Preview do build de produção
 - Vite dev proxy para `/ws` com `ws: true` (WebSocket direto para backend sem CORS)
 - Supabase Auth com email/senha (JWT validado no backend)
 - Animações Framer Motion + Tailwind dark theme
-- Skeletons de carregamento + Sparklines Recharts
+- Skeletons de carregamento + Recharts (GEX)
 
 ### Planejado / Em Desenvolvimento
 
