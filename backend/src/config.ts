@@ -30,3 +30,12 @@ export const CONFIG = {
   REDIS_URL: process.env.REDIS_URL ?? '',
   ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ?? '',
 } as const
+
+// Validar chaves críticas no startup
+if (CONFIG.ANTHROPIC_API_KEY && CONFIG.ANTHROPIC_API_KEY.length < 20) {
+  console.warn('⚠️  ANTHROPIC_API_KEY parece inválida (muito curta). Claude será desabilitado.')
+}
+
+if (!CONFIG.OPENAI_API_KEY || CONFIG.OPENAI_API_KEY.length < 20) {
+  throw new Error('OPENAI_API_KEY inválida ou ausente. Backend não pode iniciar.')
+}

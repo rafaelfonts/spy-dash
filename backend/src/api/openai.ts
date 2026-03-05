@@ -756,7 +756,13 @@ interface ClaudeStreamParams {
 
 async function streamClaudeAnalyze(params: ClaudeStreamParams): Promise<{ fullResponse: string; toolCallName: string | null }> {
   const { system, messages, sendEvent, includeTools = true } = params
-  const anthropic = new Anthropic({ apiKey: CONFIG.ANTHROPIC_API_KEY })
+
+  try {
+    if (!CONFIG.ANTHROPIC_API_KEY || CONFIG.ANTHROPIC_API_KEY.length < 20) {
+      throw new Error('ANTHROPIC_API_KEY não configurada ou inválida')
+    }
+
+    const anthropic = new Anthropic({ apiKey: CONFIG.ANTHROPIC_API_KEY })
 
   const anthropicMessages: Array<{ role: 'user' | 'assistant'; content: string | unknown[] }> = messages.map((m) => {
     if (typeof m.content === 'string') return { role: m.role, content: m.content }
@@ -814,6 +820,10 @@ async function streamClaudeAnalyze(params: ClaudeStreamParams): Promise<{ fullRe
   }
 
   return { fullResponse, toolCallName }
+  } catch (err) {
+    console.error('[Claude] Erro ao instanciar ou executar SDK:', (err as Error).message)
+    throw err
+  }
 }
 
 /** Circuit breaker for Claude (primary). Fallback returns null → caller uses OpenAI. */
@@ -831,6 +841,17 @@ const claudeAnalysisBreaker = createBreaker(
 
 export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
   fastify.post<{ Body: AnalyzeBody }>('/api/analyze', { preHandler: [analysisRateLimit] }, async (request, reply) => {
+    // Validar ANTHROPIC_API_KEY se Claude estiver habilitado
+    if (CONFIG.ANTHROPIC_API_KEY && CONFIG.ANTHROPIC_API_KEY.length < 20) {
+      request.log.error('[ANALYZE] ANTHROPIC_API_KEY inválida ou muito curta')
+      reply.code(500).send({ error: 'Configuração de IA inválida' })
+      return
+    }
+
+    let res: ServerResponse | null = null
+    let sendEvent: (event: string, data: unknown) => void = () => {}
+
+    try {
     const body = request.body ?? {}
     const snapshot = body.marketSnapshot ?? {
       spy: marketState.spy.last
@@ -870,7 +891,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       earnings: msToIso(newsSnapshot.earningsTs),
     }
 
-    const res = reply.raw as ServerResponse
+    res = reply.raw as ServerResponse
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
@@ -949,8 +970,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     console.log(`[ANALYZE] user=${userId} primary=${useClaudePrimary ? 'claude' : 'gpt-4o'} tokens_max=1200`)
 
-    const sendEvent = (event: string, data: unknown) => {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+    sendEvent = (event: string, data: unknown) => {
+      if (res?.writable) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
     }
 
     const marketStatusNote = isMarketOpen()
@@ -1021,7 +1042,6 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       { role: 'user', content: userContent },
     ]
 
-    try {
       let firstResponse = ''
       let toolCallName: string | null = null
       let usedClaude = false
@@ -1142,8 +1162,21 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       }, structured ?? undefined).catch(() => {})
       res.end()
     } catch (err) {
-      sendEvent('error', { message: (err as Error).message })
-      res.end()
+      const error = err as Error
+      request.log.error({ err: error, stack: error.stack }, '[ANALYZE] Erro fatal na análise')
+      try {
+        if (res?.writable && !res.writableEnded) {
+          sendEvent('error', {
+            message: error.message,
+            details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+          })
+          res.end()
+        } else if (!reply.sent) {
+          reply.code(500).send({ error: 'Erro interno na IA', details: error.message })
+        }
+      } catch (e) {
+        request.log.error(e, '[ANALYZE] Erro ao enviar resposta de erro')
+      }
     }
 
     reply.hijack()

@@ -96,6 +96,7 @@ export function getSSEStats(): { count: number; avgConnectionAgeMs: number } {
 
 export async function registerSSE(fastify: FastifyInstance): Promise<void> {
   fastify.get('/stream/market', (request, reply) => {
+    try {
     const res = reply.raw as ServerResponse
 
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
@@ -116,7 +117,12 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
       userId,
       connectedAt: Date.now(),
       write(event: string, data: unknown) {
-        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+        try {
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+        } catch (err) {
+          console.error('[SSE] Erro ao escrever evento:', event, err)
+          clients.delete(client)
+        }
       },
     }
 
@@ -237,5 +243,11 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     })
 
     reply.hijack()
+    } catch (err) {
+      request.log.error({ err }, '[SSE] Erro ao iniciar stream')
+      if (!reply.sent) {
+        reply.code(500).send({ error: 'Erro ao iniciar stream de mercado' })
+      }
+    }
   })
 }

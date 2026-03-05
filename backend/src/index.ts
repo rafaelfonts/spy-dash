@@ -61,6 +61,7 @@ async function bootstrap(): Promise<void> {
     origin: CONFIG.CORS_ORIGIN,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   })
+  console.log(`[CORS] Origem permitida: ${CONFIG.CORS_ORIGIN}`)
 
   // Parse JSON bodies
   fastify.addContentTypeParser(
