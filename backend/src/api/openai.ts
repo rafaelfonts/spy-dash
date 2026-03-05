@@ -896,6 +896,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
     res.setHeader('X-Accel-Buffering', 'no')
+    res.setHeader('Access-Control-Allow-Origin', CONFIG.CORS_ORIGIN)
     res.flushHeaders()
     // Immediate ping so proxies with short read-timeout don't kill the connection
     // before the first GPT-4o token arrives
@@ -1225,6 +1226,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
     res.setHeader('X-Accel-Buffering', 'no')
+    res.setHeader('Access-Control-Allow-Origin', CONFIG.CORS_ORIGIN)
     res.flushHeaders()
     res.write('event: ping\ndata: starting\n\n')
 
@@ -1309,6 +1311,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
     res.setHeader('X-Accel-Buffering', 'no')
+    res.setHeader('Access-Control-Allow-Origin', CONFIG.CORS_ORIGIN)
     res.flushHeaders()
     res.write('event: ping\ndata: starting\n\n')
 
