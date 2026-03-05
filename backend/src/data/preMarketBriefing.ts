@@ -28,6 +28,32 @@ import type {
 // ---------------------------------------------------------------------------
 
 const BRIEFING_TTL_MS = 14 * 60 * 60 * 1000  // 14h — survives overnight in Redis
+const DISCORD_EMBED_DESC_MAX = 4000          // safe under Discord's 4096 limit
+const DISCORD_EMBED_COLOR_PRE = 65416        // #00ff88 — Pré-Market (paleta frontend)
+const DISCORD_EMBED_COLOR_POST = 16763904    // #ffcc00 — Pós-Market (paleta frontend)
+
+const PRE_MARKET_PROMPT = `Você é o Estrategista Quantitativo Chefe do SPY Dash, operando com foco exclusivo em Put Spreads de 21 a 45 DTE. Sua tarefa é analisar os dados pré-mercado fornecidos (Preço SPY, GEX, IV Rank, VIX, Macro Events) e entregar o briefing de abertura.
+REGRAS DE FORMATAÇÃO E ESTILO (INEGOCIÁVEIS):
+1. ZERO RUÍDO: Não use saudações, introduções ou fechamentos. Comece imediatamente com os dados.
+2. CONCISÃO EXTREMA: O texto final DEVE ter menos de 2.500 caracteres. Use bullet points curtos e diretos.
+3. ESTRUTURA OBRIGATÓRIA:
+- 🧱 **Estrutura GEX & Preço**: SPY atual vs. Maior Gamma Negativo (Suporte) e Positivo (Resistência).
+- 🌪️ **Volatilidade**: Status do VIX e IV Rank. Indique se o IV Rank favorece venda de prêmio (> 30%) ou exige cautela.
+- 📅 **Risco Macro**: Liste apenas os eventos binários de ALTO IMPACTO do dia. Se não houver, diga 'Sessão Livre de Eventos Macro'.
+- 🎯 **Veredito Sniper**: Com base nos dados, há configuração matemática para buscar entradas de Put Spread (21-45 DTE) hoje? (Sim/Não e justificativa em 1 linha).
+Não explique o que é GEX ou IV Rank. Entregue apenas o sinal.`
+
+const POST_MARKET_PROMPT = `Você é o Gestor de Risco Quantitativo do SPY Dash. O mercado acaba de fechar. Sua tarefa é ler os dados de fechamento (Preço SPY, GEX atualizado, VIX) e o status do portfólio de opções ativas (Put Spreads de 21 a 45 DTE).
+REGRAS DE FORMATAÇÃO E ESTILO (INEGOCIÁVEIS):
+1. ZERO RUÍDO: Sem saudações ou explicações teóricas. Estilo institucional, telegráfico.
+2. CONCISÃO EXTREMA: Máximo de 2.500 caracteres.
+3. ESTRUTURA OBRIGATÓRIA:
+- 📊 **Resumo do Fechamento**: Onde o SPY fechou em relação às 'paredes' de GEX? Houve expansão ou contração de volatilidade?
+- 💼 **Auditoria de Portfólio**: Avalie as posições abertas enviadas no payload.
+- 🚨 **Ações Exigidas (A Regra de Ouro)**:
+Se alguma posição atingiu >= 50% de lucro, ordene o fechamento imediato.
+Se alguma posição atingiu <= 21 DTE, ordene o fechamento ou rolagem.
+Se nenhuma regra for quebrada, emita 'Status: Manter Posições'.`
 
 // ---------------------------------------------------------------------------
 // In-memory state
@@ -158,23 +184,7 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
         ? buildPreMarketPrompt(context)
         : buildPostClosePrompt(context)
 
-    const systemContent =
-      type === 'pre-market'
-        ? `Você é um estrategista sênior de opções americanas. Foco em SWING TRADE 21-45 DTE (não 0 DTE). Gere um briefing pre-market conciso para operadores de SPY. Destaque GEX, Theta, Vega e contexto macro quando relevante. Formato Markdown. Idioma: Português do Brasil. Use as seguintes seções obrigatórias na ordem abaixo:
-
-## 🌅 Contexto Overnight
-## 📅 Eventos Críticos do Dia
-## 📊 Níveis-Chave para Observar
-## 🎯 Bias Preliminar e Estratégia Sugerida
-
-Seja objetivo e acionável. Máximo 600 tokens.`
-        : `Você é um estrategista sênior de opções americanas. Foco em SWING TRADE 21-45 DTE. Gere um resumo pós-fechamento conciso para operadores de SPY. Inclua GEX/macro quando relevante. Formato Markdown. Idioma: Português do Brasil. Use as seguintes seções obrigatórias na ordem abaixo:
-
-## 📈 Resumo da Sessão
-## 📋 Resultado dos Eventos Macro
-## 🎯 Perspectiva para Amanhã
-
-Seja objetivo e acionável. Máximo 600 tokens.`
+    const systemContent = type === 'pre-market' ? PRE_MARKET_PROMPT : POST_MARKET_PROMPT
 
     let markdown = ''
     const useClaude = Boolean(CONFIG.ANTHROPIC_API_KEY)
@@ -184,7 +194,7 @@ Seja objetivo e acionável. Máximo 600 tokens.`
         const anthropic = new Anthropic({ apiKey: CONFIG.ANTHROPIC_API_KEY })
         const msg = await anthropic.messages.create({
           model: 'claude-3-5-sonnet-20241022',
-          max_tokens: 800,
+          max_tokens: 4096,
           system: systemContent,
           messages: [{ role: 'user', content: userPrompt }],
         })
@@ -205,7 +215,7 @@ Seja objetivo e acionável. Máximo 600 tokens.`
         },
         body: JSON.stringify({
           model: 'gpt-4o',
-          max_tokens: 800,
+          max_tokens: 4096,
           messages: [
             { role: 'system', content: systemContent },
             { role: 'user', content: userPrompt },
@@ -511,25 +521,53 @@ async function getSpyPreMarketPrice(): Promise<number | null> {
 }
 
 // ---------------------------------------------------------------------------
-// Discord webhook
+// Discord webhook (embeds — description limit 4096; we use 4000 and split if needed)
 // ---------------------------------------------------------------------------
+
+/** Splits text at a line break near targetLen so we don't cut mid-sentence. */
+function splitAtLineBreak(text: string, targetLen: number): [string, string] {
+  if (text.length <= targetLen) return [text, '']
+  const margin = 400
+  const start = Math.max(0, targetLen - margin)
+  const end = Math.min(text.length, targetLen + margin)
+  const chunk = text.slice(start, end)
+  const double = chunk.indexOf('\n\n')
+  const single = chunk.indexOf('\n')
+  let splitAt = targetLen
+  if (double !== -1) splitAt = start + double + 2
+  else if (single !== -1) splitAt = start + single + 1
+  return [text.slice(0, splitAt).trim(), text.slice(splitAt).trim()]
+}
 
 async function sendToDiscord(markdown: string, type: 'pre-market' | 'post-close'): Promise<void> {
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL
   if (!webhookUrl) return
 
-  const emoji = type === 'pre-market' ? '🌅' : '🏁'
-  const label = type === 'pre-market' ? 'Pre-Market Briefing SPY' : 'Pós-Fechamento SPY'
   const dateET = getTodayDateET()
+  const title =
+    type === 'pre-market'
+      ? `🌅 Pré-Market Report: SPY — ${dateET}`
+      : `🏁 Pós-Fechamento: SPY — ${dateET}`
 
-  // Discord message limit is 2000 chars; truncate if needed
-  const body = `**${emoji} ${label} — ${dateET}**\n\n${markdown}`
-  const truncated = body.length > 1900 ? body.slice(0, 1900) + '\n\n*(truncado)*' : body
+  const embedColor = type === 'pre-market' ? DISCORD_EMBED_COLOR_PRE : DISCORD_EMBED_COLOR_POST
+  const embeds: Array<{ title: string; description: string; color: number }> = []
+
+  if (markdown.length <= DISCORD_EMBED_DESC_MAX) {
+    embeds.push({ title, description: markdown, color: embedColor })
+  } else {
+    const [part1, part2] = splitAtLineBreak(markdown, DISCORD_EMBED_DESC_MAX)
+    embeds.push({ title, description: part1, color: embedColor })
+    embeds.push({
+      title: `${type === 'pre-market' ? '🌅 Pré-Market' : '🏁 Pós-Fechamento'} (continuação)`,
+      description: part2,
+      color: embedColor,
+    })
+  }
 
   const res = await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: truncated }),
+    body: JSON.stringify({ embeds }),
   })
 
   if (!res.ok) {

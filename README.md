@@ -113,14 +113,14 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 
 ### Pre-Market Briefing Automático
 
-- **Briefing às 9:00 ET** (seg–sex): gerado automaticamente 30min antes da abertura via GPT-4o — sem interação do usuário
+- **Briefing às 9:00 ET** (seg–sex): gerado automaticamente 30min antes da abertura via Claude 3.5 Sonnet (fallback GPT-4o) — sem interação do usuário
 - **Resumo pós-fechamento às 16:15 ET**: avaliação da sessão do dia e perspectiva para amanhã
 - **Cooldown diário via Redis** (`cache:premarket_briefing:YYYY-MM-DD`, TTL 14h): o briefing é gerado uma única vez por dia; reinicializações do servidor restauram o briefing do cache sem nova chamada à API
-- **Conteúdo do briefing pre-market** (4 seções): Contexto Overnight, Eventos Críticos do Dia, Níveis-Chave para Observar, Bias Preliminar e Estratégia Sugerida
-- **Conteúdo do briefing pós-fechamento** (3 seções): Resumo da Sessão, Resultado dos Eventos Macro, Perspectiva para Amanhã
+- **Prompts institucionais** (`preMarketBriefing.ts`): constantes `PRE_MARKET_PROMPT` (Estrategista Quantitativo Chefe — GEX, IV Rank, VIX, Risco Macro, Veredito Sniper) e `POST_MARKET_PROMPT` (Gestor de Risco — Resumo do Fechamento, Auditoria de Portfólio, Ações Exigidas). Regras inegociáveis: zero ruído, concisão extrema (&lt;2.500 caracteres), estrutura obrigatória em bullet points.
+- **IA:** Claude 3.5 Sonnet com `max_tokens: 4096`; fallback para GPT-4o com o mesmo limite. Resposta em Markdown.
 - **Preço pré-market do SPY**: capturado via Tradier timesales (`session_filter=all`, último bar antes de 09:30 ET), com fallback para preço DXFeed disponível
 - **Entrega via SSE** (`event: briefing`): clientes conectados recebem o briefing em tempo real; novos clientes recebem no snapshot inicial de conexão (se ainda válido)
-- **Discord Webhook** (`DISCORD_WEBHOOK_URL`): briefing enviado simultâneamente para o canal da equipe (fire-and-forget; falha não afeta o SSE)
+- **Discord Webhook** (`DISCORD_WEBHOOK_URL`): briefing enviado em **embeds** (texto em `embeds[].description`, limite 4096 caracteres por embed). Cores da paleta: Pré-Market `#00ff88` (65416), Pós-Market `#ffcc00` (16763904). Se o texto ultrapassar 4.000 caracteres, divisão inteligente em dois embeds (quebra em `\n`). Fire-and-forget; falha não afeta o SSE.
 - **Expiração automática**: briefing pre-market expira às 10:30 ET; pós-fechamento às 06:00 ET do dia seguinte
 - Frontend: card destacado `PreMarketBriefing.tsx` com gradiente verde (design system: `#00ff88`), accordion collapse (inicia colapsado com preview da primeira linha), renderização Markdown via `react-markdown`, auto-dismiss às 10:00 ET, botão "×" manual; posicionado acima do `AIPanel`
 
@@ -258,7 +258,7 @@ SPY Dash/
 │       │   ├── technicalIndicatorsPoller.ts # RSI/MACD/BBANDS calculados de priceHistory (local)
 │       │   ├── technicalIndicatorsState.ts  # Snapshot indicadores técnicos em memória
 │       │   ├── alertEngine.ts       # Alertas de preço por usuário (proximity + debounce)
-│       │   ├── preMarketBriefing.ts      # Scheduler 9:00/16:15 ET + GPT-4o briefing + Discord webhook
+│       │   ├── preMarketBriefing.ts      # Scheduler 9:00/16:15 ET + Claude 3.5 Sonnet briefing + Discord embeds
 │       │   ├── portfolioTrackerService.ts # Scheduler 16:00 ET + DTE + Tradier + Claude Gestor Risco + Discord
 │       │   ├── portfolioLifecycleAgent.ts  # Payload + system prompt + chamada Claude (alerts JSON)
 │       │   └── analysisMemory.ts    # Persistência análise IA no Supabase + embeddings pgvector
@@ -492,8 +492,8 @@ Novo cliente SSE conectado:
 | `gnews_headlines` | 10 headlines filtradas | 30min | GNews | — | ✓ |
 | `macro_events` | Calendário econômico US | 1h | Finnhub | — | ✓ |
 | `earnings` | Earnings top 10 SPY | 6h | Tastytrade | ✓ | ✓ |
-| `cache:premarket_briefing:YYYY-MM-DD` | Briefing pre-market GPT-4o (markdown) | 14h | OpenAI | ✓ | ✓ |
-| `cache:postclose_briefing:YYYY-MM-DD` | Resumo pós-fechamento GPT-4o (markdown) | 14h | OpenAI | ✓ | ✓ |
+| `cache:premarket_briefing:YYYY-MM-DD` | Briefing pre-market Claude/GPT-4o (markdown) | 14h | Anthropic/OpenAI | ✓ | ✓ |
+| `cache:postclose_briefing:YYYY-MM-DD` | Resumo pós-fechamento Claude/GPT-4o (markdown) | 14h | Anthropic/OpenAI | ✓ | ✓ |
 | `auth:tt_refresh_token` | Refresh token TT (AES-256-GCM) | 30d | Tastytrade | — | — |
 
 > Payloads >1KB são automaticamente comprimidos com Brotli por `cacheStore.ts` (prefixo `b:` para retrocompatibilidade). Reduz consumo no Redis Cloud free tier (30MB).
