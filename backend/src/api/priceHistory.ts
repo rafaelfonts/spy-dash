@@ -16,20 +16,14 @@ export async function registerPriceHistory(fastify: FastifyInstance): Promise<vo
 
     const mins = Math.min(Math.max(parseInt(minutes, 10) || 60, 1), 1440) // 1–1440 min
     const since = new Date(Date.now() - mins * 60_000).toISOString()
+    const beforeParam = before ?? null
 
-    let query = supabase
-      .from('price_sparkline')
-      .select('minute, price_avg, price_low, price_high')
-      .eq('symbol', symbol.toUpperCase())
-      .gte('minute', since)
-      .order('minute', { ascending: true })
-      .limit(mins)
-
-    if (before) {
-      query = query.lt('minute', before)
-    }
-
-    const { data, error } = await query
+    const { data, error } = await supabase.rpc('get_price_sparkline', {
+      p_symbol: symbol.toUpperCase(),
+      p_since: since,
+      p_limit: mins,
+      p_before: beforeParam,
+    })
 
     if (error) {
       reply.code(500)
