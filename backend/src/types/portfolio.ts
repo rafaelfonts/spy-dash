@@ -41,3 +41,16 @@ export interface GestorRiscoAlert {
 export interface GestorRiscoResponse {
   alerts: GestorRiscoAlert[]
 }
+
+/** Payload for creating a new portfolio position (POST /api/portfolio/positions). */
+export interface InsertPositionPayload {
+  symbol: string
+  strategy_type?: string
+  open_date?: string
+  expiration_date: string
+  short_strike: number
+  long_strike: number
+  short_option_symbol: string
+  long_option_symbol: string
+  credit_received: number
+}

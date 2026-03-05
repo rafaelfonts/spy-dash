@@ -22,6 +22,18 @@ interface PortfolioSnapshot {
   capturedAt: string | null
 }
 
+export interface CreatePositionBody {
+  symbol: string
+  strategy_type?: string
+  open_date?: string
+  expiration_date: string
+  short_strike: number
+  long_strike: number
+  short_option_symbol: string
+  long_option_symbol: string
+  credit_received: number
+}
+
 async function authFetch(url: string, options?: RequestInit): Promise<Response> {
   const { data: { session } } = await supabase.auth.getSession()
   const headers: HeadersInit = {
@@ -70,6 +82,42 @@ export function usePortfolio() {
     }
   }, [])
 
+  const createPosition = useCallback(async (body: CreatePositionBody): Promise<{ ok: boolean; error?: string }> => {
+    setError(null)
+    try {
+      const res = await authFetch(`${getApiBase()}/api/portfolio/positions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = (await res.json()) as { error?: string }
+      if (!res.ok) return { ok: false, error: data.error ?? 'Falha ao cadastrar' }
+      return { ok: true }
+    } catch (e) {
+      const err = (e as Error).message
+      setError(err)
+      return { ok: false, error: err }
+    }
+  }, [])
+
+  const deletePosition = useCallback(async (id: string): Promise<{ ok: boolean; error?: string }> => {
+    setError(null)
+    try {
+      const res = await authFetch(`${getApiBase()}/api/portfolio/positions/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string }
+        return { ok: false, error: data.error ?? 'Falha ao excluir' }
+      }
+      return { ok: true }
+    } catch (e) {
+      const err = (e as Error).message
+      setError(err)
+      return { ok: false, error: err }
+    }
+  }, [])
+
   const analyze = useCallback(async () => {
     setAnalyzing(true)
     setAlerts([])
@@ -98,6 +146,8 @@ export function usePortfolio() {
     loading,
     error,
     refresh,
+    createPosition,
+    deletePosition,
     analyze,
     alerts,
     analyzing,

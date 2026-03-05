@@ -133,7 +133,7 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - **Discord:** alertas enviados via webhook com **embeds** — cor verde (50% lucro) ou amarela (21 DTE); mensagem acionável para Tastytrade (recompra Debit a mercado). Usa o mesmo `DISCORD_WEBHOOK_URL` do briefing.
 - **Snapshot para o dashboard:** o ciclo das 16:00 e o refresh manual gravam o último enriquecimento em memória (`getPortfolioSnapshot` / `refreshPortfolioSnapshot`). Evita chamadas Tradier a cada abertura do painel; cooldown de 60s no refresh.
 - **Endpoints API:** `GET /api/portfolio` (retorna `positions` + `capturedAt` do cache), `POST /api/portfolio/refresh` (re-enriquece com Tradier e atualiza cache), `POST /api/portfolio/analyze` (usa snapshot atual e retorna `alerts` do Claude Gestor de Risco).
-- **Painel no dashboard:** card "Carteira — Put Spreads" (`PortfolioPanel.tsx`) com tabela (estratégia, DTE, lucro %, crédito, custo fechar), badges 50% (verde) e ≤21 DTE (amarelo), botões Atualizar e Analisar carteira; hook `usePortfolio.ts` consome os três endpoints.
+- **Painel no dashboard:** card "Carteira — Put Spreads" (`PortfolioPanel.tsx`) com tabela (estratégia, DTE, lucro %, crédito, custo fechar), badges 50% (verde) e ≤21 DTE (amarelo), botões Cadastrar, Atualizar e Analisar carteira; modal de cadastro (`AddPositionModal.tsx`) com formulário e "Gerar símbolos OCC"; botão Excluir por linha para remover posição (ex.: erro de preenchimento). Hook `usePortfolio.ts` consome os endpoints.
 
 ### Análise de Risco/Retorno Assimétrica (Put Spread)
 - **Objetivo:** avaliar propostas de Bull Put Spread (21–45 DTE) cruzando o payoff matemático com o calendário macroeconômico e a parede GEX, retornando decisão CRO (APPROVED / REJECTED / NEEDS_RESTRUCTURE) e justificativa técnica.
@@ -178,7 +178,7 @@ Painel com cinco fontes de dados exibidas no frontend, agregadas via SSE (earnin
 ### Dashboard UI
 - Três cards principais: **SPY**, **VIX**, **IV Rank** (IV Rank % em destaque; IVx e Percentil como secundários)
 - **GEX Panel:** gráfico de barras por strike (calls/puts), seletor de tabs por DTE (0DTE/1D/7D/21D/45D/ALL), métricas callWall/putWall/flipPoint, regime, P/C Ratio com barra visual, botão "Analisar Fluxo" para análise focada em GEX
-- **Carteira (Put Spreads):** painel com posições OPEN enriquecidas (DTE, lucro %, crédito, custo fechar), badges de regra 50%/21 DTE, botão "Atualizar" (refresh com cooldown 60s) e "Analisar carteira" (recomendações do Gestor de Risco exibidas em lista).
+- **Carteira (Put Spreads):** painel com posições OPEN enriquecidas (DTE, lucro %, crédito, custo fechar), badges de regra 50%/21 DTE; botão "Cadastrar" abre modal com formulário e geração de símbolos OCC; "Atualizar" (refresh com cooldown 60s); "Analisar carteira" (recomendações do Gestor de Risco em lista); "Excluir" por linha para remover posição.
 - **Card "Estratégia Sugerida":** exibe pernas da estratégia (call/put, buy/sell, strike, DTE), badges de DTE/PoP/invalidação e métricas de risco/crédito/theta/breakeven
 - **Cadeia de Opções:** calls e puts ATM ±n strikes com bid/ask + greeks completos **Δ γ θ ν** por strike (calculados via Black-Scholes no backend, exibidos por `OptionChainPanel.tsx`)
 - **Alert Overlay:** notificações de alerta de preço em overlay fixo, animadas com Framer Motion
@@ -221,7 +221,7 @@ SPY Dash/
 │       │   ├── gex.ts          # GET /api/gex (snapshot) + /api/gex/detail (full Redis cache)
 │       │   ├── volumeProfile.ts # GET /api/volume-profile (snapshot) + /detail (full)
 │       │   ├── analysisSearch.ts # POST /api/search — pesquisa semântica pgvector
-│       │   └── portfolio.ts   # GET/POST /api/portfolio + POST /api/portfolio/analyze
+│       │   └── portfolio.ts   # GET/POST /api/portfolio, POST/DELETE /api/portfolio/positions
 │       ├── auth/               # OAuth2 Tastytrade
 │       │   ├── tokenManager.ts # Refresh automático + AES-256-GCM encryption no Redis
 │       │   └── streamerToken.ts
@@ -561,6 +561,8 @@ O backend usa `SUPABASE_SERVICE_ROLE_KEY` (bypassa RLS) para todas as operaçõe
 | `/api/portfolio` | GET | JWT | Snapshot das posições enriquecidas (cache em memória; atualizado no ciclo 16:00 ou em refresh) |
 | `/api/portfolio/refresh` | POST | JWT | Re-enriquece posições OPEN via Tradier e atualiza cache (cooldown 60s) |
 | `/api/portfolio/analyze` | POST | JWT | Retorna recomendações do Claude Gestor de Risco (`alerts`) para as posições atuais |
+| `/api/portfolio/positions` | POST | JWT | Cadastra nova posição OPEN (body: symbol, expiration_date, strikes, option symbols, credit_received) |
+| `/api/portfolio/positions/:id` | DELETE | JWT | Exclui posição (ex.: correção de cadastro com erro) |
 | `/admin/breakers` | GET | JWT | Lista circuit breakers com status e nomes |
 | `/admin/breakers/:name/reset` | POST | JWT | Reseta manualmente um circuit breaker para CLOSED |
 
@@ -821,7 +823,7 @@ npm run preview # Preview do build de produção
 - Persistência de análises no Supabase com embeddings `vector(1536)` (pgvector)
 - Alertas de preço em tempo real (support/resistance/gex_flip) por usuário
 - Rate limiting: 5 análises/hora por usuário (sliding window)
-- **Motor de Gestão de Ciclo de Vida:** scheduler 16:00 ET para Put Spreads (posições OPEN em `portfolio_positions`); DTE + lucro % via Tradier; Claude Gestor de Risco (FECHAR_LUCRO / FECHAR_TEMPO / ROLAR / MANTER); alertas Discord com embeds (verde 50%, amarelo 21 DTE). Painel **Carteira** no dashboard com snapshot em memória, endpoints GET/POST portfolio e POST analyze, e botão "Analisar carteira" com exibição das recomendações do Gestor de Risco.
+- **Motor de Gestão de Ciclo de Vida:** scheduler 16:00 ET para Put Spreads (posições OPEN em `portfolio_positions`); DTE + lucro % via Tradier; Claude Gestor de Risco (FECHAR_LUCRO / FECHAR_TEMPO / ROLAR / MANTER); alertas Discord com embeds (verde 50%, amarelo 21 DTE). Painel **Carteira** no dashboard com snapshot em memória, Cadastrar (modal com gerador OCC), Excluir por linha, endpoints GET/POST portfolio, POST analyze, POST/DELETE positions.
 - **Análise de Risco/Retorno Assimétrica:** `POST /api/analyze/risk-review` — motor de payoff Put Spread (`putSpreadPayoff.ts`) + eventos macro de alto impacto na janela DTE (`getMacroEventsForWindow`) + contexto GEX; Claude 3.5 Sonnet como CRO retorna decisão (APPROVED/REJECTED/NEEDS_RESTRUCTURE) e justificativa técnica.
 
 **Pesquisa Semântica:**

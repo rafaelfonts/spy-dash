@@ -14,6 +14,7 @@ import {
 import type {
   EnrichedPosition,
   GestorRiscoAlert,
+  InsertPositionPayload,
   PortfolioPositionRow,
 } from '../types/portfolio'
 
@@ -85,6 +86,55 @@ async function getOpenPositions(): Promise<PortfolioPositionRow[]> {
     return []
   }
   return (data ?? []) as PortfolioPositionRow[]
+}
+
+/**
+ * Insert a new OPEN position into portfolio_positions.
+ * Used by POST /api/portfolio/positions.
+ */
+export async function insertPortfolioPosition(
+  payload: InsertPositionPayload,
+): Promise<PortfolioPositionRow | null> {
+  const openDate = payload.open_date ?? getTodayDateET()
+  const row = {
+    symbol: payload.symbol.trim(),
+    strategy_type: payload.strategy_type ?? 'PUT_SPREAD',
+    open_date: openDate,
+    expiration_date: payload.expiration_date,
+    short_strike: payload.short_strike,
+    long_strike: payload.long_strike,
+    short_option_symbol: payload.short_option_symbol.trim(),
+    long_option_symbol: payload.long_option_symbol.trim(),
+    credit_received: payload.credit_received,
+    status: 'OPEN' as const,
+  }
+  const { data, error } = await supabase
+    .from('portfolio_positions')
+    .insert(row)
+    .select()
+    .single()
+
+  if (error) {
+    console.error('[PortfolioTracker] Insert error:', error.message)
+    return null
+  }
+  return data as PortfolioPositionRow
+}
+
+/**
+ * Delete a position by id (e.g. wrong entry). Used by DELETE /api/portfolio/positions/:id.
+ */
+export async function deletePortfolioPosition(id: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('portfolio_positions')
+    .delete()
+    .eq('id', id)
+
+  if (error) {
+    console.error('[PortfolioTracker] Delete error:', error.message)
+    return false
+  }
+  return true
 }
 
 async function enrichPositions(rows: PortfolioPositionRow[]): Promise<EnrichedPosition[]> {

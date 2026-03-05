@@ -1,12 +1,27 @@
-import { memo } from 'react'
+import { memo, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { usePortfolio } from '../../hooks/usePortfolio'
 import type { EnrichedPosition } from '../../hooks/usePortfolio'
 import { Skeleton } from '../ui/Skeleton'
+import { AddPositionModal } from './AddPositionModal'
 
-function PositionRow({ p }: { p: EnrichedPosition }) {
+function PositionRow({
+  p,
+  onDelete,
+}: {
+  p: EnrichedPosition
+  onDelete: (id: string) => Promise<{ ok: boolean; error?: string }>
+}) {
+  const [deleting, setDeleting] = useState(false)
   const hit50 = p.profit_percentage >= 50
   const hit21dte = p.dte_current <= 21
+
+  const handleDelete = useCallback(() => {
+    if (!window.confirm('Excluir esta posição? Útil para remover cadastro com erro.')) return
+    setDeleting(true)
+    onDelete(p.id).finally(() => setDeleting(false))
+  }, [p.id, onDelete])
+
   return (
     <tr className="border-b border-border-subtle last:border-0">
       <td className="py-2 pr-3 text-text-primary font-medium text-sm">{p.strategy}</td>
@@ -33,8 +48,18 @@ function PositionRow({ p }: { p: EnrichedPosition }) {
       <td className="py-2 pr-3 text-right text-xs font-num text-text-muted">
         ${p.credit_received.toFixed(2)}
       </td>
-      <td className="py-2 text-right text-xs font-num text-text-muted">
+      <td className="py-2 pr-3 text-right text-xs font-num text-text-muted">
         ${p.current_cost_to_close.toFixed(2)}
+      </td>
+      <td className="py-2 text-right">
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={deleting}
+          className="text-[10px] font-medium text-red-400 hover:text-red-300 disabled:opacity-50"
+        >
+          {deleting ? '…' : 'Excluir'}
+        </button>
       </td>
     </tr>
   )
@@ -47,10 +72,26 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
     loading,
     error,
     refresh,
+    createPosition,
+    deletePosition,
     analyze,
     alerts,
     analyzing,
   } = usePortfolio()
+  const [modalOpen, setModalOpen] = useState(false)
+
+  const handleCreateSuccess = useCallback(() => {
+    refresh()
+  }, [refresh])
+
+  const handleDeletePosition = useCallback(
+    async (id: string) => {
+      const result = await deletePosition(id)
+      if (result.ok) refresh()
+      return result
+    },
+    [deletePosition, refresh],
+  )
 
   const isEmpty = !loading && positions.length === 0
 
@@ -73,6 +114,13 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            className="px-3 py-1.5 rounded text-xs font-medium bg-bg-elevated border border-border-subtle text-text-secondary hover:bg-border-subtle hover:text-text-primary"
+          >
+            Cadastrar
+          </button>
           <button
             type="button"
             onClick={refresh}
@@ -104,7 +152,7 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
         </div>
       ) : isEmpty ? (
         <p className="text-xs text-text-muted py-6 text-center">
-          Nenhuma posição OPEN. Cadastre posições em <code className="text-text-secondary">portfolio_positions</code> no Supabase e clique em Atualizar.
+          Nenhuma posição OPEN. Clique em <strong>Cadastrar</strong> para adicionar uma nova posição ou registre em <code className="text-text-secondary">portfolio_positions</code> no Supabase e clique em Atualizar.
         </p>
       ) : (
         <>
@@ -116,12 +164,13 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
                   <th className="pb-2 pr-3 text-right">DTE</th>
                   <th className="pb-2 pr-3 text-right">Lucro %</th>
                   <th className="pb-2 pr-3 text-right">Crédito</th>
-                  <th className="pb-2 text-right">Custo fechar</th>
+                  <th className="pb-2 pr-3 text-right">Custo fechar</th>
+                  <th className="pb-2 w-16 text-right">Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {positions.map((p) => (
-                  <PositionRow key={p.id} p={p} />
+                  <PositionRow key={p.id} p={p} onDelete={handleDeletePosition} />
                 ))}
               </tbody>
             </table>
@@ -151,6 +200,13 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
           )}
         </>
       )}
+
+      <AddPositionModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onSubmit={createPosition}
+        onSuccess={handleCreateSuccess}
+      />
     </motion.section>
   )
 })
