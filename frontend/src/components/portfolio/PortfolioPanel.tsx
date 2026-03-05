@@ -3,24 +3,22 @@ import { motion } from 'framer-motion'
 import { usePortfolio } from '../../hooks/usePortfolio'
 import type { EnrichedPosition } from '../../hooks/usePortfolio'
 import { Skeleton } from '../ui/Skeleton'
+import { Modal } from '../ui/Modal'
 import { AddPositionModal } from './AddPositionModal'
 
 function PositionRow({
   p,
-  onDelete,
+  onRequestDelete,
 }: {
   p: EnrichedPosition
-  onDelete: (id: string) => Promise<{ ok: boolean; error?: string }>
+  onRequestDelete: (id: string) => void
 }) {
-  const [deleting, setDeleting] = useState(false)
   const hit50 = p.profit_percentage >= 50
   const hit21dte = p.dte_current <= 21
 
-  const handleDelete = useCallback(() => {
-    if (!window.confirm('Excluir esta posição? Útil para remover cadastro com erro.')) return
-    setDeleting(true)
-    onDelete(p.id).finally(() => setDeleting(false))
-  }, [p.id, onDelete])
+  const handleClickExcluir = useCallback(() => {
+    onRequestDelete(p.id)
+  }, [p.id, onRequestDelete])
 
   return (
     <tr className="border-b border-border-subtle last:border-0">
@@ -54,11 +52,10 @@ function PositionRow({
       <td className="py-2 text-right">
         <button
           type="button"
-          onClick={handleDelete}
-          disabled={deleting}
-          className="text-[10px] font-medium text-red-400 hover:text-red-300 disabled:opacity-50"
+          onClick={handleClickExcluir}
+          className="text-[10px] font-medium text-red-400 hover:text-red-300"
         >
-          {deleting ? '…' : 'Excluir'}
+          Excluir
         </button>
       </td>
     </tr>
@@ -79,19 +76,27 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
     analyzing,
   } = usePortfolio()
   const [modalOpen, setModalOpen] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const handleCreateSuccess = useCallback(() => {
     refresh()
   }, [refresh])
 
-  const handleDeletePosition = useCallback(
-    async (id: string) => {
-      const result = await deletePosition(id)
-      if (result.ok) refresh()
-      return result
-    },
-    [deletePosition, refresh],
-  )
+  const handleRequestDelete = useCallback((id: string) => {
+    setDeleteConfirmId(id)
+  }, [])
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteConfirmId) return
+    setDeleting(true)
+    const result = await deletePosition(deleteConfirmId)
+    setDeleting(false)
+    if (result.ok) {
+      setDeleteConfirmId(null)
+      refresh()
+    }
+  }, [deleteConfirmId, deletePosition, refresh])
 
   const isEmpty = !loading && positions.length === 0
 
@@ -170,7 +175,7 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
               </thead>
               <tbody>
                 {positions.map((p) => (
-                  <PositionRow key={p.id} p={p} onDelete={handleDeletePosition} />
+                  <PositionRow key={p.id} p={p} onRequestDelete={handleRequestDelete} />
                 ))}
               </tbody>
             </table>
@@ -207,6 +212,32 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
         onSubmit={createPosition}
         onSuccess={handleCreateSuccess}
       />
+
+      <Modal
+        open={!!deleteConfirmId}
+        onClose={() => !deleting && setDeleteConfirmId(null)}
+        title="Excluir posição"
+      >
+        <p className="text-sm text-text-primary mb-4">Confirmar a exclusão.</p>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setDeleteConfirmId(null)}
+            disabled={deleting}
+            className="px-3 py-1.5 rounded text-xs font-medium bg-bg-elevated border border-border-subtle text-text-secondary hover:bg-border-subtle disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirmDelete}
+            disabled={deleting}
+            className="px-3 py-1.5 rounded text-xs font-medium bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30 disabled:opacity-50"
+          >
+            {deleting ? 'Excluindo…' : 'Confirmar'}
+          </button>
+        </div>
+      </Modal>
     </motion.section>
   )
 })

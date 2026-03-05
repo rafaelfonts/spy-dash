@@ -59,7 +59,7 @@ async function bootstrap(): Promise<void> {
   // CORS
   await fastify.register(cors, {
     origin: CONFIG.CORS_ORIGIN,
-    methods: ['GET', 'POST', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   })
 
   // Parse JSON bodies
