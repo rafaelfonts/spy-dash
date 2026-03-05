@@ -178,7 +178,11 @@ async function enrichPositions(rows: PortfolioPositionRow[]): Promise<EnrichedPo
       ? ((creditReceived - currentDebit) / creditReceived) * 100
       : 0
 
-    const strategy = `Put Spread ${row.short_strike}/${row.long_strike}`
+    const strategyLabel =
+      row.strategy_type === 'CALL_SPREAD'
+        ? `Call Spread ${row.short_strike}/${row.long_strike}`
+        : `Put Spread ${row.short_strike}/${row.long_strike}`
+    const strategy = strategyLabel
     enriched.push({
       id: row.id,
       strategy,
@@ -242,6 +246,16 @@ function setSnapshot(positions: EnrichedPosition[]): void {
 /** Returns last enriched snapshot (from daily cycle or manual refresh). */
 export function getPortfolioSnapshot(): PortfolioSnapshot | null {
   return lastEnrichedSnapshot
+}
+
+/**
+ * Remove a position from the in-memory snapshot by id (e.g. after DELETE).
+ * Keeps GET /api/portfolio in sync without a full refresh.
+ */
+export function removePositionFromSnapshot(id: string): void {
+  if (!lastEnrichedSnapshot) return
+  const filtered = lastEnrichedSnapshot.positions.filter((p) => p.id !== id)
+  lastEnrichedSnapshot = { positions: filtered, capturedAt: lastEnrichedSnapshot.capturedAt }
 }
 
 /**

@@ -27,10 +27,20 @@ export interface CreatePositionBody {
   strategy_type?: string
   open_date?: string
   expiration_date: string
-  short_strike: number
-  long_strike: number
-  short_option_symbol: string
-  long_option_symbol: string
+  /** 2-leg (Put/Call Spread) */
+  short_strike?: number
+  long_strike?: number
+  short_option_symbol?: string
+  long_option_symbol?: string
+  /** Iron Condor: 4 legs */
+  put_short_strike?: number
+  put_long_strike?: number
+  put_short_option_symbol?: string
+  put_long_option_symbol?: string
+  call_short_strike?: number
+  call_long_strike?: number
+  call_short_option_symbol?: string
+  call_long_option_symbol?: string
   credit_received: number
 }
 

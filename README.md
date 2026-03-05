@@ -133,7 +133,7 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - **Discord:** alertas enviados via webhook com **embeds** — cor verde (50% lucro) ou amarela (21 DTE); mensagem acionável para Tastytrade (recompra Debit a mercado). Usa o mesmo `DISCORD_WEBHOOK_URL` do briefing.
 - **Snapshot para o dashboard:** o ciclo das 16:00 e o refresh manual gravam o último enriquecimento em memória (`getPortfolioSnapshot` / `refreshPortfolioSnapshot`). Evita chamadas Tradier a cada abertura do painel; cooldown de 60s no refresh.
 - **Endpoints API:** `GET /api/portfolio` (retorna `positions` + `capturedAt` do cache), `POST /api/portfolio/refresh` (re-enriquece com Tradier e atualiza cache), `POST /api/portfolio/analyze` (usa snapshot atual e retorna `alerts` do Claude Gestor de Risco).
-- **Painel no dashboard:** card "Carteira — Put Spreads" (`PortfolioPanel.tsx`) com tabela (estratégia, DTE, lucro %, crédito, custo fechar), badges 50% (verde) e ≤21 DTE (amarelo), botões Cadastrar, Atualizar e Analisar carteira; modal de cadastro (`AddPositionModal.tsx`) com formulário e "Gerar símbolos OCC"; botão Excluir por linha para remover posição (ex.: erro de preenchimento). Hook `usePortfolio.ts` consome os endpoints.
+- **Painel no dashboard:** card "Carteira — Put Spreads" (`PortfolioPanel.tsx`) com tabela (estratégia, DTE, lucro %, crédito, custo fechar), badges 50% (verde) e ≤21 DTE (amarelo), botões Cadastrar, Atualizar e Analisar carteira; modal de cadastro (`AddPositionModal.tsx`) com **seletor de estratégia** (Put Spread, Call Spread, Iron Condor), formulário 2 pernas ou 4 pernas (Iron Condor gera duas linhas no banco), "Gerar símbolos OCC" (P/C); botão Excluir por linha. Hook `usePortfolio.ts` consome os endpoints.
 
 ### Análise de Risco/Retorno Assimétrica (Put Spread)
 - **Objetivo:** avaliar propostas de Bull Put Spread (21–45 DTE) cruzando o payoff matemático com o calendário macroeconômico e a parede GEX, retornando decisão CRO (APPROVED / REJECTED / NEEDS_RESTRUCTURE) e justificativa técnica.
@@ -178,7 +178,7 @@ Painel com cinco fontes de dados exibidas no frontend, agregadas via SSE (earnin
 ### Dashboard UI
 - Três cards principais: **SPY**, **VIX**, **IV Rank** (IV Rank % em destaque; IVx e Percentil como secundários)
 - **GEX Panel:** gráfico de barras por strike (calls/puts), seletor de tabs por DTE (0DTE/1D/7D/21D/45D/ALL), métricas callWall/putWall/flipPoint, regime, P/C Ratio com barra visual, botão "Analisar Fluxo" para análise focada em GEX
-- **Carteira (Put Spreads):** painel com posições OPEN enriquecidas (DTE, lucro %, crédito, custo fechar), badges de regra 50%/21 DTE; botão "Cadastrar" abre modal com formulário e geração de símbolos OCC; "Atualizar" (refresh com cooldown 60s); "Analisar carteira" (recomendações do Gestor de Risco em lista); "Excluir" por linha para remover posição.
+- **Carteira (Put Spreads):** painel com posições OPEN enriquecidas (DTE, lucro %, crédito, custo fechar), badges de regra 50%/21 DTE; botão "Cadastrar" abre modal com seletor de estratégia (Put Spread, Call Spread, Iron Condor), formulário 2 ou 4 pernas e geração de símbolos OCC; "Atualizar" (refresh com cooldown 60s); "Analisar carteira"; "Excluir" por linha.
 - **Card "Estratégia Sugerida":** exibe pernas da estratégia (call/put, buy/sell, strike, DTE), badges de DTE/PoP/invalidação e métricas de risco/crédito/theta/breakeven
 - **Cadeia de Opções:** calls e puts ATM ±n strikes com bid/ask + greeks completos **Δ γ θ ν** por strike (calculados via Black-Scholes no backend, exibidos por `OptionChainPanel.tsx`)
 - **Alert Overlay:** notificações de alerta de preço em overlay fixo, animadas com Framer Motion
@@ -561,7 +561,7 @@ O backend usa `SUPABASE_SERVICE_ROLE_KEY` (bypassa RLS) para todas as operaçõe
 | `/api/portfolio` | GET | JWT | Snapshot das posições enriquecidas (cache em memória; atualizado no ciclo 16:00 ou em refresh) |
 | `/api/portfolio/refresh` | POST | JWT | Re-enriquece posições OPEN via Tradier e atualiza cache (cooldown 60s) |
 | `/api/portfolio/analyze` | POST | JWT | Retorna recomendações do Claude Gestor de Risco (`alerts`) para as posições atuais |
-| `/api/portfolio/positions` | POST | JWT | Cadastra nova posição OPEN (body: symbol, expiration_date, strikes, option symbols, credit_received) |
+| `/api/portfolio/positions` | POST | JWT | Cadastra posição OPEN: 2 pernas (Put/Call spread) ou Iron Condor (4 pernas → 2 linhas no banco; body com put_*/call_* e credit_received total) |
 | `/api/portfolio/positions/:id` | DELETE | JWT | Exclui posição (ex.: correção de cadastro com erro) |
 | `/admin/breakers` | GET | JWT | Lista circuit breakers com status e nomes |
 | `/admin/breakers/:name/reset` | POST | JWT | Reseta manualmente um circuit breaker para CLOSED |
