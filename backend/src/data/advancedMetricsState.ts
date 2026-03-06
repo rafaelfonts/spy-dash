@@ -28,6 +28,9 @@ export interface AdvancedMetricsPayload {
     minGexStrike: number
     expiration: string      // YYYY-MM-DD
     byStrike: Array<{ strike: number; netGEX: number; callGEX: number; putGEX: number; callOI: number; putOI: number }>
+    vannaExposure: number   // VEX total $M (dealers' delta sensitivity to IV)
+    charmExposure: number   // CEX total $M/day (dealers' delta decay per day)
+    volatilityTrigger: number  // VT: GEX-weighted avg of 3 strikes nearest flipPoint
   } | null
   profile: {
     poc: number             // Point of Control

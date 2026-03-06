@@ -76,6 +76,9 @@ async function tick(): Promise<void> {
       minGexStrike: bucket.minGexStrike,
       expiration: bucket.expiration,
       byStrike: top20,
+      vannaExposure: bucket.totalVannaExposure,
+      charmExposure: bucket.totalCharmExposure,
+      volatilityTrigger: bucket.volatilityTrigger,
     }
   }
 

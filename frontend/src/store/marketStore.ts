@@ -147,6 +147,9 @@ export interface GEXProfile {
   putWall: number
   regime: 'positive' | 'negative'
   calculatedAt: string
+  totalVannaExposure?: number  // VEX $M (dealers' delta sensitivity to IV)
+  totalCharmExposure?: number  // CEX $M/day (dealers' delta decay per day)
+  volatilityTrigger?: number   // VT: GEX-weighted avg of 3 strikes nearest flipPoint
 }
 
 // GEX by expiration bucket (mirrored from backend gexService.GEXByExpiration)

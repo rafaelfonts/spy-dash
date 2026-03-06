@@ -174,6 +174,9 @@ export function useMarketStream(): void {
               minGexStrike: number
               expiration: string
               byStrike?: Array<{ strike: number; netGEX: number; callGEX: number; putGEX: number; callOI: number; putOI: number }>
+              vannaExposure?: number
+              charmExposure?: number
+              volatilityTrigger?: number
             } | null
             putCallRatio: {
               ratio: number
@@ -196,6 +199,9 @@ export function useMarketStream(): void {
               putWall: data.gex.putWall,
               regime: data.gex.regime,
               calculatedAt: data.timestamp,
+              totalVannaExposure: data.gex.vannaExposure,
+              totalCharmExposure: data.gex.charmExposure,
+              volatilityTrigger: data.gex.volatilityTrigger,
             })
           }
           if (data.putCallRatio) {
@@ -223,6 +229,9 @@ export function useMarketStream(): void {
                 putWall: bucket.putWall,
                 regime: bucket.regime,
                 calculatedAt: bucket.calculatedAt,
+                totalVannaExposure: bucket.totalVannaExposure,
+                totalCharmExposure: bucket.totalCharmExposure,
+                volatilityTrigger: bucket.volatilityTrigger,
               }
             }
             setGEXByExpiration({

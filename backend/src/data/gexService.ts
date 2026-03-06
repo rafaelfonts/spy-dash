@@ -40,6 +40,12 @@ export interface DailyGexResult {
   totalVannaExposure: number
   /** Charm Exposure in $M/day (dealers' delta decay per day; negative = selling pressure into expiry) */
   totalCharmExposure: number
+  /** Per-strike VEX/CEX breakdown — top-20 by |vannaExp|. For AI prompt and future charts. */
+  vannaByStrike: Array<{ strike: number; vannaExp: number; charmExp: number }>
+  /** Volatility Trigger — GEX-weighted average price of the 3 strikes nearest the flipPoint.
+   *  SPY > VT → long gamma regime (dealers suppress vol; favorable for premium selling).
+   *  SPY < VT → short gamma regime (dealers amplify moves; increase margin or veto). */
+  volatilityTrigger: number
 }
 
 const CACHE_TTL_MS = 5 * 60_000  // 5 minutes
@@ -47,6 +53,26 @@ const CACHE_TTL_MS = 5 * 60_000  // 5 minutes
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Volatility Trigger — GEX-weighted average of the 3 strikes closest to refPrice.
+ * refPrice: flipPoint ?? zeroGammaLevel ?? spotPrice.
+ * Falls back to refPrice if byStrike is empty or all weights are zero.
+ */
+function calcVolatilityTrigger(
+  byStrike: Array<{ strike: number; netGEX: number }>,
+  refPrice: number,
+): number {
+  const candidates = byStrike
+    .filter((s) => Math.abs(s.netGEX) > 0)
+    .sort((a, b) => Math.abs(a.strike - refPrice) - Math.abs(b.strike - refPrice))
+    .slice(0, 3)
+  if (candidates.length === 0) return refPrice
+  const totalWeight = candidates.reduce((sum, s) => sum + Math.abs(s.netGEX), 0)
+  if (totalWeight === 0) return refPrice
+  const vt = candidates.reduce((sum, s) => sum + s.strike * Math.abs(s.netGEX), 0) / totalWeight
+  return Math.round(vt * 100) / 100
+}
 
 /** Read Fed Funds Rate from the FRED macro snapshot. Fallback: 5.3%. */
 function getRiskFreeRate(): number {
@@ -184,6 +210,7 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
   // 8. Vanna & Charm Exposure (same sign convention as GEX: call +1, put -1)
   let totalVEX = 0
   let totalCEX = 0
+  const vannaMap = new Map<number, { vannaExp: number; charmExp: number }>()
   for (const c of zglContracts) {
     const vanna = calcVanna(spotPrice, c.strike, c.T, r, c.iv)
     const charm = calcCharm(spotPrice, c.strike, c.T, r, c.iv)
@@ -191,9 +218,25 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
     const notional = c.oi * 100 * spotPrice
     totalVEX += sign * notional * vanna
     totalCEX += sign * notional * (charm / 365)  // charm per day
+    // per-strike accumulation
+    const existing = vannaMap.get(c.strike) ?? { vannaExp: 0, charmExp: 0 }
+    existing.vannaExp += sign * notional * vanna / 1_000_000
+    existing.charmExp += sign * notional * (charm / 365) / 1_000_000
+    vannaMap.set(c.strike, existing)
   }
   const totalVannaExposure = Math.round((totalVEX / 1_000_000) * 100) / 100   // $M
   const totalCharmExposure = Math.round((totalCEX / 1_000_000) * 100) / 100   // $M/day
+  const vannaByStrike = Array.from(vannaMap.entries())
+    .map(([strike, v]) => ({
+      strike,
+      vannaExp: Math.round(v.vannaExp * 100) / 100,
+      charmExp: Math.round(v.charmExp * 100) / 100,
+    }))
+    .sort((a, b) => Math.abs(b.vannaExp) - Math.abs(a.vannaExp))
+    .slice(0, 20)
+
+  const vtRefPrice = profile.flipPoint ?? profile.zeroGammaLevel ?? spotPrice
+  const volatilityTrigger = calcVolatilityTrigger(profile.byStrike, vtRefPrice)
 
   const result: DailyGexResult = {
     totalNetGamma: profile.totalGEX,
@@ -209,6 +252,8 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
     calculatedAt: profile.calculatedAt,
     totalVannaExposure,
     totalCharmExposure,
+    vannaByStrike,
+    volatilityTrigger,
   }
 
   console.log(
@@ -318,6 +363,7 @@ async function calculateGexForExpiration(
 
   let totalVEX = 0
   let totalCEX = 0
+  const vannaMapExp = new Map<number, { vannaExp: number; charmExp: number }>()
   for (const c of zglContracts) {
     const vanna = calcVanna(spotPrice, c.strike, c.T, r, c.iv)
     const charm = calcCharm(spotPrice, c.strike, c.T, r, c.iv)
@@ -325,9 +371,24 @@ async function calculateGexForExpiration(
     const notional = c.oi * 100 * spotPrice
     totalVEX += sign * notional * vanna
     totalCEX += sign * notional * (charm / 365)
+    const existing = vannaMapExp.get(c.strike) ?? { vannaExp: 0, charmExp: 0 }
+    existing.vannaExp += sign * notional * vanna / 1_000_000
+    existing.charmExp += sign * notional * (charm / 365) / 1_000_000
+    vannaMapExp.set(c.strike, existing)
   }
   const totalVannaExposure = Math.round((totalVEX / 1_000_000) * 100) / 100
   const totalCharmExposure = Math.round((totalCEX / 1_000_000) * 100) / 100
+  const vannaByStrikeExp = Array.from(vannaMapExp.entries())
+    .map(([strike, v]) => ({
+      strike,
+      vannaExp: Math.round(v.vannaExp * 100) / 100,
+      charmExp: Math.round(v.charmExp * 100) / 100,
+    }))
+    .sort((a, b) => Math.abs(b.vannaExp) - Math.abs(a.vannaExp))
+    .slice(0, 20)
+
+  const vtRefPriceExp = profile.flipPoint ?? profile.zeroGammaLevel ?? spotPrice
+  const volatilityTriggerExp = calcVolatilityTrigger(profile.byStrike, vtRefPriceExp)
 
   const result: DailyGexResult = {
     totalNetGamma: profile.totalGEX,
@@ -343,6 +404,8 @@ async function calculateGexForExpiration(
     calculatedAt: profile.calculatedAt,
     totalVannaExposure,
     totalCharmExposure,
+    vannaByStrike: vannaByStrikeExp,
+    volatilityTrigger: volatilityTriggerExp,
   }
 
   await cacheSet(cacheKey, result, CACHE_TTL_MS, 'gex-service')
@@ -431,8 +494,28 @@ export async function calculateAllExpirationsGex(symbol: string): Promise<GEXByE
     if (hasOI) {
       const zgl = aggZgl.length > 0 ? await findZeroGammaLevel(aggZgl, spotPrice, r) : null
       const profile = calculateGEX(strikeInputs, spotPrice, zgl)
-      const totalVannaExposure = buckets.reduce((sum, b) => sum + (b.totalVannaExposure ?? 0), 0)
-      const totalCharmExposure = buckets.reduce((sum, b) => sum + (b.totalCharmExposure ?? 0), 0)
+      const totalVannaExposure = Math.round(buckets.reduce((sum, b) => sum + (b.totalVannaExposure ?? 0), 0) * 100) / 100
+      const totalCharmExposure = Math.round(buckets.reduce((sum, b) => sum + (b.totalCharmExposure ?? 0), 0) * 100) / 100
+      // Merge per-strike vannaByStrike across buckets (sum same strikes from different expirations)
+      const aggVannaMap = new Map<number, { vannaExp: number; charmExp: number }>()
+      for (const b of buckets) {
+        for (const v of (b.vannaByStrike ?? [])) {
+          const ex = aggVannaMap.get(v.strike) ?? { vannaExp: 0, charmExp: 0 }
+          ex.vannaExp += v.vannaExp
+          ex.charmExp += v.charmExp
+          aggVannaMap.set(v.strike, ex)
+        }
+      }
+      const vannaByStrikeAll = Array.from(aggVannaMap.entries())
+        .map(([strike, v]) => ({
+          strike,
+          vannaExp: Math.round(v.vannaExp * 100) / 100,
+          charmExp: Math.round(v.charmExp * 100) / 100,
+        }))
+        .sort((a, b) => Math.abs(b.vannaExp) - Math.abs(a.vannaExp))
+        .slice(0, 20)
+      const vtRefAll = profile.flipPoint ?? profile.zeroGammaLevel ?? spotPrice
+      const volatilityTriggerAll = calcVolatilityTrigger(profile.byStrike, vtRefAll)
       all = {
         totalNetGamma: profile.totalGEX,
         callWall: profile.callWall,
@@ -447,6 +530,8 @@ export async function calculateAllExpirationsGex(symbol: string): Promise<GEXByE
         calculatedAt: profile.calculatedAt,
         totalVannaExposure,
         totalCharmExposure,
+        vannaByStrike: vannaByStrikeAll,
+        volatilityTrigger: volatilityTriggerAll,
       }
     }
   }

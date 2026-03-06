@@ -223,6 +223,49 @@ function buildGexMultiDTEBlock(gex: GEXByExpiration): string {
     block += `\nCall Wall / Put Wall por DTE:\n${wallLines.join('\n')}\n`
   }
 
+  // VEX/CEX summary — use ALL bucket if available, otherwise first non-null
+  const refBucket = gex.all ?? gex.dte0 ?? gex.dte1 ?? gex.dte7 ?? gex.dte21 ?? gex.dte45
+  if (refBucket) {
+    const vex = refBucket.totalVannaExposure ?? 0
+    const cex = refBucket.totalCharmExposure ?? 0
+    const vexSign = vex >= 0 ? '+' : ''
+    const cexSign = cex >= 0 ? '+' : ''
+    const vexInterp = vex > 2
+      ? 'POSITIVO → IV comprimindo = dealers de-hedge comprando spot (viés altista estrutural)'
+      : vex < -2
+      ? 'NEGATIVO → IV subindo = dealers vendendo spot (amplificador bearish)'
+      : 'neutro'
+    const cexInterp = Math.abs(cex) > 1
+      ? `SIGNIFICATIVO → Power Hour (14:30–16:00 ET) pode ter drift direcional mecânico`
+      : 'neutro'
+    block += `\nVEX (Vanna): ${vexSign}$${vex.toFixed(1)}M → ${vexInterp}\n`
+    block += `CEX (Charm): ${cexSign}$${cex.toFixed(1)}M/dia → ${cexInterp}\n`
+  }
+
+  // Volatility Trigger + ZGL per DTE
+  const spyNow = marketState.spy.last ?? 0
+  const vtLines: string[] = []
+  for (const key of buckets) {
+    const d = gex[key]!
+    const label = LABELS[key]
+    const vt = d.volatilityTrigger
+    if (vt == null) continue
+    const zgl = d.zeroGammaLevel
+    const vtRelation = spyNow > 0 && vt > 0
+      ? (spyNow > vt
+        ? `ACIMA ✅ (+${((spyNow - vt) / vt * 100).toFixed(2)}%)`
+        : `ABAIXO ⚠️ (${((spyNow - vt) / vt * 100).toFixed(2)}%)`)
+      : '?'
+    const zglStr = zgl != null
+      ? `$${zgl.toFixed(2)} (dist ${((spyNow - zgl) / (zgl || 1) * 100).toFixed(2)}%)`
+      : 'N/A'
+    vtLines.push(`- ${label}: VT=$${vt.toFixed(2)} | SPY ${vtRelation} | ZGL=${zglStr}`)
+  }
+  if (vtLines.length > 0) {
+    block += `\nVolatility Trigger / Zero Gamma Level por DTE:\n${vtLines.join('\n')}\n`
+    block += 'SPY acima do VT → long gamma (dealers suprimem vol). SPY abaixo do VT → short gamma (dealers amplificam).\n'
+  }
+
   return block
 }
 
@@ -288,6 +331,25 @@ function buildRegimeVetoBlock(
   )
   if (earningsNext2.length > 0) {
     lines.push(`[!] Earnings componentes SPY nos próximos 2 dias: ${earningsNext2.slice(0, 4).map((e) => e.symbol).join(', ')} — cautela`)
+  }
+
+  // Compound VEX + VIX veto (not counted in score — additional hard veto)
+  const vexAll = gexByExpiration?.all?.totalVannaExposure ?? gexByExpiration?.dte0?.totalVannaExposure ?? null
+  const vixLevel = snapshot?.vix?.last ?? marketState.vix.last ?? null
+  if (vexAll !== null && vixLevel !== null && vexAll < -5 && vixLevel > 20) {
+    lines.push(`[!] VETO COMPOSTO: VEX=${vexAll.toFixed(1)}$M (NEGATIVO) + VIX=${vixLevel.toFixed(1)} (>20) — ambiente de amplificação bearish. VETO de Put Spread curto.`)
+  }
+
+  // Volatility Trigger veto + transition zone warning
+  const vtAll = gexByExpiration?.all?.volatilityTrigger ?? gexByExpiration?.dte0?.volatilityTrigger ?? null
+  const spyLastVT = snapshot?.spy?.last ?? marketState.spy.last ?? null
+  if (vtAll !== null && spyLastVT !== null) {
+    const distPct = (spyLastVT - vtAll) / vtAll * 100
+    if (spyLastVT < vtAll && (vixLevel ?? 0) > 18) {
+      lines.push(`[!] VETO VT: SPY=$${spyLastVT.toFixed(2)} < VT=$${vtAll.toFixed(2)} com VIX=${(vixLevel as number).toFixed(1)} (>18) — short gamma environment. Dealers amplificam movimentos. VETO de Put Spread curto.`)
+    } else if (Math.abs(distPct) < 0.3) {
+      lines.push(`[~] ZONA DE TRANSIÇÃO: SPY a ${Math.abs(distPct).toFixed(2)}% do VT=$${vtAll.toFixed(2)} — aguardar confirmação de direção antes de abrir posição.`)
+    }
   }
 
   lines.push(`Score parcial: ${passCount}/${totalChecks} condições favoráveis`)
@@ -604,7 +666,6 @@ function buildPrompt(
   ivByExpirationBlock?: string | null,
   popReferenceBlock?: string | null,
   regimeVetoBlock?: string | null,
-  vannaCharmBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -646,11 +707,6 @@ function buildPrompt(
   // --- GEX (Gamma Exposure) ---
   if (gexMultiBlock) {
     prompt += gexMultiBlock
-  }
-
-  // --- Vanna/Charm Exposure ---
-  if (vannaCharmBlock) {
-    prompt += vannaCharmBlock
   }
 
   // --- Put/Call Ratio ---
@@ -1042,6 +1098,10 @@ const STATIC_SYSTEM_PROMPT =
   'DTEs médios (14-30D): válidos em contango + IV Rank >30% + cone bem definido. ' +
   'DTEs longos (45-60D): válidos em estrutura de médio prazo sólida + IV barata. ' +
   'Vanna Exposure (VEX): dDelta/dIV agregado dos dealers. VEX positivo alto: quando IV comprime, dealers de-hedge comprando spot → suporte bullish. VEX negativo: IV subindo força venda de spot. Charm Exposure (CEX): dDelta/dTime. CEX negativo alto próximo de expiração: pressão de venda intraday. Use VEX/CEX como confirmação, não como sinal primário. ' +
+  'VEX POSITIVO com IV em queda: contexto favorável para Put Spread (perna curta mais segura), NÃO é sinal de entrada LONG. ' +
+  'VEX NEGATIVO com VIX > 20: VETO de Put Spread curto — dealers amplificam queda mecanicamente. ' +
+  'CEX |>$1M/dia|: Power Hour (14:30–16:00 ET) pode ter drift direcional mecânico — não confundir com tendência real. ' +
+  'Vanna/Charm são forças mecânicas de hedge de dealers, não sinais de entrada independentes — sempre confirmar com GEX regime e técnicos. ' +
   'GEX por DTE: use o bucket (0/1/7/21/45/ALL) que corresponda ao DTE escolhido; flip point e max gamma desse DTE são os níveis de âncora. ' +
   'Expected Move (soma Call ATM + Put ATM = straddle) por vencimento indica o movimento esperado em 1 desvio padrão (~68% de probabilidade). ' +
   'Para Put Spreads, a perna vendida deve ficar fora do cone (strike short abaixo de SPY − Expected Move do vencimento escolhido). ' +
@@ -1158,7 +1218,6 @@ export async function runAnalysisForPayload(
   const ivByExpirationBlock = buildIVByExpirationBlock()
   const popReferenceBlock = buildPOPReferenceBlock(snapshot?.spy?.last ?? 0)
   const regimeVetoBlock = buildRegimeVetoBlock(snapshot, confidence, advancedSnapshot?.gexByExpiration ?? null)
-  const vannaCharmBlock = buildVannaCharmBlock(advancedSnapshot?.gexByExpiration ?? null)
 
   const userContent = buildPrompt(
     snapshot,
@@ -1174,7 +1233,6 @@ export async function runAnalysisForPayload(
     ivByExpirationBlock,
     popReferenceBlock,
     regimeVetoBlock,
-    vannaCharmBlock,
   )
 
   const marketStatusNote = isMarketOpen()
@@ -1409,7 +1467,6 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const ivByExpirationBlock = buildIVByExpirationBlock()
     const popReferenceBlock = buildPOPReferenceBlock(snapshot?.spy?.last ?? 0)
     const regimeVetoBlock = buildRegimeVetoBlock(snapshot, confidence, advancedSnapshot?.gexByExpiration ?? null)
-    const vannaCharmBlock = buildVannaCharmBlock(advancedSnapshot?.gexByExpiration ?? null)
 
     const userContent = buildPrompt(
       snapshot,
@@ -1425,7 +1482,6 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       ivByExpirationBlock,
       popReferenceBlock,
       regimeVetoBlock,
-      vannaCharmBlock,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     if (!CONFIG.ANTHROPIC_API_KEY) {

@@ -6,7 +6,7 @@ Dashboard de trading em tempo real focado em opções de SPY, com streaming de d
 
 ## Visão Geral
 
-SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análise GPT-4o e um feed de contexto completo (earnings, dados macro, eventos econômicos, headlines, sentimento de mercado, GEX, Volume Profile, VIX Term Structure e indicadores técnicos), entregando um painel profissional para operadores de opções que precisam de velocidade e contexto ao mesmo tempo.
+SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com **análise por IA dual** (Claude Sonnet 4.6 como agente principal de decisão quantitativa; OpenAI como suporte financeiro — gpt-4o-mini para pré-processamento de notícias/sentimento e modelos de embedding para RAG; fallback GPT-4o em alta disponibilidade) e um feed de contexto completo (earnings, dados macro, eventos econômicos, headlines, sentimento de mercado, GEX, Volume Profile, VIX Term Structure e indicadores técnicos), entregando um painel profissional para operadores de opções que precisam de velocidade e contexto ao mesmo tempo.
 
 **Stack:** React 18 + Vite no frontend, Fastify + TypeScript no backend, comunicação via Server-Sent Events (SSE) para dados macro/alertas e preço SPY/VIX em tempo real. Cache de dados de mercado em Redis (ioredis) com compressão Brotli automática, persistência de usuário e autenticação via Supabase.
 
@@ -31,10 +31,11 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - Batching de eventos `newsfeed` em janela de 500ms (`SSEBatcher`) para evitar flood de mensagens
 - Endpoint `/health` com idade do dado mais recente
 
-### Análise por IA (GPT-4o)
+### Análise por IA (Claude Sonnet 4.6 / fallback GPT-4o)
+- **Agente principal:** Claude Sonnet 4.6 (configurável via `ANTHROPIC_MODEL`); em caso de falha ou circuit breaker aberto, fallback automático para GPT-4o (ver seção *Arquitetura Dual-AI*).
 - **Prompt base limpo:** apenas dados de mercado essenciais (SPY, VIX, IV Rank, option chain, GEX, Volume Profile, VIX Term Structure, indicadores técnicos, memória de análises)
 - **Tool Calling condicional (`fetch_24h_context`):** o modelo decide autonomamente quando buscar o contexto macro (Fear & Greed, VIX term structure, FRED, BLS, earnings, eventos econômicos). Chamado apenas quando VIX > 20, P/C ratio atípico, RSI extremo + crossover MACD, ou o usuário fizer perguntas macro — evita enviar ~3KB de dados desnecessários em análises de rotina
-- **Structured Outputs nativo via `json_schema`:** o modelo retorna diretamente o objeto estruturado em uma única chamada GPT-4o: `bias`, `confidence`, `timeframe`, `key_levels`, `suggested_strategy` (com pernas call/put, strike, DTE), `catalysts`, `risk_factors`; campos de estratégia: `recommended_dte`, `pop_estimate`, `supporting_gex_dte`, `invalidation_level`, `expected_credit`, `theta_per_day`
+- **Structured Outputs:** o agente principal retorna o texto; a extração estruturada é feita via gpt-4o-mini (`json_schema`): `bias`, `confidence`, `timeframe`, `key_levels`, `suggested_strategy` (com pernas call/put, strike, DTE), `catalysts`, `risk_factors`; campos de estratégia: `recommended_dte`, `pop_estimate`, `supporting_gex_dte`, `invalidation_level`, `expected_credit`, `theta_per_day`
 - **Histórico intraday no prompt (`buildPriceHistoryBlock`):** sessão OHLC, range %, curva amostrada a cada ~15min, tendência 1h, e estimativa de HV intraday (desvio-padrão de log-returns × √(252×390))
 - **VWAP no bloco técnico:** `buildTechBlock()` inclui `VWAP: $X.XX | SPY ACIMA/ABAIXO do VWAP em Y.YY%` quando disponível (capturado da última barra Tradier timesales via `getLastVwap()`)
 - **Ratio IV/HV(30d):** `buildPrompt()` calcula `ivRank.value / hv30` e sinaliza `[VOL CARA]` quando ratio > 1.3 — dado direto da resposta Tastytrade `hv-30-day`
@@ -45,6 +46,38 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - Resposta em streaming via SSE — texto aparece em tempo real (max 1200 tokens)
 - Renderização em Markdown com headers, listas e destaques
 - Idioma padrão: Português
+
+### Arquitetura Dual-AI (O Cérebro)
+
+- **Agente principal de decisão quantitativa:** Claude Sonnet 4.6 (Anthropic), configurável via `ANTHROPIC_MODEL` (default `claude-sonnet-4-6`). Responsável pela análise principal (`POST /api/analyze`), risk-review CRO (`POST /api/analyze/risk-review`), Gestor de Risco do portfólio (`portfolioLifecycleAgent.ts`) e briefings pré/pós-mercado (`preMarketBriefing.ts`).
+- **OpenAI como suporte financeiro:**
+  - **gpt-4o-mini:** pré-processamento de headlines (sentiment + summary em `newsAggregator.ts`), extração de Structured Output após o stream (`extractStructuredOutput`), resumo compacto para memória (`compact_summary` em `analysisMemory.ts`), perguntas de follow-up (`POST /api/chat-followup`), análise focada em GEX (`POST /api/analyze/gex-flow`).
+  - **text-embedding-3-small:** embeddings 1536 dims para RAG e pesquisa semântica (`POST /api/search`).
+  - **gpt-4o:** fallback quando a API Claude falha ou o circuit breaker está aberto.
+- **Alta disponibilidade (Circuit Breaker Opossum):** `circuitBreaker.ts` encapsula a chamada Claude (`claudeAnalysisBreaker`). Em falha ou timeout (65s), o fallback retorna `null` e o fluxo roteia automaticamente para GPT-4o. Reset após 120s em half-open. Logs `[FALLBACK TRIGGERED]` e evento SSE `done` com `provider: "Anthropic"` ou `"OpenAI Fallback"`.
+
+```mermaid
+flowchart TB
+  subgraph Client [Cliente]
+    A[POST /api/analyze]
+  end
+  subgraph Backend [Backend]
+    B{ANTHROPIC_API_KEY?}
+    C[claudeAnalysisBreaker.fire]
+    D[Claude Sonnet 4.6]
+    E{Resultado}
+    F[GPT-4o Fallback]
+    G[Stream Response]
+  end
+  A --> B
+  B -->|Sim| C
+  B -->|Não| F
+  C --> D
+  D --> E
+  E -->|Sucesso| G
+  E -->|Falha/null| F
+  F --> G
+```
 
 ### Memória de Análise IA
 - Ao fim de cada análise, `analysisMemory.ts` salva no Supabase (`ai_analyses`):
@@ -71,13 +104,24 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - Filtro por `user_id` — cada usuário vê apenas as suas próprias análises
 - Migration `20260228000001_pgvector_search.sql`: ativa extensão `vector`, migra coluna `embedding TEXT → vector(1536)`, cria índice HNSW e função RPC
 
-### Expected Move (Cone de Probabilidade) — Put Spreads 21–45 DTE
-- **Cálculo:** soma do preço da Call ATM e da Put ATM (straddle) por vencimento, a partir da cadeia Tradier para 21 e 45 DTE
-- **Serviço:** `expectedMoveService.ts` — resolve vencimentos 21/45 DTE, obtém cadeia Tradier, define strike ATM (menor `|strike - spot|`), Expected Move = call_mid + put_mid (mid = (bid+ask)/2, fallback `last`)
-- **Estado:** `expectedMoveState.ts` — snapshot em memória `byExpiry` + `capturedAt`; consumido pelo prompt da IA
-- **Poller:** `expectedMovePoller.ts` — primeiro tick após 10s, depois 60s (mercado aberto) / 5min (fora); atualiza snapshot sem zerar em falha
-- **Integração IA:** bloco **Expected Move (1σ)** no prompt com cone (SPY − EM a SPY + EM) por vencimento; instrução no system prompt para **alertar criticamente** se a perna vendida do Put Spread estiver dentro do cone (risco mal dimensionado)
-- Foco em operações estruturais (trava de alta com puts): a perna vendida deve ficar fora do cone de 1 desvio padrão (~68% probabilidade)
+### Motor Analítico e Term Structure Scanner
+
+**Varredura dinâmica 0–60 DTE (sem trava fixa de DTE):** o sistema escaneia a cadeia de opções dinamicamente em todo o intervalo 0–60 DTE em busca de distorções de volatilidade e oportunidades. Não há DTE fixo obrigatório; a IA avalia todos os vencimentos disponíveis (até 12 expirações) com score `iv_efficiency` por expiração.
+
+**Expected Move (Cone de Probabilidade):**
+- **Cálculo:** soma do preço da Call ATM e da Put ATM (straddle) por vencimento, a partir da cadeia Tradier.
+- **Serviço:** `expectedMoveService.ts` — `getExpectedMoveForSwingExpirations()` para 21/45 DTE; `getExpectedMoveAllExpirations()` para **todas as expirações 0–60 DTE** com `iv_efficiency` (EM / (spot × √(dte/365))) por vencimento.
+- **Estado:** `expectedMoveState.ts` — snapshot em memória `byExpiry` + `capturedAt`; consumido pelo prompt da IA.
+- **Poller:** `expectedMovePoller.ts` — primeiro tick após 10s, depois 60s (mercado aberto) / 5min (fora); atualiza snapshot via `getExpectedMoveAllExpirations()` sem zerar em falha.
+- **Integração IA:** bloco **Expected Move (1σ)** no prompt com cone (SPY − EM a SPY + EM) por vencimento; instrução no system prompt para **alertar criticamente** se a perna vendida do Put Spread estiver dentro do cone (risco mal dimensionado).
+- Foco em operações estruturais (trava de alta com puts): a perna vendida deve ficar fora do cone de 1 desvio padrão (~68% probabilidade).
+
+**"Cash is a Position" (Rejeição de Trade):** a IA é instruída a vetar operações matemáticas ruins com base em regras quantitativas embutidas no system prompt (Checklist de Veto Quantitativo): **VETO** se IV Rank &lt; 15%, IV/HV30 &lt; 0.8, GEX negativo em todos os DTEs, VIX spike &gt; 20%, dados críticos com Confiança BAIXA, ou earnings de componentes SPY nos próximos 2 dias. Dois ou mais vetos → `trade_signal = 'avoid'`; um veto → `trade_signal = 'wait'`. A frase *"Não operar é uma posição legítima e muitas vezes a MELHOR decisão"* está explícita no prompt. Put Spread exige PoP ≥ 65–70% na perna vendida; **vetar** se abaixo. Spread de bid/ask e risco/retorno assimétrico são considerados no CRO (`POST /api/analyze/risk-review`).
+
+**Vetos de greeks de segunda ordem (`buildRegimeVetoBlock()`):**
+- **VETO VEX+VIX:** VEX < −$5M e VIX > 20 → dealers com delta negativo crescente e IV escalando; Put Spread exposto a aceleração bearish
+- **VETO VT+VIX:** SPY < VT e VIX > 18 → short gamma environment; amplificação de moves bearish provável
+- **Zona de Transição VT:** |SPY − VT| / VT < 0.3% → aguardar confirmação de direção antes de abrir posição
 
 ### GEX + Volume Profile
 - **GEX (Gamma Exposure):** calculado a partir de option data real da Tradier (`tradierOptionData.ts` + `gexCalculator.ts`)
@@ -85,6 +129,10 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
   - **Multi-DTE:** GEX por bucket de expiração (0DTE, 1D, 7D, 21D, 45D, ALL) — `calculateAllExpirationsGex()` em `gexService.ts`; cache por expiração (`gex:exp:{symbol}:{exp}`, TTL 5min); publicado como `gexByExpiration` no evento SSE `advanced-metrics`
   - Métricas por bucket: `total`, `callWall`, `putWall`, `flipPoint`, `regime`, `maxGexStrike`; formato tabular injetado no prompt IA via `buildGexMultiDTEBlock()` (framework de 4 camadas: regime vol → GEX DTE → strike PoP → técnico)
   - `byStrike`: top 20 strikes por `|netGEX|` enviados via SSE com `{ strike, netGEX, callGEX, putGEX, callOI, putOI }`
+  - **Vanna Exposure (VEX):** `Σ(sign × OI × 100 × S × ∂Δ/∂σ) / 1M` — sensibilidade delta a variações de IV. VEX positivo (IV em queda) = contexto favorável para Put Spread; VEX negativo + VIX > 20 = **VETO** automático no `buildRegimeVetoBlock()`. Calculado por strike via `calcVanna()` em `blackScholes.ts`; campo `totalVannaExposure` no `DailyGexResult`; propagado no payload SSE `advanced-metrics.gex.vannaExposure`
+  - **Charm Exposure (CEX):** `Σ(sign × OI × 100 × S × ∂Δ/∂t / 365) / 1M` — decaimento delta por dia de calendário. |CEX| > $1M/dia indica força mecânica de re-hedge de dealers, especialmente relevante na Power Hour (14:30–16:00 ET). Campo `totalCharmExposure` no `DailyGexResult`; propagado como `advanced-metrics.gex.charmExposure`
+  - **Volatility Trigger (VT):** média ponderada por `|netGEX|` dos 3 strikes mais próximos do `flipPoint` — `Σ(strike_i × |netGEX_i|) / Σ|netGEX_i|`. SPY > VT = regime long gamma (favorável a premium selling); SPY < VT = curto gamma (amplificação bearish). Calculado por `calcVolatilityTrigger()` em `gexService.ts`; disponível em todos os buckets DTE e no payload SSE como `gex.volatilityTrigger`
+  - **Zero Gamma Level (ZGL):** raiz exata onde o GEX total cruza zero, calculado via bisecção Black-Scholes em `gexCalculator.ts::findZeroGammaLevel()`; distinto do `flipPoint` (mudança discreta de sinal por strike acumulado)
 - **Análise focada em GEX:** `POST /api/analyze/gex-flow` — endpoint SSE em streaming com gpt-4o-mini para análise da estrutura de GEX por DTE (acionado pelo botão "Analisar Fluxo" no GEXPanel)
 - **Volume Profile:** calculado a partir de time-sales intraday do Tradier
   - POC (Point of Control) — strike com maior volume
@@ -93,7 +141,7 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - **Put/Call Ratio:** volume de puts vs. calls, ratio numérico, label (bullish/neutral/bearish), expiração
 - Poller independente (`advancedMetricsPoller.ts`) — não depende do token Tastytrade, começa imediatamente no startup
 - Cache SSE: ao conectar, cliente recebe snapshot imediato do estado atual
-- Painel `GEXPanel.tsx` no frontend com gráfico de barras por strike (calls verde, puts vermelho)
+- Painel `GEXPanel.tsx` no frontend com gráfico de barras por strike (calls verde, puts vermelho); barra do `maxGammaStrike` destacada em laranja via Recharts `Cell`; linhas de referência verticais: preço atual (branco), Flip Point (amarelo), Put Wall (roxo), Call Wall (azul), Max Gamma (ciano), **ZGL** (laranja pontilhado), **VT** (rosa pontilhado); badges VT (verde se SPY > VT, vermelho se SPY < VT, com % distância) e ZGL (distância % do SPY)
 
 ### VIX Term Structure
 - Inferida a partir da option chain SPY (não requer API externa adicional)
@@ -123,11 +171,11 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 
 ### Pre-Market Briefing Automático
 
-- **Briefing às 9:00 ET** (seg–sex): gerado automaticamente 30min antes da abertura via Claude 3.5 Sonnet (fallback GPT-4o) — sem interação do usuário
+- **Briefing às 9:00 ET** (seg–sex): gerado automaticamente 30min antes da abertura via Claude Sonnet 4.6 (fallback GPT-4o) — sem interação do usuário
 - **Resumo pós-fechamento às 16:15 ET**: avaliação da sessão do dia e perspectiva para amanhã
 - **Cooldown diário via Redis** (`cache:premarket_briefing:YYYY-MM-DD`, TTL 14h): o briefing é gerado uma única vez por dia; reinicializações do servidor restauram o briefing do cache sem nova chamada à API
 - **Prompts institucionais** (`preMarketBriefing.ts`): constantes `PRE_MARKET_PROMPT` (Estrategista Quantitativo Chefe — GEX, IV Rank, VIX, Risco Macro, Veredito Sniper) e `POST_MARKET_PROMPT` (Gestor de Risco — Resumo do Fechamento, Auditoria de Portfólio, Ações Exigidas). Regras inegociáveis: zero ruído, concisão extrema (&lt;2.500 caracteres), estrutura obrigatória em bullet points.
-- **IA:** Claude 3.5 Sonnet com `max_tokens: 4096`; fallback para GPT-4o com o mesmo limite. Resposta em Markdown.
+- **IA:** Claude Sonnet 4.6 com `max_tokens: 4096`; fallback para GPT-4o com o mesmo limite. Resposta em Markdown.
 - **Preço pré-market do SPY**: capturado via Tradier timesales (`session_filter=all`, último bar antes de 09:30 ET), com fallback para preço DXFeed disponível
 - **Entrega via SSE** (`event: briefing`): clientes conectados recebem o briefing em tempo real; novos clientes recebem no snapshot inicial de conexão (se ainda válido)
 - **Discord Webhook** (`DISCORD_WEBHOOK_URL`): briefing enviado em **embeds** (texto em `embeds[].description`, limite 4096 caracteres por embed). Cores da paleta: Pré-Market `#00ff88` (65416), Pós-Market `#ffcc00` (16763904). Se o texto ultrapassar 4.000 caracteres, divisão inteligente em dois embeds (quebra em `\n`). Fire-and-forget; falha não afeta o SSE.
@@ -138,8 +186,8 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - **Objetivo:** rastrear posições de Put Spreads abertas e aplicar a regra de saída: fechar em 50% do lucro máximo OU quando faltarem ≤21 dias para o vencimento (21 DTE), mitigando risco de cauda e convexidade do Gamma.
 - **Tabela Supabase:** `portfolio_positions` (id, symbol, strategy_type, open_date, expiration_date, short_strike, long_strike, short_option_symbol, long_option_symbol, credit_received, status OPEN/CLOSED). Migration `20260305000000_portfolio_positions.sql`.
 - **Serviço:** `portfolioTrackerService.ts` — executa **1x ao dia às 16:00 ET** (scheduler com verificação a cada 60s). Lock Redis `lock:portfolio_tracker:YYYY-MM-DD` (TTL 300s) evita duplicidade em HA.
-- **Ciclo:** (1) Busca posições com status OPEN no Supabase; (2) Calcula DTE em dias úteis (`diasUteisEntre(hoje_ET, expiration_date)`); (3) Tradier `getQuotes()` para short/long (uma chamada batelada); (4) `current_debit = short_ask - long_bid`, `profit_percentage = ((credit_received - current_debit) / credit_received) * 100`; (5) Payload enriquecido enviado ao Claude (Gestor de Risco).
-- **Agente Claude:** `portfolioLifecycleAgent.ts` — system prompt com regras: profit ≥50% → FECHAR_LUCRO; dte ≤21 → FECHAR_TEMPO ou ROLAR; senão MANTER. Resposta JSON com array `alerts` (position_id, recommendation, message).
+- **Ciclo:** (1) Busca posições com status OPEN no Supabase; (2) Calcula DTE em dias úteis (`diasUteisEntre(hoje_ET, expiration_date)`); (3) Tradier `getQuotes()` para short/long (uma chamada batelada); (4) `current_debit = short_ask - long_bid`, `profit_percentage = ((credit_received - current_debit) / credit_received) * 100`; (5) Payload enriquecido enviado ao Claude Sonnet 4.6 (Gestor de Risco).
+- **Agente Claude Sonnet 4.6:** `portfolioLifecycleAgent.ts` — system prompt com regras institucionais: profit ≥50% → FECHAR_LUCRO; dte ≤21 → FECHAR_TEMPO ou ROLAR (mitigação de Gamma risk); senão MANTER. Resposta JSON com array `alerts` (position_id, recommendation, message).
 - **Discord:** alertas enviados via webhook com **embeds** — cor verde (50% lucro) ou amarela (21 DTE); mensagem acionável para Tastytrade (recompra Debit a mercado). Usa o mesmo `DISCORD_WEBHOOK_URL` do briefing.
 - **Snapshot para o dashboard:** o ciclo das 16:00 e o refresh manual gravam o último enriquecimento em memória (`getPortfolioSnapshot` / `refreshPortfolioSnapshot`). Evita chamadas Tradier a cada abertura do painel; cooldown de 60s no refresh.
 - **Endpoints API:** `GET /api/portfolio` (retorna `positions` + `capturedAt` do cache), `POST /api/portfolio/refresh` (re-enriquece com Tradier e atualiza cache), `POST /api/portfolio/analyze` (usa snapshot atual e retorna `alerts` do Claude Gestor de Risco).
@@ -149,7 +197,7 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - **Objetivo:** avaliar propostas de Bull Put Spread (21–45 DTE) cruzando o payoff matemático com o calendário macroeconômico e a parede GEX, retornando decisão CRO (APPROVED / REJECTED / NEEDS_RESTRUCTURE) e justificativa técnica.
 - **Motor de payoff:** `lib/putSpreadPayoff.ts` — `calculatePutSpreadPayoff(shortStrike, longStrike, creditReceived)` retorna `strike_width`, `max_profit`, `max_loss`, `risk_reward_ratio`, `breakeven`, `margin_required` (por contrato).
 - **Calendário macro:** `macroCalendar.ts` — `getMacroEventsForWindow(startDate, endDate)` retorna apenas eventos de **alto impacto** (ex.: FOMC, CPI, NFP, GDP) entre hoje e a data de vencimento; fonte: `newsSnapshot.macroEvents` ou cache Redis.
-- **Endpoint:** `POST /api/analyze/risk-review` (JWT + mesmo rate limit da análise). Body: `short_strike`, `long_strike`, `credit_received_per_contract`, `dte` (21–45), `expiration_date` opcional. Payload enviado ao Claude 3.5 Sonnet: `proposed_trade` (com payoff_profile), `market_context` (SPY, major_negative_gex_level do bucket GEX 21D/45D, IV Rank), `binary_risk_events`.
+- **Endpoint:** `POST /api/analyze/risk-review` (JWT + mesmo rate limit da análise). Body: `short_strike`, `long_strike`, `credit_received_per_contract`, `dte` (21–45), `expiration_date` opcional. Payload enviado ao Claude Sonnet 4.6: `proposed_trade` (com payoff_profile), `market_context` (SPY, major_negative_gex_level do bucket GEX 21D/45D, IV Rank), `binary_risk_events`.
 - **System prompt CRO:** o modelo atua como Diretor de Risco: (1) exige crédito ≥ 1/3 da largura do spread; (2) cruza DTE com eventos binários (FOMC/CPI perto do vencimento → exige prêmio maior); (3) aprova estrutura se breakeven acima da put wall GEX, senão sugere rolagem. Resposta JSON: `decision`, `justification`.
 
 ### Alertas de Preço em Tempo Real
@@ -187,7 +235,7 @@ Painel com cinco fontes de dados exibidas no frontend, agregadas via SSE (earnin
 
 ### Dashboard UI
 - Três cards principais: **SPY**, **VIX**, **IV Rank** (IV Rank % em destaque; IVx e Percentil como secundários)
-- **GEX Panel:** gráfico de barras por strike (calls/puts), seletor de tabs por DTE (0DTE/1D/7D/21D/45D/ALL), métricas callWall/putWall/flipPoint, regime, P/C Ratio com barra visual, botão "Analisar Fluxo" para análise focada em GEX
+- **GEX Panel:** gráfico de barras por strike (calls/puts), seletor de tabs por DTE (0DTE/1D/7D/21D/45D/ALL), métricas callWall/putWall/flipPoint/VEX/CEX, regime, P/C Ratio com barra visual, botão "Analisar Fluxo" para análise focada em GEX; badges **VT** (verde/vermelho conforme SPY vs. Volatility Trigger, com % distância) e **ZGL** (% distância do Zero Gamma Level); barra do maxGammaStrike destacada em laranja; linhas de referência ZGL (laranja) e VT (rosa) no gráfico
 - **Último sinal (10:30/15:00 ET):** widget compacto com trade_signal (Operar/Aguardar/Não operar), regime_score e no_trade_reasons (tooltip); alimentado pelo evento SSE `trade_signal_update`.
 - **Carteira (Put Spreads):** painel com posições OPEN enriquecidas (DTE, lucro %, crédito, custo fechar), badges de regra 50%/21 DTE; botão "Cadastrar" abre modal com seletor de estratégia (Put Spread, Call Spread, Iron Condor), formulário 2 ou 4 pernas e geração de símbolos OCC; "Atualizar" (refresh com cooldown 60s); "Analisar carteira"; "Excluir" por linha.
 - **Card "Estratégia Sugerida":** exibe pernas da estratégia (call/put, buy/sell, strike, DTE), badges de DTE/PoP/invalidação e métricas de risco/crédito/theta/breakeven
@@ -202,7 +250,7 @@ Painel com cinco fontes de dados exibidas no frontend, agregadas via SSE (earnin
 - Dados SPY: calls e puts por DTE (0, 1, 7, 21, 45 dias) — filtro ±3 dias em relação ao alvo
 - Cache em memória de 5 minutos no backend (endpoint `GET /api/option-chain`)
 - Greeks Δ (delta), γ (gamma), θ (theta), ν (vega) por strike — fonte primária: API Tradier; fallback: Black-Scholes (`blackScholes.ts` + `enrichLeg()`)
-- Incluída automaticamente no prompt da IA ao clicar em "Analisar com IA": o hook `useAIAnalysis` busca `/api/option-chain`, seleciona os 5 strikes mais próximos do ATM para cada uma das 3 expirações mais próximas e inclui bid/ask de calls e puts no contexto enviado ao GPT-4o
+- Incluída automaticamente no prompt da IA ao clicar em "Analisar com IA": o hook `useAIAnalysis` busca `/api/option-chain`, seleciona os 5 strikes mais próximos do ATM para cada uma das 3 expirações mais próximas e inclui bid/ask de calls e puts no contexto enviado ao agente de análise (Claude Sonnet 4.6 / GPT-4o fallback)
 
 ### Autenticação
 - Supabase Auth com email e senha
@@ -212,6 +260,11 @@ Painel com cinco fontes de dados exibidas no frontend, agregadas via SSE (earnin
 
 ### Rate Limiting
 - Análise IA: **5 análises por hora por usuário** via sliding window (`rateLimiter.ts`) + cooldown entre requisições consecutivas
+
+### Infraestrutura e UX
+
+- **Notificações Discord:** sistema robusto via webhook (`DISCORD_WEBHOOK_URL`). Uso de **Embeds** color-coded para bypass do limite de caracteres do Discord: briefing pré-mercado `#00ff88`, pós-fechamento `#ffcc00`; alertas do Motor de Ciclo de Vida em verde (50% lucro) ou amarelo (21 DTE). Texto longo é dividido em múltiplos embeds (quebra em 4.000 caracteres). Envio fire-and-forget; falha do webhook não afeta SSE nem o fluxo principal.
+- **Renderização de tabelas analíticas em Markdown:** no frontend, `react-markdown` com **remark-gfm** em `AnalysisResult.tsx` (resposta da análise IA) e `PreMarketBriefing.tsx` (briefing), permitindo tabelas GFM, listas de tarefas e formatação avançada nas saídas em Markdown.
 
 ---
 
@@ -225,7 +278,7 @@ SPY Dash/
 │       ├── config.ts           # Variáveis de ambiente (todas as keys)
 │       ├── api/                # Endpoints HTTP
 │       │   ├── health.ts       # Status do servidor (público + protegido)
-│       │   ├── openai.ts       # Análise GPT-4o streaming (Tool Calling + Structured Outputs)
+│       │   ├── openai.ts       # Análise streaming (Claude 4.6 / fallback GPT-4o; Tool Calling + Structured Outputs)
 │       │   ├── riskReview.ts   # POST /api/analyze/risk-review — CRO Put Spread (payoff + macro + GEX)
 │       │   ├── sse.ts          # Stream de mercado SSE (broadcast global + por usuário; quote/vix; trade_signal_update)
 │       │   ├── priceHistory.ts # GET /api/price-history
@@ -269,7 +322,7 @@ SPY Dash/
 │       │   ├── technicalIndicatorsPoller.ts # RSI/MACD/BBANDS calculados de priceHistory (local)
 │       │   ├── technicalIndicatorsState.ts  # Snapshot indicadores técnicos em memória
 │       │   ├── alertEngine.ts       # Alertas de preço por usuário (proximity + debounce)
-│       │   ├── preMarketBriefing.ts      # Scheduler 9:00/16:15 ET + Claude 3.5 Sonnet briefing + Discord embeds
+│       │   ├── preMarketBriefing.ts      # Scheduler 9:00/16:15 ET + Claude Sonnet 4.6 briefing + Discord embeds
 │       │   ├── scheduledSignalService.ts # Scheduler 10:30/15:00 ET + runAnalysisForPayload + Redis + SSE trade_signal_update
 │       │   ├── portfolioTrackerService.ts # Scheduler 16:00 ET + DTE + Tradier + Claude Gestor Risco + Discord
 │       │   ├── portfolioLifecycleAgent.ts  # Payload + system prompt + chamada Claude (alerts JSON)
@@ -296,7 +349,7 @@ SPY Dash/
 │       │   └── marketStore.ts  # Zustand (estado global: mercado + newsFeed + GEX + alerts)
 │       ├── hooks/
 │       │   ├── useMarketStream.ts  # EventSource → store (eventos SSE: macro, alertas, GEX, quote, vix)
-│       │   ├── useAIAnalysis.ts    # Streaming GPT-4o + coleta option chain
+│       │   ├── useAIAnalysis.ts    # Streaming análise (Claude/GPT-4o) + coleta option chain
 │       │   ├── useAuth.ts          # Supabase Auth
 │       │   ├── useMarketOpen.ts    # Horário de mercado EUA
 │       │   └── usePortfolio.ts     # GET portfolio, refresh, analyze (Carteira Put Spreads)
@@ -304,7 +357,7 @@ SPY Dash/
 │       │   ├── cards/          # SPYCard, VIXCard, IVRankCard
 │       │   ├── ai/             # AIPanel + AnalysisResult + PreMarketBriefing + LastScheduledSignal
 │       │   ├── options/
-│       │   │   ├── GEXPanel.tsx        # Painel GEX: gráfico byStrike + callWall/putWall/flipPoint
+│       │   │   ├── GEXPanel.tsx        # Painel GEX: gráfico byStrike + callWall/putWall/flipPoint/ZGL/VT; badges VT+ZGL; Cell highlight maxGammaStrike
 │       │   │   └── OptionChainPanel.tsx # Cadeia de opções ATM com greeks Δ γ θ ν
 │       │   ├── portfolio/
 │       │   │   └── PortfolioPanel.tsx  # Carteira Put Spreads: tabela, badges, Analisar carteira
@@ -368,11 +421,11 @@ Tradier API (option chain + time-sales)
   → gexCalculator.ts (Black-Scholes gamma por strike)
   → gexService.ts (callWall, putWall, flipPoint, byStrike, regime)
   → volumeProfileService.ts (POC, VAH, VAL via time-sales 5min bars)
-  → advancedMetricsPoller.ts (monta AdvancedMetricsPayload, inclui top-20 byStrike)
+  → advancedMetricsPoller.ts (monta AdvancedMetricsPayload, inclui top-20 byStrike + VEX/CEX/VT por bucket)
   → advancedMetricsState.ts (snapshot em memória + emitter.emit('advanced-metrics'))
   → SSE broadcast → Browser EventSource
-  → Zustand store (gex, profile, putCallRatio)
-  → GEXPanel.tsx re-renders
+  → Zustand store (gex, gexByExpiration com volatilityTrigger/totalVannaExposure/totalCharmExposure)
+  → GEXPanel.tsx re-renders (badges VT+ZGL, linhas ZGL+VT, barras laranja maxGammaStrike)
 ```
 
 ### Fluxo de Dados — Expected Move (21/45 DTE)
@@ -426,14 +479,14 @@ Usuário clica "Analisar com IA"
     └─ IV/HV(30d) ratio com flag [VOL CARA] se > 1.3
   + system prompt: aviso "mercado fechado" quando !isMarketOpen()
 
-  Chamada 1 — GPT-4o stream (tool_choice: 'auto'):
+  Chamada 1 — Claude Sonnet 4.6 stream (ou GPT-4o se fallback; tool_choice: 'auto'):
     → Se modelo chamar fetch_24h_context:
         buildMacroContextBlock() → Fear&Greed, VIX TS, FRED, BLS, earnings, eventos
-        Chamada 2 — GPT-4o stream (role: tool, conteúdo macro)
+        Chamada 2 — mesmo agente stream (role: tool, conteúdo macro)
     → SSE stream token a token → Markdown em tempo real
 
   Após stream:
-    → extractStructuredOutput() via json_schema Structured Outputs (única chamada GPT-4o)
+    → extractStructuredOutput() via gpt-4o-mini (json_schema)
     → event: structured → UI cards bias/confiança/levels/estratégia
   → saveAnalysis() → Supabase ai_analyses (embedding: vector(1536), async)
   → registerAlertsFromAnalysis() → alertEngine ativa alertas por userId
@@ -453,7 +506,7 @@ POST /api/search { query, threshold?, limit? }
 ### Fluxo de Dados — Alertas de Preço
 
 ```
-GPT-4o structured output { key_levels: { support, resistance, gex_flip } }
+Structured output { key_levels: { support, resistance, gex_flip } }
   → registerAlertsFromAnalysis(userId, structured)
   → alertsByUser Map<userId, ActiveAlert[]>
 
@@ -537,9 +590,9 @@ Todos os pollers de APIs externas são protegidos por `circuitBreaker.ts` (wrapp
 - Dados com capturedAt=null retornam score=0/BAIXA
 - No prompt IA, score BAIXA resulta em tag `[DADOS DESATUALIZADOS — usar com cautela]`
 
-### Segurança — Row Level Security (Supabase)
+### Segurança — Banco de Dados (Supabase)
 
-Migration `20260228000000_enable_rls.sql` ativa RLS nas tabelas principais:
+**Row Level Security (RLS):** migration `20260228000000_enable_rls.sql` ativa RLS nas tabelas principais. Políticas garantem isolamento por usuário onde aplicável; tabelas de dado global são acessadas apenas via service role.
 
 | Tabela | RLS | Política |
 |---|---|---|
@@ -547,6 +600,10 @@ Migration `20260228000000_enable_rls.sql` ativa RLS nas tabelas principais:
 | `price_ticks` | ✓ | Sem políticas para clients — acesso exclusivo via service role key |
 | `portfolio_positions` | ✓ | Sem políticas para clients — acesso exclusivo via service role key (Motor de Ciclo de Vida) |
 | `price_sparkline` | — (matview) | Sem suporte a RLS; acesso via service role key |
+
+**Extensão pgvector e schemas:** a extensão `vector` é ativada no schema público (migration `20260228000001_pgvector_search.sql`). A coluna `embedding` em `ai_analyses` é do tipo `vector(1536)`; índice HNSW para busca por similaridade de cosseno.
+
+**Funções RPC seguras:** `search_historical_analyses(query_embedding, similarity_threshold, match_count, p_user_id)` — filtro por `p_user_id` aplicado no SQL; cada usuário vê apenas suas próprias análises. `get_price_sparkline` (matview) é chamada apenas pelo backend com service role.
 
 O backend usa `SUPABASE_SERVICE_ROLE_KEY` (bypassa RLS) para todas as operações server-side.
 
@@ -561,9 +618,10 @@ O backend usa `SUPABASE_SERVICE_ROLE_KEY` (bypassa RLS) para todas as operaçõe
 | `/health` | GET | — | Status binário: `{ "status": "ok" \| "degraded" }` |
 | `/health/details` | GET | `X-Health-Token` | Detalhes completos: dataAge, circuit breakers, SSE clients, uptime |
 | `/stream/market` | GET (SSE) | JWT | Stream de eventos macro, alertas, GEX, newsfeed, quote e vix (preço SPY/VIX) |
-| `/api/analyze` | POST (SSE) | JWT | Análise GPT-4o em streaming (Tool Calling + Structured Outputs) |
+| `/api/analyze` | POST (SSE) | JWT | Análise em streaming (Claude Sonnet 4.6 primary / GPT-4o fallback; Tool Calling + Structured Outputs) |
 | `/api/analyze/gex-flow` | POST (SSE) | JWT | Análise focada em GEX por DTE (streaming gpt-4o-mini) |
-| `/api/analyze/risk-review` | POST | JWT | Crítica CRO de Put Spread: payoff + eventos macro na janela DTE → decision + justification (Claude 3.5 Sonnet) |
+| `/api/chat-followup` | POST (SSE) | JWT | Perguntas de follow-up sobre a análise atual (gpt-4o-mini, sem rate limit) |
+| `/api/analyze/risk-review` | POST | JWT | Crítica CRO de Put Spread: payoff + eventos macro na janela DTE → decision + justification (Claude Sonnet 4.6) |
 | `/api/search` | POST | JWT | Pesquisa semântica em análises históricas (pgvector) |
 | `/api/option-chain` | GET | JWT | Snapshot da cadeia de opções SPY com greeks Δ γ θ ν |
 | `/api/price-history` | GET | JWT | Histórico de preços por símbolo |
@@ -645,7 +703,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3001/admin/break
 | Fastify | 4.26 | Servidor HTTP |
 | TypeScript | 5.3 | Linguagem |
 | ws | — | WebSocket DXFeed |
-| OpenAI SDK | — | GPT-4o (Tool Calling + Structured Outputs) + text-embedding-3-small |
+| OpenAI SDK | — | GPT-4o (fallback), gpt-4o-mini (structured output, follow-up, GEX, headlines), text-embedding-3-small |
 | ioredis | — | Cache Redis com compressão Brotli automática |
 | Supabase Admin SDK | — | Validação JWT + persistência análises + histórico de preços + pgvector |
 | opossum | — | Circuit breakers |
@@ -673,7 +731,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3001/admin/break
 | Tastytrade API | OAuth2, IV Rank, option chain, earnings | Sim (OAuth2) |
 | DXFeed | Quotes SPY/VIX em tempo real via WebSocket | Via Tastytrade |
 | Tradier API | GEX (option chain), Volume Profile (time-sales), VIX fallback, SPY price history | Sim |
-| OpenAI | GPT-4o (análise + Tool Calling), text-embedding-3-small (memória + pesquisa semântica) | Sim |
+| Anthropic | Claude Sonnet 4.6 (análise principal, risk-review, portfolio lifecycle, briefing) | Sim (opcional; fallback OpenAI) |
+| OpenAI | GPT-4o (fallback análise), gpt-4o-mini (structured output, follow-up, GEX flow, headlines), text-embedding-3-small (RAG) | Sim |
 | Redis Cloud | Cache de dados de mercado com TTL + Brotli; token seguro (30MB gratuito) | Sim (gratuito em redis.io/try-free) |
 | Supabase | Autenticação JWT + persistência análises IA + pgvector (busca semântica) + histórico de preços | Sim |
 | FRED (Federal Reserve) | CPI, PCE, Fed Rate, Yield Curve | Sim (gratuita) |
@@ -712,8 +771,12 @@ TT_REFRESH_TOKEN=<seu_refresh_token>
 TRADIER_API_KEY=<sua_key>
 TRADIER_BASE_URL=https://api.tradier.com
 
-# OpenAI
+# OpenAI (fallback análise, structured output, gpt-4o-mini para follow-up/GEX/headlines, embeddings)
 OPENAI_API_KEY=sk-proj-...
+
+# Anthropic — agente principal de análise (Claude Sonnet 4.6). Se ausente, todas as análises usam GPT-4o.
+ANTHROPIC_API_KEY=<sua_key>
+ANTHROPIC_MODEL=claude-sonnet-4-6
 
 # FRED (Federal Reserve) — gratuito em fred.stlouisfed.org/docs/api/fred/
 FRED_API_KEY=<sua_key>
@@ -819,14 +882,14 @@ npm run preview # Preview do build de produção
 - GEX por strike (Black-Scholes gamma) via Tradier option data — callWall, putWall, flipPoint, regime
 - Volume Profile intraday (POC, VAH, VAL) via Tradier time-sales
 - Put/Call Ratio com barra visual por expiração
-- **Expected Move (1σ)** para 21 e 45 DTE (straddle ATM via Tradier); bloco no prompt IA e regra de alerta quando perna vendida do Put Spread está dentro do cone
+- **Expected Move (1σ):** varredura dinâmica 0–60 DTE (straddle ATM via Tradier, `iv_efficiency` por expiração); bloco no prompt IA e regra de alerta quando perna vendida do Put Spread está dentro do cone
 - VIX Term Structure inferida da option chain (normal/inverted/flat, steepness%)
 - Indicadores técnicos RSI(14), MACD, BBANDS calculados localmente de `priceHistory` (sem API externa)
 
 **Análise IA:**
-- Painel "Análise IA" com GPT-4o streaming
+- Painel "Análise IA" com Claude Sonnet 4.6 (primary) / GPT-4o (fallback) em streaming
 - Tool Calling condicional `fetch_24h_context` — macro context apenas quando necessário
-- Structured Outputs nativo via `json_schema` — objeto estruturado em única chamada GPT-4o
+- Structured Outputs via `json_schema` (gpt-4o-mini) após stream do agente principal
 - Histórico intraday SPY injetado no prompt base (`buildPriceHistoryBlock`): OHLC, range%, curva ~15min, tendência 1h, HV intraday estimada
 - VWAP da sessão injetado no bloco técnico (capturado da última barra Tradier)
 - Ratio IV/HV(30d) no prompt com flag `[VOL CARA]` quando > 1.3
@@ -837,9 +900,10 @@ npm run preview # Preview do build de produção
 - Persistência de análises no Supabase com embeddings `vector(1536)` (pgvector)
 - Alertas de preço em tempo real (support/resistance/gex_flip) por usuário
 - Rate limiting: 5 análises/hora por usuário (sliding window)
+- **Follow-up:** `POST /api/chat-followup` (gpt-4o-mini, sem rate limit) para perguntas sobre a análise atual
 - **Sinais de trade em horários fixos:** scheduler 10:30 e 15:00 ET (dias úteis); uma análise global por horário via `runAnalysisForPayload()`; resultado em Redis e broadcast SSE `trade_signal_update`; widget "Último sinal" no dashboard.
 - **Motor de Gestão de Ciclo de Vida:** scheduler 16:00 ET para Put Spreads (posições OPEN em `portfolio_positions`); DTE + lucro % via Tradier; Claude Gestor de Risco (FECHAR_LUCRO / FECHAR_TEMPO / ROLAR / MANTER); alertas Discord com embeds (verde 50%, amarelo 21 DTE). Painel **Carteira** no dashboard com snapshot em memória, Cadastrar (modal com gerador OCC), Excluir por linha, endpoints GET/POST portfolio, POST analyze, POST/DELETE positions.
-- **Análise de Risco/Retorno Assimétrica:** `POST /api/analyze/risk-review` — motor de payoff Put Spread (`putSpreadPayoff.ts`) + eventos macro de alto impacto na janela DTE (`getMacroEventsForWindow`) + contexto GEX; Claude 3.5 Sonnet como CRO retorna decisão (APPROVED/REJECTED/NEEDS_RESTRUCTURE) e justificativa técnica.
+- **Análise de Risco/Retorno Assimétrica:** `POST /api/analyze/risk-review` — motor de payoff Put Spread (`putSpreadPayoff.ts`) + eventos macro de alto impacto na janela DTE (`getMacroEventsForWindow`) + contexto GEX; Claude Sonnet 4.6 como CRO retorna decisão (APPROVED/REJECTED/NEEDS_RESTRUCTURE) e justificativa técnica.
 
 **Pesquisa Semântica:**
 - `POST /api/search` — busca em análises históricas por similaridade cosine (pgvector HNSW)
@@ -867,7 +931,8 @@ npm run preview # Preview do build de produção
 - `OPTION_CHAIN_THRESHOLD` padrão alterado de 0.003 para 0.01
 - Confidence scorer por fonte de dados (`confidenceScorer.ts`)
 - SSE roteado por usuário (`broadcastToUser`) para alertas direcionados
-- RLS em `ai_analyses` e `price_ticks` (migration `20260228000000_enable_rls.sql`)
+- RLS em `ai_analyses`, `price_ticks` e `portfolio_positions`; pgvector e RPC `search_historical_analyses` seguras (migrations `20260228000000`, `20260228000001`)
+- Notificações Discord via webhook com embeds color-coded (briefing + alertas 50%/21 DTE)
 - Endpoint `/admin/breakers` para gestão de circuit breakers
 
 **UI & Autenticação:**
@@ -880,11 +945,11 @@ npm run preview # Preview do build de produção
 - Vite dev proxy para `/ws` com `ws: true` (WebSocket direto para backend sem CORS)
 - Supabase Auth com email/senha (JWT validado no backend)
 - Animações Framer Motion + Tailwind dark theme
+- Renderização Markdown com **remark-gfm** (tabelas GFM) em análise IA e briefing (`AnalysisResult.tsx`, `PreMarketBriefing.tsx`)
 - Skeletons de carregamento + Recharts (GEX)
 
 ### Planejado / Em Desenvolvimento
 
-- Rastreamento de posições e portfólio
 - Suporte a múltiplos ativos além do SPY
 - Internacionalização (i18n)
 

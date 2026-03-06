@@ -4,6 +4,7 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -46,6 +47,8 @@ const REFERENCE_LINES = [
   { color: '#cc44ff', label: 'Put Wall' },
   { color: '#4488ff', label: 'Call Wall' },
   { color: '#00ffcc', label: 'Max Gamma' },
+  { color: '#ff8800', label: 'ZGL' },
+  { color: '#ff4488', label: 'VT' },
 ]
 
 type DteKey = '0DTE' | '1D' | '7D' | '21D' | '45D' | 'ALL'
@@ -306,6 +309,45 @@ export const GEXPanel = memo(function GEXPanel() {
             </div>
           </div>
 
+          {/* Volatility Trigger + ZGL badges */}
+          {(activeGex.volatilityTrigger != null || activeGex.zeroGammaLevel != null) && (
+            <div className="flex gap-4 mb-3 text-center">
+              {activeGex.volatilityTrigger != null && (() => {
+                const vt = activeGex.volatilityTrigger!
+                const above = spyLast != null && spyLast > vt
+                const distPct = spyLast != null ? Math.abs((spyLast - vt) / vt * 100).toFixed(2) : null
+                return (
+                  <div>
+                    <div className="text-[10px] text-text-muted uppercase tracking-wider">Volatility Trigger</div>
+                    <div className={`text-sm font-bold font-num ${above ? 'text-[#00ff88]' : 'text-red-400'}`}>
+                      ${vt.toFixed(2)}
+                    </div>
+                    {distPct != null && (
+                      <div className={`text-[9px] font-semibold ${above ? 'text-[#00ff88]/70' : 'text-red-400/70'}`}>
+                        {above ? '▲' : '▼'} {distPct}% {above ? 'ACIMA' : 'ABAIXO'}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+              {activeGex.zeroGammaLevel != null && spyLast != null && (() => {
+                const zgl = activeGex.zeroGammaLevel!
+                const distPct = ((spyLast - zgl) / zgl * 100)
+                return (
+                  <div>
+                    <div className="text-[10px] text-text-muted uppercase tracking-wider">Zero Gamma</div>
+                    <div className="text-sm font-bold font-num text-[#ff8800]">
+                      ${zgl.toFixed(2)}
+                    </div>
+                    <div className="text-[9px] text-[#ff8800]/70 font-semibold">
+                      {distPct >= 0 ? '+' : ''}{distPct.toFixed(2)}% do SPY
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+          )}
+
           {/* Recharts bar chart */}
           {chartData.length > 0 ? (
             <div className="border-t border-border-subtle pt-3" style={{ height: 280 }}>
@@ -339,7 +381,7 @@ export const GEXPanel = memo(function GEXPanel() {
                     cursor={{ fill: 'rgba(255,255,255,0.03)' }}
                   />
 
-                  {/* Call bars — green */}
+                  {/* Call bars — green, orange on maxGammaStrike */}
                   <Bar
                     dataKey="callGex"
                     name="Call GEX"
@@ -348,6 +390,13 @@ export const GEXPanel = memo(function GEXPanel() {
                     maxBarSize={18}
                     isAnimationActive={false}
                   >
+                    {chartData.map((entry, index) => (
+                      <Cell
+                        key={`call-${index}`}
+                        fill={entry.strike === activeGex!.maxGammaStrike ? '#ff9900' : '#00ff88'}
+                        fillOpacity={entry.strike === activeGex!.maxGammaStrike ? 0.95 : 0.75}
+                      />
+                    ))}
                     <LabelList
                       dataKey="callGex"
                       position="top"
@@ -357,7 +406,7 @@ export const GEXPanel = memo(function GEXPanel() {
                     />
                   </Bar>
 
-                  {/* Put bars — red */}
+                  {/* Put bars — red, orange on maxGammaStrike */}
                   <Bar
                     dataKey="putGex"
                     name="Put GEX"
@@ -366,6 +415,13 @@ export const GEXPanel = memo(function GEXPanel() {
                     maxBarSize={18}
                     isAnimationActive={false}
                   >
+                    {chartData.map((entry, index) => (
+                      <Cell
+                        key={`put-${index}`}
+                        fill={entry.strike === activeGex!.maxGammaStrike ? '#ff6600' : '#ff4444'}
+                        fillOpacity={entry.strike === activeGex!.maxGammaStrike ? 0.95 : 0.65}
+                      />
+                    ))}
                     <LabelList
                       dataKey="putGex"
                       position="top"
@@ -448,6 +504,38 @@ export const GEXPanel = memo(function GEXPanel() {
                       fontSize: 9,
                     }}
                   />
+
+                  {/* Zero Gamma Level */}
+                  {activeGex.zeroGammaLevel != null && (
+                    <ReferenceLine
+                      x={activeGex.zeroGammaLevel}
+                      stroke="#ff8800"
+                      strokeWidth={1.5}
+                      strokeDasharray="4 2"
+                      label={{
+                        value: `ZGL ${activeGex.zeroGammaLevel.toFixed(1)}`,
+                        position: 'insideTopLeft',
+                        fill: '#ff8800',
+                        fontSize: 9,
+                      }}
+                    />
+                  )}
+
+                  {/* Volatility Trigger */}
+                  {activeGex.volatilityTrigger != null && (
+                    <ReferenceLine
+                      x={activeGex.volatilityTrigger}
+                      stroke="#ff4488"
+                      strokeWidth={1.5}
+                      strokeDasharray="6 3"
+                      label={{
+                        value: `VT ${activeGex.volatilityTrigger.toFixed(1)}`,
+                        position: 'insideTopRight',
+                        fill: '#ff4488',
+                        fontSize: 9,
+                      }}
+                    />
+                  )}
                 </BarChart>
               </ResponsiveContainer>
             </div>
