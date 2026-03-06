@@ -198,7 +198,7 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
       try {
         const anthropic = new Anthropic({ apiKey: CONFIG.ANTHROPIC_API_KEY })
         const msg = await anthropic.messages.create({
-          model: 'claude-3-5-sonnet-20241022',
+          model: CONFIG.ANTHROPIC_MODEL,
           max_tokens: 4096,
           system: systemContent,
           messages: [{ role: 'user', content: userPrompt }],

@@ -45,7 +45,6 @@ export function buildPortfolioPayload(positions: EnrichedPosition[]): PortfolioP
 // Claude call (non-streaming, no tools)
 // ---------------------------------------------------------------------------
 
-const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022'
 const CLAUDE_MAX_TOKENS = 2048
 
 export async function callGestorRisco(payload: PortfolioPayload): Promise<GestorRiscoResponse> {
@@ -57,7 +56,7 @@ export async function callGestorRisco(payload: PortfolioPayload): Promise<Gestor
   const userContent = JSON.stringify(payload)
 
   const response = await anthropic.messages.create({
-    model: CLAUDE_MODEL,
+    model: CONFIG.ANTHROPIC_MODEL,
     max_tokens: CLAUDE_MAX_TOKENS,
     system: SYSTEM_PROMPT_GESTOR_RISCO,
     messages: [{ role: 'user', content: userContent }],

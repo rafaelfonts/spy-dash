@@ -163,7 +163,7 @@ export async function registerRiskReview(fastify: FastifyInstance): Promise<void
         const userContent = `Avalie a seguinte proposta de Put Spread e os eventos macro na janela do trade. Responda apenas com o JSON de decisão e justificativa.\n\n${JSON.stringify(payload, null, 2)}`
 
         const msg = await anthropic.messages.create({
-          model: 'claude-3-5-sonnet-20241022',
+          model: CONFIG.ANTHROPIC_MODEL,
           max_tokens: 1024,
           system: CRO_SYSTEM_PROMPT,
           messages: [{ role: 'user', content: userContent }],
