@@ -46,6 +46,17 @@ export interface PreMarketBriefing {
   expiresAt: string
 }
 
+// Last scheduled trade signal (10:30 / 15:00 ET) — from backend scheduledSignalService
+export interface TradeSignalPayload {
+  trade_signal: 'trade' | 'wait' | 'avoid'
+  regime_score: number
+  no_trade_reasons: string[]
+  bias: 'bullish' | 'bearish' | 'neutral'
+  key_levels: { support: number[]; resistance: number[]; gex_flip?: number }
+  timestamp: number
+  summary?: string
+}
+
 // Analysis structured output (mirrored from backend types/market.ts)
 export interface AnalysisStructuredOutput {
   bias: 'bullish' | 'bearish' | 'neutral'
@@ -71,6 +82,10 @@ export interface AnalysisStructuredOutput {
   invalidation_level: number | null
   expected_credit: number | null
   theta_per_day: number | null
+  trade_signal: 'trade' | 'wait' | 'avoid'
+  no_trade_reasons: string[]
+  regime_score: number
+  data_quality_warning: string | null
 }
 
 // Technical Indicators type (mirrored from backend technicalIndicatorsState)
@@ -253,6 +268,7 @@ interface MarketStore {
   vixTermStructure: VIXTermStructureData | null
   technicalIndicators: TechnicalIndicatorsData | null
   preMarketBriefing: PreMarketBriefing | null
+  lastScheduledSignal: TradeSignalPayload | null
 
   updateSPY: (data: Partial<SPYData>) => void
   updateVIX: (data: Partial<VIXData>) => void
@@ -269,6 +285,7 @@ interface MarketStore {
   setVIXTermStructure: (data: VIXTermStructureData | null) => void
   setTechnicalIndicators: (data: TechnicalIndicatorsData | null) => void
   setPreMarketBriefing: (data: PreMarketBriefing | null) => void
+  setLastScheduledSignal: (data: TradeSignalPayload | null) => void
   alerts: AlertToast[]
   addAlert: (alert: AlertToast) => void
   dismissAlert: (id: string) => void
@@ -331,6 +348,7 @@ export const useMarketStore = create<MarketStore>()(
     vixTermStructure: null,
     technicalIndicators: null,
     preMarketBriefing: null,
+    lastScheduledSignal: null,
     alerts: [],
 
     updateSPY: (data) =>
@@ -378,6 +396,7 @@ export const useMarketStore = create<MarketStore>()(
     setVIXTermStructure: (data) => set({ vixTermStructure: data }),
     setTechnicalIndicators: (data) => set({ technicalIndicators: data }),
     setPreMarketBriefing: (data) => set({ preMarketBriefing: data }),
+    setLastScheduledSignal: (data) => set({ lastScheduledSignal: data }),
 
     isDataReady: () => {
       return get().spy.last !== null

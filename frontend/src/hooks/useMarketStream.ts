@@ -19,6 +19,7 @@ export function useMarketStream(): void {
   const setVIXTermStructure = useMarketStore((s) => s.setVIXTermStructure)
   const setTechnicalIndicators = useMarketStore((s) => s.setTechnicalIndicators)
   const setPreMarketBriefing = useMarketStore((s) => s.setPreMarketBriefing)
+  const setLastScheduledSignal = useMarketStore((s) => s.setLastScheduledSignal)
   const setGEXByExpiration = useMarketStore((s) => s.setGEXByExpiration)
   const addAlert = useMarketStore((s) => s.addAlert)
 
@@ -266,6 +267,15 @@ export function useMarketStream(): void {
         try {
           const data = JSON.parse(e.data)
           setPreMarketBriefing(data)
+        } catch {
+          // ignore parse errors
+        }
+      })
+
+      es.addEventListener('trade_signal_update', (e) => {
+        try {
+          const data = JSON.parse(e.data)
+          setLastScheduledSignal(data)
         } catch {
           // ignore parse errors
         }

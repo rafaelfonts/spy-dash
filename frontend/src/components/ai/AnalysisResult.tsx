@@ -62,6 +62,24 @@ export function AnalysisResult({ text, isStreaming = false }: AnalysisResultProp
               {children}
             </blockquote>
           ),
+          table: ({ children }) => (
+            <div className="my-3 overflow-x-auto rounded-lg border border-border-subtle">
+              <table className="w-full border-collapse text-left text-sm">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-bg-elevated">{children}</thead>,
+          tbody: ({ children }) => <tbody>{children}</tbody>,
+          tr: ({ children }) => (
+            <tr className="border-b border-border-subtle last:border-b-0">{children}</tr>
+          ),
+          th: ({ children }) => (
+            <th className="border border-border-subtle px-3 py-2 font-semibold text-text-primary">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="border border-border-subtle px-3 py-2 text-text-secondary">{children}</td>
+          ),
           hr: () => <hr className="border-border-subtle my-3" />,
         }}
       >

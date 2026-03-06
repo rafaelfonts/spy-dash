@@ -281,4 +281,12 @@ export interface AnalysisStructuredOutput {
   invalidation_level: number | null     // preço de invalidação do trade
   expected_credit: number | null        // crédito esperado $ por contrato
   theta_per_day: number | null          // theta/dia estimado
+  /** Sinal executável: trade = condições alinhadas; wait = 1 veto; avoid = 2+ vetos ou ambiente adverso */
+  trade_signal: 'trade' | 'wait' | 'avoid'
+  /** Razões quantitativas quando trade_signal !== 'trade' */
+  no_trade_reasons: string[]
+  /** Score 0-10 dos critérios favoráveis; <4 = avoid, 4-6 = wait, 7-10 = trade */
+  regime_score: number
+  /** Preenchido quando ≥2 fontes com Confiança BAIXA */
+  data_quality_warning: string | null
 }

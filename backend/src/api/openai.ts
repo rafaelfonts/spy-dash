@@ -6,7 +6,7 @@ import { CONFIG } from '../config'
 import { marketState, newsSnapshot } from '../data/marketState'
 import { createBreaker } from '../lib/circuitBreaker'
 import type { OptionExpiry } from '../data/optionChain'
-import { getOptionChainCapturedAt } from '../data/optionChain'
+import { getOptionChainCapturedAt, getOptionChainSnapshot } from '../data/optionChain'
 import { humanizeAge, isMarketOpen } from '../lib/time'
 import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem, AnalysisStructuredOutput, PricePoint } from '../types/market'
 import { saveAnalysis, buildMemoryBlock } from '../data/analysisMemory'
@@ -148,12 +148,17 @@ const STRUCTURED_SCHEMA = {
       invalidation_level: { type: ['number', 'null'] },
       expected_credit: { type: ['number', 'null'] },
       theta_per_day: { type: ['number', 'null'] },
+      trade_signal: { type: 'string', enum: ['trade', 'wait', 'avoid'] },
+      no_trade_reasons: { type: 'array', items: { type: 'string' } },
+      regime_score: { type: 'number' },
+      data_quality_warning: { type: ['string', 'null'] },
     },
     required: [
       'bias', 'confidence', 'timeframe', 'key_levels', 'suggested_strategy',
       'catalysts', 'risk_factors',
       'recommended_dte', 'pop_estimate', 'supporting_gex_dte',
       'invalidation_level', 'expected_credit', 'theta_per_day',
+      'trade_signal', 'no_trade_reasons', 'regime_score', 'data_quality_warning',
     ],
     additionalProperties: false,
   },
@@ -218,6 +223,102 @@ function buildGexMultiDTEBlock(gex: GEXByExpiration): string {
     block += `\nCall Wall / Put Wall por DTE:\n${wallLines.join('\n')}\n`
   }
 
+  return block
+}
+
+/** Builds the regime checklist block (computed server-side). Injected as fact so the AI applies trade_signal consistently. */
+function buildRegimeVetoBlock(
+  snapshot: AnalyzeBody['marketSnapshot'],
+  confidence: Record<string, ConfidenceResult>,
+  gexByExpiration: GEXByExpiration | null,
+): string {
+  const lines: string[] = ['\n=== CHECKLIST DE REGIME (calculado pelo sistema) ===']
+  let passCount = 0
+  const totalChecks = 5
+
+  const ivRank = snapshot?.ivRank?.value ?? marketState.ivRank.value
+  const hv30 = marketState.ivRank.hv30
+  const ivHvRatio = (ivRank != null && hv30 != null && hv30 > 0) ? ivRank / hv30 : null
+
+  if (ivRank != null) {
+    const pass = ivRank >= 15
+    if (pass) passCount += 1
+    lines.push(`${pass ? '[✓]' : '[✗]'} IV Rank: ${ivRank.toFixed(0)}% — ${pass ? 'PASSA (>15%)' : 'VETO (prêmio insuficiente)'}`)
+  } else {
+    lines.push('[?] IV Rank: indisponível')
+  }
+
+  if (ivHvRatio != null) {
+    const pass = ivHvRatio >= 0.8
+    if (pass) passCount += 1
+    lines.push(`${pass ? '[✓]' : '[✗]'} IV/HV30: ${ivHvRatio.toFixed(2)} — ${pass ? 'PASSA (IV ≥ 0.8×HV)' : 'VETO (IV abaixo do HV30; venda de prêmio desfavorável)'}`)
+  } else {
+    lines.push('[?] IV/HV30: indisponível')
+  }
+
+  if (gexByExpiration) {
+    const buckets = [gexByExpiration.dte0, gexByExpiration.dte1, gexByExpiration.dte7, gexByExpiration.dte21, gexByExpiration.dte45].filter(Boolean) as DailyGexResult[]
+    const allNegative = buckets.length > 0 && buckets.every((b) => b.regime === 'negative')
+    const pass = !allNegative
+    if (pass) passCount += 1
+    const regimeLabel = allNegative ? 'NEGATIVO em todos os DTEs' : 'pelo menos um DTE POSITIVO'
+    lines.push(`${pass ? '[✓]' : '[✗]'} GEX Regime: ${regimeLabel} — ${pass ? 'PASSA' : 'VETO (ambiente de amplificação)'}`)
+  } else {
+    lines.push('[?] GEX Regime: indisponível')
+  }
+
+  const vixChangePct = marketState.vix.changePct ?? (snapshot?.vix as { changePct?: number } | undefined)?.changePct ?? null
+  const vixSpike = vixChangePct != null && Math.abs(vixChangePct) > 20
+  if (vixChangePct != null) {
+    const pass = !vixSpike
+    if (pass) passCount += 1
+    lines.push(`${pass ? '[✓]' : '[✗]'} VIX variação: ${vixChangePct >= 0 ? '+' : ''}${vixChangePct.toFixed(1)}% — ${pass ? 'PASSA' : 'VETO (spike >20%; aguardar normalização)'}`)
+  } else {
+    lines.push('[?] VIX variação: indisponível')
+  }
+
+  const criticalSources = ['spy', 'vix', 'optionChain'] as const
+  const lowCount = criticalSources.filter((k) => (confidence[k]?.score ?? 1) < 0.5).length
+  const dataOk = lowCount < 2
+  if (dataOk) passCount += 1
+  lines.push(`${dataOk ? '[✓]' : '[✗]'} Qualidade dos dados: ${dataOk ? `ALTA (máx 1 fonte crítica com Confiança BAIXA)` : `${lowCount} fontes críticas com Confiança BAIXA — análise inválida`}`)
+
+  const earningsNext2 = (newsSnapshot.earnings ?? []).filter(
+    (e) => e.daysToEarnings != null && e.daysToEarnings >= 0 && e.daysToEarnings <= 2,
+  )
+  if (earningsNext2.length > 0) {
+    lines.push(`[!] Earnings componentes SPY nos próximos 2 dias: ${earningsNext2.slice(0, 4).map((e) => e.symbol).join(', ')} — cautela`)
+  }
+
+  lines.push(`Score parcial: ${passCount}/${totalChecks} condições favoráveis`)
+  lines.push('NOTA: Se score < 4, o campo trade_signal DEVE ser \'wait\' ou \'avoid\'.')
+  return lines.join('\n')
+}
+
+/** Builds Vanna/Charm Exposure block from GEX-by-expiration (each bucket has totalVannaExposure, totalCharmExposure). */
+function buildVannaCharmBlock(gexByExpiration: GEXByExpiration | null): string | null {
+  if (!gexByExpiration) return null
+  const LABELS: Record<string, string> = {
+    dte0: '0DTE', dte1: '1D', dte7: '7D', dte21: '21D', dte45: '45D', all: 'ALL',
+  }
+  const buckets = (['dte0', 'dte1', 'dte7', 'dte21', 'dte45', 'all'] as const).filter(
+    (k) => gexByExpiration[k] != null,
+  )
+  if (buckets.length === 0) return null
+
+  let block = '\n=== VANNA/CHARM EXPOSURE (Flows de Dealers) ===\n'
+  for (const key of buckets) {
+    const d = gexByExpiration[key]!
+    const vex = (d as { totalVannaExposure?: number }).totalVannaExposure ?? 0
+    const cex = (d as { totalCharmExposure?: number }).totalCharmExposure ?? 0
+    const label = LABELS[key]
+    const vexStr = `${vex >= 0 ? '+' : ''}$${vex.toFixed(1)}M`
+    const cexStr = `${cex >= 0 ? '+' : ''}$${cex.toFixed(1)}M/dia`
+    block += `${label}: VEX ${vexStr} | CEX ${cexStr}\n`
+  }
+  block +=
+    'Interpretação: VEX positivo → se IV comprimir, dealers compram spot (suporte bullish). ' +
+    'CEX negativo → decaimento de delta causa selling intraday. Use como confirmação, não sinal primário.\n'
   return block
 }
 
@@ -430,12 +531,13 @@ function buildPriceHistoryBlock(history: PricePoint[]): string {
 function buildExpectedMoveBlock(snapshot: ExpectedMoveSnapshot | null, spyLast: number): string | null {
   if (!snapshot || Object.keys(snapshot.byExpiry).length === 0) return null
   const lines: string[] = []
-  lines.push('\n**Expected Move (1σ)** — cone de probabilidade implícito (Call ATM + Put ATM = straddle):')
+  lines.push('\n**Expected Move (1σ)** — cone de probabilidade implícito (Call ATM + Put ATM = straddle), todos os vencimentos disponíveis:')
   for (const [expirationDate, data] of Object.entries(snapshot.byExpiry)) {
     const lower = spyLast - data.expectedMove
     const upper = spyLast + data.expectedMove
+    const effStr = data.ivEfficiency != null ? ` | iv_efficiency=${data.ivEfficiency.toFixed(3)}` : ''
     lines.push(
-      `- ${expirationDate} (${data.dte} DTE): $${data.expectedMove.toFixed(2)} (strike ATM: $${data.atmStrike}). ` +
+      `- ${expirationDate} (${data.dte} DTE): $${data.expectedMove.toFixed(2)} (strike ATM: $${data.atmStrike})${effStr}. ` +
       `Cone 1σ: $${lower.toFixed(2)} a $${upper.toFixed(2)}. ` +
       `Para Put Spreads, a perna vendida deve ficar **fora** do cone (abaixo de $${lower.toFixed(2)}); se estiver dentro, o risco está mal dimensionado.`,
     )
@@ -459,11 +561,11 @@ function buildIVByExpirationBlock(): string | null {
   let block = '\n**IV por vencimento (term structure)** — volatilidade implícita ATM por DTE:\n'
   block += `Curva: ${curve.map((p) => `${p.dte}d=${p.iv}%`).join(' → ')}\n`
   block += `IV 21 DTE: ${iv21.iv}% | IV 45 DTE: ${iv45.iv}%\n`
-  block += 'Para Put Spreads 21–45 DTE, se a volatilidade implícita do vencimento escolhido estiver baixa, **vetar** a operação e sugerir aguardar um pico de medo no mercado.\n'
+  block += 'Para Put Spreads, se a volatilidade implícita do vencimento escolhido estiver baixa, **vetar** a operação e sugerir aguardar um pico de medo no mercado.\n'
   return block
 }
 
-/** POP reference for short put 2%, 3%, 4% OTM at 21 and 45 DTE. */
+/** POP reference for short put 2%, 3%, 4% OTM at all DTEs available in VIX term structure. */
 function buildPOPReferenceBlock(spot: number): string | null {
   if (spot <= 0) return null
   const ts = getVIXTermStructureSnapshot()
@@ -471,10 +573,9 @@ function buildPOPReferenceBlock(spot: number): string | null {
   const curve = ts.curve
   const r = getRiskFreeRate()
   const otmPcts = [0.98, 0.97, 0.96] as const
-  const dtes = [21, 45] as const
-  const lines: string[] = ['\n**POP de referência (perna vendida put, OTM)** — probabilidade de expirar OTM (N(d2)):\n']
-  for (const dte of dtes) {
-    const point = curve.reduce((best, c) => (Math.abs(c.dte - dte) < Math.abs(best.dte - dte) ? c : best))
+  const lines: string[] = ['\n**POP de referência (perna vendida put, OTM)** — probabilidade de expirar OTM (N(d2)) por DTE:\n']
+  for (const point of curve) {
+    const dte = point.dte
     const sigma = point.iv / 100
     const T = dte / 365
     const parts = otmPcts.map((pct) => {
@@ -502,6 +603,8 @@ function buildPrompt(
   expectedMoveBlock?: string | null,
   ivByExpirationBlock?: string | null,
   popReferenceBlock?: string | null,
+  regimeVetoBlock?: string | null,
+  vannaCharmBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -535,9 +638,19 @@ function buildPrompt(
     prompt += `**IV Rank SPY**${ivAge}${confTag(confidence?.ivRank)}: ${ivRank.value?.toFixed(1)}% | Percentil: ${ivRank.percentile?.toFixed(1)}% | Classificação: ${ivRank.label}${ivhvRatio}\n`
   }
 
+  // --- Checklist de Regime (vetos quantitativos) ---
+  if (regimeVetoBlock) {
+    prompt += regimeVetoBlock
+  }
+
   // --- GEX (Gamma Exposure) ---
   if (gexMultiBlock) {
     prompt += gexMultiBlock
+  }
+
+  // --- Vanna/Charm Exposure ---
+  if (vannaCharmBlock) {
+    prompt += vannaCharmBlock
   }
 
   // --- Put/Call Ratio ---
@@ -623,6 +736,7 @@ function buildPrompt(
 async function extractStructuredOutput(
   fullText: string,
   snapshot: AnalyzeBody['marketSnapshot'],
+  chain?: OptionExpiry[],
 ): Promise<AnalysisStructuredOutput | null> {
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -638,7 +752,10 @@ async function extractStructuredOutput(
         messages: [
           {
             role: 'system',
-            content: 'Extraia dados estruturados de análises de opções. Retorne JSON conforme o schema.',
+            content:
+              'Extraia dados estruturados de análises de opções. Retorne JSON conforme o schema. ' +
+              'Os campos confidence e pop_estimate devem ser sempre números entre 0 e 1 (ex: 0.65 para 65%, 0.70 para 70%). ' +
+              'trade_signal: "trade" se condições alinhadas, "wait" se 1 veto, "avoid" se 2+ vetos. regime_score: 0-10. no_trade_reasons: lista de razões quando não for trade.',
           },
           {
             role: 'user',
@@ -657,7 +774,34 @@ async function extractStructuredOutput(
     if (!res.ok) return null
     const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
     const raw = json.choices?.[0]?.message?.content ?? ''
-    return JSON.parse(raw) as AnalysisStructuredOutput
+    const structured = JSON.parse(raw) as AnalysisStructuredOutput
+    if (structured.confidence > 1) {
+      structured.confidence = Math.min(1, Math.max(0, structured.confidence / 100))
+    }
+    if (structured.pop_estimate != null && structured.pop_estimate > 1) {
+      structured.pop_estimate = Math.min(1, Math.max(0, structured.pop_estimate / 100))
+    }
+    if (!structured.trade_signal) structured.trade_signal = 'trade'
+    if (!Array.isArray(structured.no_trade_reasons)) structured.no_trade_reasons = []
+    if (typeof structured.regime_score !== 'number') structured.regime_score = 5
+    structured.regime_score = Math.min(10, Math.max(0, structured.regime_score))
+    if (structured.data_quality_warning !== null && structured.data_quality_warning !== undefined && typeof structured.data_quality_warning !== 'string') {
+      structured.data_quality_warning = null
+    }
+    // Validate that suggested_strategy legs use strikes present in the option chain
+    if (chain && chain.length > 0 && structured.suggested_strategy?.legs?.length) {
+      const validStrikes = new Set<number>()
+      for (const exp of chain) {
+        for (const c of exp.calls) validStrikes.add(c.strike)
+        for (const p of exp.puts) validStrikes.add(p.strike)
+      }
+      const invalidLeg = structured.suggested_strategy.legs.find((leg) => !validStrikes.has(leg.strike))
+      if (invalidLeg) {
+        console.warn(`[Structured] Strike ${invalidLeg.strike} not in option chain — clearing suggested_strategy`)
+        structured.suggested_strategy = null
+      }
+    }
+    return structured
   } catch (err) {
     console.error('[Structured] Extraction failed:', (err as Error).message)
     return null
@@ -836,6 +980,317 @@ const claudeAnalysisBreaker = createBreaker(
 )
 
 // ---------------------------------------------------------------------------
+// System prompt builder (reused by route and runAnalysisForPayload)
+// ---------------------------------------------------------------------------
+
+const STATIC_SYSTEM_PROMPT =
+  'REGRAS DE INTEGRIDADE ANALÍTICA (INVIOLÁVEIS): ' +
+  '(1) STRIKES REAIS APENAS: Sugira apenas strikes que aparecem explicitamente no option chain do prompt. Se o chain não tiver o strike ideal, mencione o mais próximo disponível. ' +
+  '(2) IV DE FONTES CITADAS: Nunca invente valores de IV. Use apenas os dados da term structure e dos greeks do chain fornecidos. ' +
+  '(3) CONFLITOS OBRIGATÓRIOS: Se dois indicadores apontam direções opostas (ex: RSI sobrevendido + GEX negativo), apresente AMBOS em risk_factors. Nunca silencie um sinal negativo. ' +
+  '(4) PROBABILIDADES MATEMÁTICAS: Todas as PoP devem derivar de delta (proxy) ou N(d2) da tabela POP de referência. Nunca use "aproximadamente X%" sem base matemática. ' +
+  '(5) DADOS AUSENTES: Se um bloco de dados não aparece no prompt, declare "dado não disponível" — nunca infira ou extrapole. ' +
+  '(6) INCERTEZA EXPLÍCITA: Se confiança do sinal for MÉDIA ou BAIXA, reflita isso no campo confidence (≤0.6) e em risk_factors. ' +
+  'Centra a análise em: Gamma Exposure (GEX), decaimento (Theta), exposição à volatilidade (Vega), Volume Profile e contexto macroeconómico. ' +
+  'Você é um especialista sênior em opções americanas, com foco em SPY e ETFs de grande liquidez. ' +
+  'Suas análises são concisas, objetivas e acionáveis. ' +
+  'Use markdown para formatar suas respostas com headers, listas e destaques. ' +
+  'Dados marcados [AO VIVO] têm máxima relevância para análise de timing. ' +
+  'Dados marcados [RECENTE] são muito confiáveis para decisões táticas. ' +
+  'Dados marcados [SNAPSHOT] são contexto estrutural — use-os para direção de tendência, não para decisões de entrada/saída. ' +
+  'Use delta para avaliar probabilidade ITM (call ATM ≈ 0.50 ≈ 50% de chance de expirar ITM). ' +
+  'Theta: custo de carregamento diário; priorize ancoragem GEX e Vega. ' +
+  'Vega: IV Rank e term structure indicam se vol está cara ou barata. ' +
+  'Você tem acesso às suas análises anteriores do dia. Use-as para: manter coerência narrativa, reconhecer quando mudou de opinião (e explicar por quê), e avaliar se níveis de suporte/resistência anteriores foram testados com sucesso. ' +
+  'GEX (Gamma Exposure) indica níveis de hedging de market makers. ' +
+  'Em regime de GEX positivo, MMs compram quedas e vendem altas — o mercado tende a reverter à média. ' +
+  'Em regime negativo, MMs amplificam movimentos — espere maior volatilidade direcional. ' +
+  'O GEX flip point e o Zero Gamma Level (ZGL) são os níveis mais importantes: acima deles, supressão de volatilidade; abaixo, amplificação. ' +
+  'Use o max gamma strike como nível magnético primário. Volume Profile (fluxo de opções) complementa GEX para níveis-chave. ' +
+  'O Put/Call Ratio do dia indica o sentimento do fluxo real de opções SPY. ' +
+  'P/C > 1.2 (BEARISH): hedgers dominam — cautela com posições longas desprotegidas. ' +
+  'P/C < 0.7 (BULLISH): calls dominam — possível complacência, monitore reversão. ' +
+  'P/C 0.7–1.2 (NEUTRAL): sem sinal direcional forte no fluxo de opções. ' +
+  'VIX Term Structure: contango = DTEs mais longos oferecem theta; backwardation = vol spot alta, considerar Vega e DTEs curtos. ' +
+  'Cada seção de dados inclui um score de Confiança (0-1). ' +
+  'Confiança ALTA (>=0.8): use para decisões de timing e entrada. ' +
+  'Confiança MÉDIA (0.5-0.8): use como contexto direcional. ' +
+  'Confiança BAIXA (<0.5): mencione com ressalva, pode estar desatualizado. ' +
+  'Nunca baseie uma recomendação de entrada/saída exclusivamente em dados com Confiança BAIXA. ' +
+  'Checklist de Veto Quantitativo (APLICAR ANTES DE QUALQUER RECOMENDAÇÃO): ' +
+  'VETO se IV Rank < 15%: prêmio insuficiente para venda de volatilidade. ' +
+  'VETO se IV/HV30 < 0.8: IV abaixo da volatilidade realizada — venda não tem edge. ' +
+  'VETO se GEX negativo em TODOS os DTEs: ambiente de amplificação — não vender spreads. ' +
+  'VETO se VIX spike >20% no dia: pânico agudo — aguardar normalização. ' +
+  'VETO se dados críticos (spy/vix/optionChain) com Confiança BAIXA: análise inválida. ' +
+  'VETO se earnings de componentes SPY nos próximos 2 dias com alto impacto. ' +
+  'Se 2+ vetos ativos: trade_signal=\'avoid\', explique os vetos em no_trade_reasons. ' +
+  'Se 1 veto ativo: trade_signal=\'wait\', explique e dê condição de entrada. ' +
+  '\'Não operar\' é uma posição legítima e muitas vezes a MELHOR decisão. ' +
+  'RSI sobrecomprado (>70) + resistência GEX = setup de venda forte. RSI sobrevendido (<30) + suporte GEX = setup de compra forte. ' +
+  'MACD crossover bullish + GEX positivo = momentum sustentável. Use indicadores técnicos como confirmação, não como sinal primário. ' +
+  'Tens à disposição a ferramenta fetch_24h_context para contexto macro (FRED, BLS, Fear & Greed, eventos, earnings). ' +
+  'Invoca-a quando: VIX acima de 20 ou spike (>15%), P/C acima de 1.3 ou abaixo de 0.6, RSI extremo com MACD crossover, ou quando o utilizador pedir macro/earnings. ' +
+  'Varredura de DTE: Analise TODOS os vencimentos disponíveis no option chain e no Expected Move. ' +
+  'Para cada DTE candidato, avalie em sequência: (1) IV do vencimento (term structure) — eliminar se IV < percentil 25% da curva. ' +
+  '(2) PoP na perna vendida (delta proxy) — eliminar se PoP < 65% no strike OTM selecionado. ' +
+  '(3) Alinhamento GEX — o strike vendido deve ficar além do put wall do DTE. ' +
+  '(4) Expected Move — o strike vendido deve ficar fora do cone 1σ. ' +
+  '(5) Theta/dia relativo ao prêmio recebido — preferir DTEs com theta eficiente. ' +
+  'O DTE com MAIOR score nos 5 critérios é a oportunidade clara. Justifique a escolha com números. ' +
+  'DTEs curtos (0-7D): válidos em regime GEX positivo + IV backwardation + tendência clara. ' +
+  'DTEs médios (14-30D): válidos em contango + IV Rank >30% + cone bem definido. ' +
+  'DTEs longos (45-60D): válidos em estrutura de médio prazo sólida + IV barata. ' +
+  'Vanna Exposure (VEX): dDelta/dIV agregado dos dealers. VEX positivo alto: quando IV comprime, dealers de-hedge comprando spot → suporte bullish. VEX negativo: IV subindo força venda de spot. Charm Exposure (CEX): dDelta/dTime. CEX negativo alto próximo de expiração: pressão de venda intraday. Use VEX/CEX como confirmação, não como sinal primário. ' +
+  'GEX por DTE: use o bucket (0/1/7/21/45/ALL) que corresponda ao DTE escolhido; flip point e max gamma desse DTE são os níveis de âncora. ' +
+  'Expected Move (soma Call ATM + Put ATM = straddle) por vencimento indica o movimento esperado em 1 desvio padrão (~68% de probabilidade). ' +
+  'Para Put Spreads, a perna vendida deve ficar fora do cone (strike short abaixo de SPY − Expected Move do vencimento escolhido). ' +
+  'Se a perna vendida estiver dentro do cone, **alerte criticamente** que o risco da operação está mal calculado. ' +
+  'Se a volatilidade implícita do vencimento escolhido estiver baixa, **vetar** a operação e sugerir aguardar um pico de medo no mercado. ' +
+  'Put Spread só tem vantagem matemática com POP ≥ 65–70% na perna vendida; **vetar** se o POP estiver abaixo; use a tabela de POP de referência e o delta ao avaliar strikes. ' +
+  'Framework de análise — aplique nesta ordem: ' +
+  '(1) REGIME VOL: IV Rank + IV/HV30 + VIX term structure → ambiente de venda ou compra de volatilidade? ' +
+  '(2) REGIME GEX por DTE: para o DTE candidato, qual é o regime? Flip point e max gamma são os níveis de âncora. ' +
+  '(3) STRIKE COM PoP: use delta como proxy de PoP (delta 0.16 ≈ 84% PoP, delta 0.30 ≈ 70% PoP); posicione short strikes além dos walls de GEX do DTE escolhido. ' +
+  '(4) CONFIRMAÇÃO TÉCNICA: RSI/MACD/VWAP/BBands confirmam ou contradizem? Se contraditório, mencione o conflito. ' +
+  'Formato de saída para estratégias recomendadas: ' +
+  'Estratégia: [nome] | DTE: [X] dias | Expiração: [data] | ' +
+  'Estrutura: [legs] | PoP estimado: ~XX% (delta ≈ 0.XX) | ' +
+  'Crédito: ~$X.XX | Risco máx: ~$X.XX | Theta/dia: ~$X.XX | ' +
+  'Ancoragem GEX: [nível — put wall/call wall/flip point do DTE] | ' +
+  'Invalidação: [preço e descrição do nível] | ' +
+  'Confiança: ALTA/MÉDIA/BAIXA — [justificativa em 1 linha]. ' +
+  'Os dados de porcentagem no payload (PoP, Confiança, IV Rank, etc.) já estão em formato absoluto. Utilize-os diretamente acompanhados do sinal %, sem re-multiplicar por 100.'
+
+function buildSystemPrompt(marketStatusNote: string): string {
+  return marketStatusNote + STATIC_SYSTEM_PROMPT
+}
+
+// ---------------------------------------------------------------------------
+// runAnalysisForPayload — non-streaming analysis for scheduled signal (reused by POST /api/analyze logic)
+// ---------------------------------------------------------------------------
+
+export interface RunAnalysisOptions {
+  snapshot?: AnalyzeBody['marketSnapshot']
+  optionChain?: OptionExpiry[]
+  context?: ContextData
+  freshness?: FreshnessBlock
+}
+
+export async function runAnalysisForPayload(
+  options: RunAnalysisOptions = {},
+): Promise<{ fullText: string; structured: AnalysisStructuredOutput | null }> {
+  const body = options as { marketSnapshot?: RunAnalysisOptions['snapshot']; optionChain?: OptionExpiry[]; context?: ContextData; freshness?: FreshnessBlock }
+  const snapshot = body.marketSnapshot ?? {
+    spy: marketState.spy.last
+      ? {
+          last: marketState.spy.last,
+          change: marketState.spy.change ?? 0,
+          changePct: marketState.spy.changePct ?? 0,
+        }
+      : undefined,
+    vix: marketState.vix.last
+      ? { last: marketState.vix.last, level: marketState.vix.level ?? 'unknown' }
+      : undefined,
+    ivRank: marketState.ivRank.value
+      ? {
+          value: marketState.ivRank.value,
+          percentile: marketState.ivRank.percentile ?? 0,
+          label: marketState.ivRank.label ?? 'unknown',
+        }
+      : undefined,
+  }
+
+  const msToIso = (ms: number): string | undefined =>
+    ms > 0 ? new Date(ms).toISOString() : undefined
+
+  const freshness: FreshnessBlock = body.freshness ?? {
+    spy: msToIso(marketState.spy.lastUpdated),
+    vix: msToIso(marketState.vix.lastUpdated),
+    ivRank: msToIso(marketState.ivRank.lastUpdated),
+    optionChain: msToIso(getOptionChainCapturedAt()),
+    fearGreed: newsSnapshot.fearGreed?.lastUpdated ? msToIso(newsSnapshot.fearGreed.lastUpdated) : undefined,
+    macro: msToIso(newsSnapshot.macroTs),
+    bls: msToIso(newsSnapshot.blsTs),
+    macroEvents: msToIso(newsSnapshot.macroEventsTs),
+    earnings: msToIso(newsSnapshot.earningsTs),
+  }
+
+  const optionChain = body.optionChain ?? getOptionChainSnapshot() ?? undefined
+
+  const advancedSnapshot = getAdvancedMetricsSnapshot()
+  const gexMultiBlock = advancedSnapshot?.gexByExpiration
+    ? buildGexMultiDTEBlock(advancedSnapshot.gexByExpiration)
+    : null
+  const pcBlock = advancedSnapshot?.putCallRatio
+    ? buildPutCallRatioBlock(advancedSnapshot.putCallRatio)
+    : null
+
+  const techSnapshot = getTechnicalSnapshot()
+  const breakerStatuses = getBreakerStatuses()
+  const tradierStatus = Object.entries(breakerStatuses)
+    .filter(([k]) => k.startsWith('tradier'))
+    .map(([, v]) => v)
+    .reduce(
+      (worst, s) => (s === 'OPEN' ? 'OPEN' : worst === 'OPEN' ? 'OPEN' : s === 'HALF_OPEN' ? 'HALF_OPEN' : worst),
+      'CLOSED' as string,
+    )
+  const confidence: Record<string, ConfidenceResult> = {
+    spy: calculateConfidence('spy', freshness.spy, undefined),
+    vix: calculateConfidence('vix', freshness.vix, breakerStatuses['vix-finnhub']),
+    ivRank: calculateConfidence('ivRank', freshness.ivRank, undefined),
+    fearGreed: calculateConfidence('fearGreed', freshness.fearGreed, breakerStatuses['cnn']),
+    macro: calculateConfidence('macro', freshness.macro, breakerStatuses['fred']),
+    bls: calculateConfidence('bls', freshness.bls, breakerStatuses['bls']),
+    macroEvents: calculateConfidence('macroEvents', freshness.macroEvents, breakerStatuses['finnhub']),
+    headlines: calculateConfidence('headlines', null, undefined),
+    earnings: calculateConfidence('earnings', freshness.earnings, undefined),
+    optionChain: calculateConfidence('optionChain', freshness.optionChain, tradierStatus),
+    technicals: calculateConfidence('technicals', techSnapshot?.capturedAt ?? null, breakerStatuses['alphavantage']),
+  }
+
+  const techBlock = techSnapshot
+    ? buildTechBlock(techSnapshot, snapshot?.spy?.last ?? null, confidence, getLastVwap())
+    : null
+  const priceHistoryBlock = buildPriceHistoryBlock(marketState.spy.priceHistory)
+  const expectedMoveSnapshot = getExpectedMoveSnapshot()
+  const expectedMoveBlock = buildExpectedMoveBlock(expectedMoveSnapshot, snapshot?.spy?.last ?? 0)
+  const ivByExpirationBlock = buildIVByExpirationBlock()
+  const popReferenceBlock = buildPOPReferenceBlock(snapshot?.spy?.last ?? 0)
+  const regimeVetoBlock = buildRegimeVetoBlock(snapshot, confidence, advancedSnapshot?.gexByExpiration ?? null)
+  const vannaCharmBlock = buildVannaCharmBlock(advancedSnapshot?.gexByExpiration ?? null)
+
+  const userContent = buildPrompt(
+    snapshot,
+    optionChain,
+    freshness,
+    undefined, // no memory for scheduled run
+    gexMultiBlock,
+    pcBlock,
+    confidence,
+    techBlock,
+    priceHistoryBlock || null,
+    expectedMoveBlock,
+    ivByExpirationBlock,
+    popReferenceBlock,
+    regimeVetoBlock,
+    vannaCharmBlock,
+  )
+
+  const marketStatusNote = isMarketOpen()
+    ? ''
+    : 'ATENÇÃO: O mercado está FECHADO no momento (fim de semana ou fora do horário de negociação NYSE). ' +
+      'Todos os dados disponíveis são da última captura antes do fechamento — não há cotações ao vivo. ' +
+      'Comece a análise mencionando isso explicitamente. ' +
+      'Enquadre qualquer recomendação para a próxima abertura de mercado; não sugira entradas ou saídas imediatas.\n\n'
+  const systemPrompt = buildSystemPrompt(marketStatusNote)
+
+  const noop = () => {}
+  const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
+
+  let firstResponse = ''
+  let toolCallName: string | null = null
+  let usedClaude = false
+
+  if (useClaudePrimary) {
+    const claudeResult = (await claudeAnalysisBreaker.fire({
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userContent }],
+      sendEvent: noop,
+    })) as { fullResponse: string; toolCallName: string | null } | null
+    if (claudeResult != null) {
+      usedClaude = true
+      firstResponse = claudeResult.fullResponse
+      toolCallName = claudeResult.toolCallName
+    }
+  }
+
+  if (!usedClaude) {
+    const firstRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${CONFIG.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        stream: true,
+        max_tokens: 1200,
+        tools: [FETCH_CONTEXT_TOOL],
+        tool_choice: 'auto',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userContent },
+        ],
+      }),
+    })
+    if (firstRes.ok && firstRes.body) {
+      const openaiFirst = await streamTokens(firstRes, noop)
+      firstResponse = openaiFirst.fullResponse
+      toolCallName = openaiFirst.toolCallName
+    }
+  }
+
+  let fullResponse = firstResponse
+
+  if (toolCallName === 'fetch_24h_context') {
+    const macroBlock = buildMacroContextBlock(body.context, freshness, confidence)
+    if (usedClaude) {
+      const claudeFollowUp = await streamClaudeAnalyze({
+        system: systemPrompt,
+        messages: [
+          { role: 'user', content: userContent },
+          {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'call_macro', name: 'fetch_24h_context', input: {} }],
+          },
+          {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'call_macro', content: macroBlock }],
+          },
+        ],
+        sendEvent: noop,
+        includeTools: false,
+      })
+      fullResponse = claudeFollowUp.fullResponse
+    } else if (CONFIG.OPENAI_API_KEY) {
+      const followUpMessages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            { id: 'call_macro', type: 'function', function: { name: 'fetch_24h_context', arguments: '{}' } },
+          ],
+        } as any,
+        { role: 'tool', tool_call_id: 'call_macro', content: macroBlock } as any,
+      ]
+      const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${CONFIG.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          stream: true,
+          max_tokens: 1200,
+          messages: followUpMessages,
+        }),
+      })
+      if (secondRes.ok && secondRes.body) {
+        const { fullResponse: secondResponse } = await streamTokens(secondRes, noop)
+        fullResponse = secondResponse
+      }
+    }
+  }
+
+  const structured = await extractStructuredOutput(fullResponse, snapshot, optionChain)
+  return { fullText: fullResponse, structured }
+}
+
+// ---------------------------------------------------------------------------
 // Route registration
 // ---------------------------------------------------------------------------
 
@@ -953,6 +1408,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     )
     const ivByExpirationBlock = buildIVByExpirationBlock()
     const popReferenceBlock = buildPOPReferenceBlock(snapshot?.spy?.last ?? 0)
+    const regimeVetoBlock = buildRegimeVetoBlock(snapshot, confidence, advancedSnapshot?.gexByExpiration ?? null)
+    const vannaCharmBlock = buildVannaCharmBlock(advancedSnapshot?.gexByExpiration ?? null)
 
     const userContent = buildPrompt(
       snapshot,
@@ -967,6 +1424,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       expectedMoveBlock,
       ivByExpirationBlock,
       popReferenceBlock,
+      regimeVetoBlock,
+      vannaCharmBlock,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     if (!CONFIG.ANTHROPIC_API_KEY) {
@@ -985,61 +1444,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
         'Comece a análise mencionando isso explicitamente. ' +
         'Enquadre qualquer recomendação para a próxima abertura de mercado; não sugira entradas ou saídas imediatas.\n\n'
 
-    const systemPrompt =
-      marketStatusNote +
-      'Foco da plataforma: SWING TRADE com expirações 21 a 45 DTE (não operações 0 DTE de alta frequência). ' +
-      'Centra a análise em: Gamma Exposure (GEX), decaimento (Theta), exposição à volatilidade (Vega), Volume Profile e contexto macroeconómico. ' +
-      'Você é um especialista sênior em opções americanas, com foco em SPY e ETFs de grande liquidez. ' +
-      'Suas análises são concisas, objetivas e acionáveis. ' +
-      'Use markdown para formatar suas respostas com headers, listas e destaques. ' +
-      'Dados marcados [AO VIVO] têm máxima relevância para análise de timing. ' +
-      'Dados marcados [RECENTE] são muito confiáveis para decisões táticas. ' +
-      'Dados marcados [SNAPSHOT] são contexto estrutural — use-os para direção de tendência, não para decisões de entrada/saída. ' +
-      'Use delta para avaliar probabilidade ITM (call ATM ≈ 0.50 ≈ 50% de chance de expirar ITM). ' +
-      'Theta: custo de carregamento diário; em swing 21-45 DTE o theta é mais suave — priorize ancoragem GEX e Vega. ' +
-      'Vega: em 21-45 DTE a exposição à volatilidade é relevante; IV Rank e term structure indicam se vol está cara ou barata. ' +
-      'Você tem acesso às suas análises anteriores do dia. Use-as para: manter coerência narrativa, reconhecer quando mudou de opinião (e explicar por quê), e avaliar se níveis de suporte/resistência anteriores foram testados com sucesso. ' +
-      'GEX (Gamma Exposure) indica níveis de hedging de market makers. ' +
-      'Em regime de GEX positivo, MMs compram quedas e vendem altas — o mercado tende a reverter à média. ' +
-      'Em regime negativo, MMs amplificam movimentos — espere maior volatilidade direcional. ' +
-      'O GEX flip point e o Zero Gamma Level (ZGL) são os níveis mais importantes: acima deles, supressão de volatilidade; abaixo, amplificação. ' +
-      'Use o max gamma strike como nível magnético primário. Volume Profile (fluxo de opções) complementa GEX para níveis-chave. ' +
-      'O Put/Call Ratio do dia indica o sentimento do fluxo real de opções SPY. ' +
-      'P/C > 1.2 (BEARISH): hedgers dominam — cautela com posições longas desprotegidas. ' +
-      'P/C < 0.7 (BULLISH): calls dominam — possível complacência, monitore reversão. ' +
-      'P/C 0.7–1.2 (NEUTRAL): sem sinal direcional forte no fluxo de opções. ' +
-      'VIX Term Structure: contango = favorecer DTEs 21-45 para theta; backwardation = vol spot alta, considerar Vega. ' +
-      'Cada seção de dados inclui um score de Confiança (0-1). ' +
-      'Confiança ALTA (>=0.8): use para decisões de timing e entrada. ' +
-      'Confiança MÉDIA (0.5-0.8): use como contexto direcional. ' +
-      'Confiança BAIXA (<0.5): mencione com ressalva, pode estar desatualizado. ' +
-      'Nunca baseie uma recomendação de entrada/saída exclusivamente em dados com Confiança BAIXA. ' +
-      'RSI sobrecomprado (>70) + resistência GEX = setup de venda forte. RSI sobrevendido (<30) + suporte GEX = setup de compra forte. ' +
-      'MACD crossover bullish + GEX positivo = momentum sustentável. Use indicadores técnicos como confirmação, não como sinal primário. ' +
-      'Tens à disposição a ferramenta fetch_24h_context para contexto macro (FRED, BLS, Fear & Greed, eventos, earnings). ' +
-      'Invoca-a quando: VIX acima de 20 ou spike (>15%), P/C acima de 1.3 ou abaixo de 0.6, RSI extremo com MACD crossover, ou quando o utilizador pedir macro/earnings. ' +
-      'Interpretação do GEX por DTE (foco swing 21-45): ' +
-      '21D: janela principal para iron condors e vertical spreads mensais; max gamma 21D é a ancoragem dos MMs; flip point 21D é nível de breakeven. ' +
-      '45D: contexto estrutural para direção de médio prazo; use para confirmar bias e níveis. ' +
-      '7D/0DTE/1D: contexto tático secundário. ALL (agregado): exposição consolidada dos MMs. ' +
-      'Ao recomendar estratégias, priorize 21-45 DTE e indique qual DTE/GEX embasa a recomendação. ' +
-      'Expected Move (soma Call ATM + Put ATM = straddle) por vencimento indica o movimento esperado em 1 desvio padrão (~68% de probabilidade). ' +
-      'Para Put Spreads 21–45 DTE, a perna vendida deve ficar fora do cone (strike short abaixo de SPY − Expected Move). ' +
-      'Se a perna vendida estiver dentro do cone, **alerte criticamente** que o risco da operação está mal calculado. ' +
-      'Se a volatilidade implícita do vencimento escolhido (21 ou 45 DTE) estiver baixa, **vetar** a operação e sugerir aguardar um pico de medo no mercado. ' +
-      'Put Spread só tem vantagem matemática com POP ≥ 65–70% na perna vendida; **vetar** se o POP estiver abaixo; use a tabela de POP de referência e o delta ao avaliar strikes. ' +
-      'Framework de análise — aplique nesta ordem: ' +
-      '(1) REGIME VOL: IV Rank + IV/HV30 + VIX term structure → ambiente de venda ou compra de volatilidade? ' +
-      '(2) REGIME GEX por DTE: para o DTE candidato, qual é o regime? Flip point e max gamma são os níveis de âncora. ' +
-      '(3) STRIKE COM PoP: use delta como proxy de PoP (delta 0.16 ≈ 84% PoP, delta 0.30 ≈ 70% PoP); posicione short strikes além dos walls de GEX do DTE escolhido. ' +
-      '(4) CONFIRMAÇÃO TÉCNICA: RSI/MACD/VWAP/BBands confirmam ou contradizem? Se contraditório, mencione o conflito. ' +
-      'Formato de saída para estratégias recomendadas: ' +
-      'Estratégia: [nome] | DTE: [X] dias | Expiração: [data] | ' +
-      'Estrutura: [legs] | PoP estimado: ~XX% (delta ≈ 0.XX) | ' +
-      'Crédito: ~$X.XX | Risco máx: ~$X.XX | Theta/dia: ~$X.XX | ' +
-      'Ancoragem GEX: [nível — put wall/call wall/flip point do DTE] | ' +
-      'Invalidação: [preço e descrição do nível] | ' +
-      'Confiança: ALTA/MÉDIA/BAIXA — [justificativa em 1 linha]'
+    const systemPrompt = buildSystemPrompt(marketStatusNote)
 
     const baseMessages: Array<{ role: string; content: string }> = [
       { role: 'system', content: systemPrompt },
@@ -1154,7 +1559,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       }
 
       // Extract structured output via JSON Schema enforcement
-      const structured = await extractStructuredOutput(fullResponse, snapshot)
+      const structured = await extractStructuredOutput(fullResponse, snapshot, body.optionChain)
       if (structured) {
         sendEvent('structured', structured)
         registerAlertsFromAnalysis(userId, structured)

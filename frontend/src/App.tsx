@@ -10,6 +10,7 @@ import { IVRankCard } from './components/cards/IVRankCard'
 import { VIXCard } from './components/cards/VIXCard'
 import { AIPanel } from './components/ai/AIPanel'
 import { PreMarketBriefing } from './components/ai/PreMarketBriefing'
+import { LastScheduledSignal } from './components/ai/LastScheduledSignal'
 import { OptionChainPanel } from './components/options/OptionChainPanel'
 import { GEXPanel } from './components/options/GEXPanel'
 import { PortfolioPanel } from './components/portfolio/PortfolioPanel'
@@ -39,6 +40,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           <VIXCard />
         </div>
         <PreMarketBriefing />
+        <LastScheduledSignal />
         <AIPanel />
         <GEXPanel />
         <PortfolioPanel />

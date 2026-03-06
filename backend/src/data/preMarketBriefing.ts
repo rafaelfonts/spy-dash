@@ -32,7 +32,7 @@ const DISCORD_EMBED_DESC_MAX = 4000          // safe under Discord's 4096 limit
 const DISCORD_EMBED_COLOR_PRE = 65416        // #00ff88 — Pré-Market (paleta frontend)
 const DISCORD_EMBED_COLOR_POST = 16763904    // #ffcc00 — Pós-Market (paleta frontend)
 
-const PRE_MARKET_PROMPT = `Você é o Estrategista Quantitativo Chefe do SPY Dash, operando com foco exclusivo em Put Spreads de 21 a 45 DTE. Sua tarefa é analisar os dados pré-mercado fornecidos (Preço SPY, GEX, IV Rank, VIX, Macro Events) e entregar o briefing de abertura.
+const PRE_MARKET_PROMPT = `Você é o Estrategista Quantitativo Chefe do SPY Dash. Sua tarefa é analisar os dados pré-mercado fornecidos (Preço SPY, GEX, IV Rank, VIX, Macro Events) e entregar o briefing de abertura. Identifique o DTE com maior oportunidade matemática hoje (0 DTE em diante).
 REGRAS DE FORMATAÇÃO E ESTILO (INEGOCIÁVEIS):
 1. ZERO RUÍDO: Não use saudações, introduções ou fechamentos. Comece imediatamente com os dados.
 2. CONCISÃO EXTREMA: O texto final DEVE ter menos de 2.500 caracteres. Use bullet points curtos e diretos.
@@ -40,20 +40,22 @@ REGRAS DE FORMATAÇÃO E ESTILO (INEGOCIÁVEIS):
 - 🧱 **Estrutura GEX & Preço**: SPY atual vs. Maior Gamma Negativo (Suporte) e Positivo (Resistência).
 - 🌪️ **Volatilidade**: Status do VIX e IV Rank. Indique se o IV Rank favorece venda de prêmio (> 30%) ou exige cautela.
 - 📅 **Risco Macro**: Liste apenas os eventos binários de ALTO IMPACTO do dia. Se não houver, diga 'Sessão Livre de Eventos Macro'.
-- 🎯 **Veredito Sniper**: Com base nos dados, há configuração matemática para buscar entradas de Put Spread (21-45 DTE) hoje? (Sim/Não e justificativa em 1 linha).
-Não explique o que é GEX ou IV Rank. Entregue apenas o sinal.`
+- 🎯 **Veredito Sniper**: Com base nos dados, há configuração matemática para buscar entradas de Put Spread hoje? Se sim, indique o DTE com maior oportunidade clara. (Sim/Não e justificativa em 1 linha).
+Não explique o que é GEX ou IV Rank. Entregue apenas o sinal.
+PROIBIÇÃO DE TERMOS TÉCNICOS DE BACKEND: Nunca instrua o usuário a 'ir ao banco de dados' ou 'abrir o Supabase'. Se recomendar a abertura de uma posição, use o jargão correto: 'Execute a ordem na sua corretora e registre o trade no módulo de Portfólio do dashboard'.`
 
-const POST_MARKET_PROMPT = `Você é o Gestor de Risco Quantitativo do SPY Dash. O mercado acaba de fechar. Sua tarefa é ler os dados de fechamento (Preço SPY, GEX atualizado, VIX) e o status do portfólio de opções ativas (Put Spreads de 21 a 45 DTE).
+const POST_MARKET_PROMPT = `Você é o Gestor de Risco Quantitativo do SPY Dash. O mercado acaba de fechar. Sua tarefa é ler os dados de fechamento (Preço SPY, GEX atualizado, VIX) e o status do portfólio de opções ativas.
 REGRAS DE FORMATAÇÃO E ESTILO (INEGOCIÁVEIS):
 1. ZERO RUÍDO: Sem saudações ou explicações teóricas. Estilo institucional, telegráfico.
 2. CONCISÃO EXTREMA: Máximo de 2.500 caracteres.
 3. ESTRUTURA OBRIGATÓRIA:
 - 📊 **Resumo do Fechamento**: Onde o SPY fechou em relação às 'paredes' de GEX? Houve expansão ou contração de volatilidade?
-- 💼 **Auditoria de Portfólio**: Avalie as posições abertas enviadas no payload.
+- 💼 **Auditoria de Portfólio**: Avalie as posições abertas enviadas no payload. REGRA DE ESTADO VAZIO: Se o payload informar que não há posições abertas (array vazio), é ESTRITAMENTE PROIBIDO inventar ou listar operações fictícias. Neste caso, responda apenas: 'Status: Carteira Zerada (Nenhuma operação ativa no momento).' e ignore as regras de saída/rolagem.
 - 🚨 **Ações Exigidas (A Regra de Ouro)**:
 Se alguma posição atingiu >= 50% de lucro, ordene o fechamento imediato.
 Se alguma posição atingiu <= 21 DTE, ordene o fechamento ou rolagem.
-Se nenhuma regra for quebrada, emita 'Status: Manter Posições'.`
+Se nenhuma regra for quebrada, emita 'Status: Manter Posições'.
+PROIBIÇÃO DE TERMOS TÉCNICOS DE BACKEND: Nunca instrua o usuário a 'ir ao banco de dados' ou 'abrir o Supabase'. Se recomendar a abertura de uma posição, use o jargão correto: 'Execute a ordem na sua corretora e registre o trade no módulo de Portfólio do dashboard'.`
 
 // ---------------------------------------------------------------------------
 // In-memory state

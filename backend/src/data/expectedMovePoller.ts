@@ -1,11 +1,11 @@
 /**
- * expectedMovePoller — updates Expected Move (1σ) for 21/45 DTE on a fixed interval.
+ * expectedMovePoller — updates Expected Move (1σ) for all expirations 0–60 DTE on a fixed interval.
  *
  * First tick after 10s so Tradier chains can be populated; then 60s during market
  * hours, 5 min outside. Failures are logged; previous snapshot is kept.
  */
 
-import { getExpectedMoveForSwingExpirations } from './expectedMoveService'
+import { getExpectedMoveAllExpirations } from './expectedMoveService'
 import { publishExpectedMove } from './expectedMoveState'
 import { isMarketOpen } from '../lib/time'
 
@@ -16,7 +16,7 @@ const INITIAL_DELAY_MS = 10_000
 
 async function tick(): Promise<void> {
   try {
-    const entries = await getExpectedMoveForSwingExpirations(SYMBOL)
+    const entries = await getExpectedMoveAllExpirations(SYMBOL)
     if (entries.length > 0) publishExpectedMove(entries)
   } catch (err) {
     console.error('[ExpectedMove] Poll failed:', (err as Error).message)

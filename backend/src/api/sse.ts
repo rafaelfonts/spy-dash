@@ -6,6 +6,7 @@ import { getAdvancedMetricsSnapshot } from '../data/advancedMetricsState'
 import { getVIXTermStructureSnapshot } from '../data/vixTermStructureState'
 import { getTechnicalSnapshot } from '../data/technicalIndicatorsState'
 import { getTodaysBriefing } from '../data/preMarketBriefing'
+import { getLastScheduledSignal } from '../data/scheduledSignalService'
 import type { SSEClient } from '../types/market'
 import { SSEBatcher } from '../lib/sseBatcher'
 import { checkAlerts } from '../data/alertEngine'
@@ -63,6 +64,7 @@ emitter.on('advanced-metrics', (data) => broadcast('advanced-metrics', data))
 emitter.on('vix-term-structure', (data) => broadcast('vix-term-structure', data))
 emitter.on('technical-indicators', (data) => broadcast('technical-indicators', data))
 emitter.on('briefing', (data) => broadcast('briefing', data))
+emitter.on('trade_signal_update', (data) => broadcast('trade_signal_update', data))
 emitter.on('quote', (data) => {
   if (data.last !== null) checkAlerts(data.last)
   broadcast('quote', {
@@ -214,6 +216,13 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     if (briefing && new Date() < new Date(briefing.expiresAt)) {
       client.write('briefing', briefing)
     }
+
+    // Send last scheduled trade signal from Redis (10:30 / 15:00 ET) if available
+    getLastScheduledSignal()
+      .then((payload) => {
+        if (payload) client.write('trade_signal_update', payload)
+      })
+      .catch(() => {})
 
     // Heartbeat ping every 15s — keeps proxies from closing idle connections
     const heartbeatTimer = setInterval(() => {

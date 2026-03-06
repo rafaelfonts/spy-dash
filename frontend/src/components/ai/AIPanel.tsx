@@ -23,6 +23,20 @@ function BiasBadge({ bias }: { bias: 'bullish' | 'bearish' | 'neutral' }) {
   )
 }
 
+function TradeSignalBadge({ signal }: { signal: 'trade' | 'wait' | 'avoid' }) {
+  const config =
+    signal === 'trade'
+      ? { label: 'Operar', className: 'bg-[#00ff88]/10 text-[#00ff88] border-[#00ff88]/30' }
+      : signal === 'wait'
+        ? { label: 'Aguardar', className: 'bg-amber-500/10 text-amber-400 border-amber-500/30' }
+        : { label: 'Não operar', className: 'bg-red-500/10 text-red-400 border-red-500/30' }
+  return (
+    <span className={`px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide border ${config.className}`}>
+      {config.label}
+    </span>
+  )
+}
+
 function ChatBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user'
   return (
@@ -203,6 +217,9 @@ export function AIPanel() {
               >
                 <div className="flex items-center gap-2 flex-wrap">
                   <BiasBadge bias={structuredOutput.bias} />
+                  {structuredOutput.trade_signal && (
+                    <TradeSignalBadge signal={structuredOutput.trade_signal} />
+                  )}
                   <span className="text-[11px] text-text-muted">
                     {structuredOutput.suggested_strategy?.name ?? '—'}
                   </span>
@@ -264,9 +281,14 @@ export function AIPanel() {
             <div className="border border-border-subtle rounded-lg bg-bg-elevated/50 flex flex-col">
               {/* Fixed header */}
               <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle shrink-0">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   {structuredOutput && (
-                    <BiasBadge bias={structuredOutput.bias} />
+                    <>
+                      <BiasBadge bias={structuredOutput.bias} />
+                      {structuredOutput.trade_signal && (
+                        <TradeSignalBadge signal={structuredOutput.trade_signal} />
+                      )}
+                    </>
                   )}
                   <span className="text-[11px] text-text-muted">{formatTimestamp()}</span>
                 </div>
@@ -289,6 +311,35 @@ export function AIPanel() {
                 <AnalysisResult text={text} isStreaming={isStreaming} />
                 {structuredOutput && isDone && (
                   <div className="mt-4 space-y-3">
+                    {structuredOutput.data_quality_warning && (
+                      <div className="p-2.5 rounded-lg border border-amber-500/30 bg-amber-500/5 text-[11px] text-amber-200">
+                        {structuredOutput.data_quality_warning}
+                      </div>
+                    )}
+                    {(structuredOutput.trade_signal != null || structuredOutput.regime_score != null) && (
+                      <div className="p-3 bg-bg-elevated rounded-lg border border-border-subtle space-y-2">
+                        <div className="text-[10px] text-text-muted font-semibold uppercase">
+                          Sinal de operação
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {structuredOutput.trade_signal != null && (
+                            <TradeSignalBadge signal={structuredOutput.trade_signal} />
+                          )}
+                          {typeof structuredOutput.regime_score === 'number' && (
+                            <span className="text-[10px] text-text-muted">
+                              Score de regime: <span className="font-num text-text-primary">{structuredOutput.regime_score}/10</span>
+                            </span>
+                          )}
+                        </div>
+                        {structuredOutput.no_trade_reasons && structuredOutput.no_trade_reasons.length > 0 && (
+                          <ul className="mt-2 space-y-1 text-[11px] text-text-secondary list-disc list-inside">
+                            {structuredOutput.no_trade_reasons.map((reason, i) => (
+                              <li key={i}>{reason}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
                     <div className="flex items-center gap-3">
                       <div className="flex-1">
                         <div className="flex justify-between text-[10px] text-text-muted mb-1">

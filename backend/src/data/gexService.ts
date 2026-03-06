@@ -14,6 +14,7 @@ import { CONFIG } from '../config'
 import { getTradierClient } from '../lib/tradierClient'
 import { calculateGEX, findZeroGammaLevel } from '../lib/gexCalculator'
 import type { GEXProfile, ZeroGammaContract } from '../lib/gexCalculator'
+import { calcVanna, calcCharm } from '../lib/blackScholes'
 import { cacheGet, cacheSet } from '../lib/cacheStore'
 import { marketState, newsSnapshot } from './marketState'
 
@@ -35,6 +36,10 @@ export interface DailyGexResult {
   expiration: string           // the expiration date used (YYYY-MM-DD)
   profile: GEXProfile          // full per-strike breakdown for charting
   calculatedAt: string         // ISO 8601
+  /** Vanna Exposure in $M (dealers' delta sensitivity to IV; positive = de-hedge buy when IV drops) */
+  totalVannaExposure: number
+  /** Charm Exposure in $M/day (dealers' delta decay per day; negative = selling pressure into expiry) */
+  totalCharmExposure: number
 }
 
 const CACHE_TTL_MS = 5 * 60_000  // 5 minutes
@@ -176,6 +181,20 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
   // 7. Compute static GEX profile at current spot (ZGL attached for convenience)
   const profile = calculateGEX(strikeInputs, spotPrice, zeroGammaLevel)
 
+  // 8. Vanna & Charm Exposure (same sign convention as GEX: call +1, put -1)
+  let totalVEX = 0
+  let totalCEX = 0
+  for (const c of zglContracts) {
+    const vanna = calcVanna(spotPrice, c.strike, c.T, r, c.iv)
+    const charm = calcCharm(spotPrice, c.strike, c.T, r, c.iv)
+    const sign = c.type === 'call' ? 1 : -1
+    const notional = c.oi * 100 * spotPrice
+    totalVEX += sign * notional * vanna
+    totalCEX += sign * notional * (charm / 365)  // charm per day
+  }
+  const totalVannaExposure = Math.round((totalVEX / 1_000_000) * 100) / 100   // $M
+  const totalCharmExposure = Math.round((totalCEX / 1_000_000) * 100) / 100   // $M/day
+
   const result: DailyGexResult = {
     totalNetGamma: profile.totalGEX,
     callWall: profile.callWall,
@@ -188,6 +207,8 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
     expiration,
     profile,
     calculatedAt: profile.calculatedAt,
+    totalVannaExposure,
+    totalCharmExposure,
   }
 
   console.log(
@@ -295,6 +316,19 @@ async function calculateGexForExpiration(
   const zeroGammaLevel = await findZeroGammaLevel(zglContracts, spotPrice, r)
   const profile = calculateGEX(strikeInputs, spotPrice, zeroGammaLevel)
 
+  let totalVEX = 0
+  let totalCEX = 0
+  for (const c of zglContracts) {
+    const vanna = calcVanna(spotPrice, c.strike, c.T, r, c.iv)
+    const charm = calcCharm(spotPrice, c.strike, c.T, r, c.iv)
+    const sign = c.type === 'call' ? 1 : -1
+    const notional = c.oi * 100 * spotPrice
+    totalVEX += sign * notional * vanna
+    totalCEX += sign * notional * (charm / 365)
+  }
+  const totalVannaExposure = Math.round((totalVEX / 1_000_000) * 100) / 100
+  const totalCharmExposure = Math.round((totalCEX / 1_000_000) * 100) / 100
+
   const result: DailyGexResult = {
     totalNetGamma: profile.totalGEX,
     callWall: profile.callWall,
@@ -307,6 +341,8 @@ async function calculateGexForExpiration(
     expiration,
     profile,
     calculatedAt: profile.calculatedAt,
+    totalVannaExposure,
+    totalCharmExposure,
   }
 
   await cacheSet(cacheKey, result, CACHE_TTL_MS, 'gex-service')
@@ -395,6 +431,8 @@ export async function calculateAllExpirationsGex(symbol: string): Promise<GEXByE
     if (hasOI) {
       const zgl = aggZgl.length > 0 ? await findZeroGammaLevel(aggZgl, spotPrice, r) : null
       const profile = calculateGEX(strikeInputs, spotPrice, zgl)
+      const totalVannaExposure = buckets.reduce((sum, b) => sum + (b.totalVannaExposure ?? 0), 0)
+      const totalCharmExposure = buckets.reduce((sum, b) => sum + (b.totalCharmExposure ?? 0), 0)
       all = {
         totalNetGamma: profile.totalGEX,
         callWall: profile.callWall,
@@ -407,6 +445,8 @@ export async function calculateAllExpirationsGex(symbol: string): Promise<GEXByE
         expiration: 'ALL',
         profile,
         calculatedAt: profile.calculatedAt,
+        totalVannaExposure,
+        totalCharmExposure,
       }
     }
   }

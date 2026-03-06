@@ -1,8 +1,8 @@
 /**
- * ExpectedMoveService — Expected Move (1σ cone) from Tradier ATM straddle for 21 and 45 DTE.
+ * ExpectedMoveService — Expected Move (1σ cone) from Tradier ATM straddle.
  *
- * Used for Put Spread / swing 21–45 DTE: EM = Call_ATM_mid + Put_ATM_mid.
- * The cone is SPY ± EM; short put strike should be below SPY − EM (outside the cone).
+ * Supports both swing expirations (21/45 DTE) and full scan (0–60 DTE) with iv_efficiency score.
+ * EM = Call_ATM_mid + Put_ATM_mid. Cone is SPY ± EM; short put strike should be below SPY − EM.
  */
 
 import { CONFIG } from '../config'
@@ -15,6 +15,8 @@ export interface ExpectedMoveEntry {
   dte: number
   expectedMove: number
   atmStrike: number
+  /** IV efficiency: EM / (spot × √(dte/365)); higher = more premium relative to expected move. Set by getExpectedMoveAllExpirations. */
+  ivEfficiency?: number
 }
 
 const MS_PER_DAY = 86_400_000
@@ -80,6 +82,15 @@ async function expectedMoveForExpiration(
   return { expirationDate: expiration, dte, expectedMove, atmStrike }
 }
 
+/** IV efficiency = EM / (spot × √(dte/365)); higher means more premium per unit of expected move. */
+function computeIvEfficiency(expectedMove: number, spot: number, dte: number): number {
+  if (spot <= 0 || dte <= 0) return 0
+  const sqrtT = Math.sqrt(dte / 365)
+  const denominator = spot * sqrtT
+  if (denominator <= 0) return 0
+  return expectedMove / denominator
+}
+
 /**
  * Returns Expected Move (1σ) for 21 and 45 DTE expirations using Tradier option chains.
  * Uses marketState.spy.last for spot; falls back to Tradier SPY quote if needed.
@@ -117,6 +128,59 @@ export async function getExpectedMoveForSwingExpirations(
   if (results.length > 0) {
     console.log(
       `[ExpectedMove] ${symbol} 21/45 DTE: ${results.map((r) => `${r.dte}D $${r.expectedMove.toFixed(2)}`).join(', ')}`,
+    )
+  }
+  return results
+}
+
+const MAX_DTE_ALL_EXPIRATIONS = 60
+const MAX_EXPIRATIONS_TO_FETCH = 12
+
+/**
+ * Returns Expected Move (1σ) for ALL expirations from 0 to ~60 DTE, with iv_efficiency score per expiration.
+ * Used by the AI to scan all DTEs and pick the one with clearest opportunity.
+ */
+export async function getExpectedMoveAllExpirations(
+  symbol: string,
+): Promise<ExpectedMoveEntry[]> {
+  if (!CONFIG.TRADIER_API_KEY) return []
+
+  const client = getTradierClient()
+  let spot = marketState.spy.last ?? 0
+  if (spot <= 0) {
+    const quotes = await client.getQuotes(symbol)
+    spot = quotes[0]?.last ?? 0
+  }
+  if (spot <= 0) {
+    console.warn('[ExpectedMove] No spot price available — skipping all expirations')
+    return []
+  }
+
+  const expirations = await client.getExpirations(symbol)
+  if (expirations.length === 0) return []
+
+  const today = new Date().toISOString().slice(0, 10)
+  const candidates = expirations
+    .filter((d) => {
+      const dte = Math.round((new Date(d).getTime() - new Date(today).getTime()) / MS_PER_DAY)
+      return dte >= 0 && dte <= MAX_DTE_ALL_EXPIRATIONS
+    })
+    .sort()
+    .slice(0, MAX_EXPIRATIONS_TO_FETCH)
+
+  const results: ExpectedMoveEntry[] = []
+  for (const expiration of candidates) {
+    const entry = await expectedMoveForExpiration(symbol, expiration, spot)
+    if (entry) {
+      entry.ivEfficiency = computeIvEfficiency(entry.expectedMove, spot, entry.dte)
+      results.push(entry)
+    }
+  }
+
+  if (results.length > 0) {
+    console.log(
+      `[ExpectedMove] ${symbol} all DTE (0-${MAX_DTE_ALL_EXPIRATIONS}): ${results.length} expirations, ` +
+      results.map((r) => `${r.dte}D $${r.expectedMove.toFixed(2)} eff=${r.ivEfficiency?.toFixed(3) ?? '—'}`).join('; '),
     )
   }
   return results

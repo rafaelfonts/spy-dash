@@ -111,6 +111,16 @@ SPY Dash integra dados de mercado em tempo real via Tastytrade/DXFeed com análi
 - Publicado via SSE e injetado no prompt IA (bloco base — sempre presente)
 - `TechnicalIndicatorsCard.tsx` exibe RSI gauge, MACD histogram + crossover badge e BB position badge no dashboard
 
+### Sinais de Trade em Horários Fixos (10:30 e 15:00 ET)
+
+- **Análise global agendada:** o mesmo agente IA usado em "Analisar com IA" roda automaticamente às **10:30 ET** e **15:00 ET** em dias úteis, sem depender do clique do usuário.
+- **Uma execução por horário:** o backend dispara uma única análise por slot (lock Redis `lock:scheduled_signal:YYYY-MM-DD:slot`), reutilizando `buildPrompt`, regime veto, vanna/charm e `extractStructuredOutput`.
+- **Função reutilizável:** `runAnalysisForPayload()` em `openai.ts` executa a análise sem streaming (retorna `{ fullText, structured }`); o handler `POST /api/analyze` e o `scheduledSignalService` usam a mesma lógica.
+- **Cache e broadcast:** resultado gravado em Redis (`cache:trade_signal:latest`, TTL 14h); evento SSE `trade_signal_update` com payload `{ trade_signal, regime_score, no_trade_reasons, bias, key_levels, timestamp }` é enviado a todos os clientes conectados.
+- **Novos clientes:** ao conectar ao SSE, o último sinal é lido do Redis e enviado no snapshot inicial.
+- **Frontend:** widget "Último sinal (10:30/15:00 ET)" (`LastScheduledSignal.tsx`) exibe Operar/Aguardar/Não operar, regime X/10, horário ET e, se houver, `no_trade_reasons` (tooltip). Estado em `lastScheduledSignal` no store; evento `trade_signal_update` tratado em `useMarketStream.ts`.
+- **Scheduler:** `scheduledSignalService.ts` — `startScheduledSignalScheduler()` registrado no `index.ts` após os restores (verificação a cada 60s; horários 10:30 e 15:00 ET).
+
 ### Pre-Market Briefing Automático
 
 - **Briefing às 9:00 ET** (seg–sex): gerado automaticamente 30min antes da abertura via Claude 3.5 Sonnet (fallback GPT-4o) — sem interação do usuário
@@ -178,6 +188,7 @@ Painel com cinco fontes de dados exibidas no frontend, agregadas via SSE (earnin
 ### Dashboard UI
 - Três cards principais: **SPY**, **VIX**, **IV Rank** (IV Rank % em destaque; IVx e Percentil como secundários)
 - **GEX Panel:** gráfico de barras por strike (calls/puts), seletor de tabs por DTE (0DTE/1D/7D/21D/45D/ALL), métricas callWall/putWall/flipPoint, regime, P/C Ratio com barra visual, botão "Analisar Fluxo" para análise focada em GEX
+- **Último sinal (10:30/15:00 ET):** widget compacto com trade_signal (Operar/Aguardar/Não operar), regime_score e no_trade_reasons (tooltip); alimentado pelo evento SSE `trade_signal_update`.
 - **Carteira (Put Spreads):** painel com posições OPEN enriquecidas (DTE, lucro %, crédito, custo fechar), badges de regra 50%/21 DTE; botão "Cadastrar" abre modal com seletor de estratégia (Put Spread, Call Spread, Iron Condor), formulário 2 ou 4 pernas e geração de símbolos OCC; "Atualizar" (refresh com cooldown 60s); "Analisar carteira"; "Excluir" por linha.
 - **Card "Estratégia Sugerida":** exibe pernas da estratégia (call/put, buy/sell, strike, DTE), badges de DTE/PoP/invalidação e métricas de risco/crédito/theta/breakeven
 - **Cadeia de Opções:** calls e puts ATM ±n strikes com bid/ask + greeks completos **Δ γ θ ν** por strike (calculados via Black-Scholes no backend, exibidos por `OptionChainPanel.tsx`)
@@ -216,7 +227,7 @@ SPY Dash/
 │       │   ├── health.ts       # Status do servidor (público + protegido)
 │       │   ├── openai.ts       # Análise GPT-4o streaming (Tool Calling + Structured Outputs)
 │       │   ├── riskReview.ts   # POST /api/analyze/risk-review — CRO Put Spread (payoff + macro + GEX)
-│       │   ├── sse.ts          # Stream de mercado SSE (broadcast global + por usuário; quote/vix)
+│       │   ├── sse.ts          # Stream de mercado SSE (broadcast global + por usuário; quote/vix; trade_signal_update)
 │       │   ├── priceHistory.ts # GET /api/price-history
 │       │   ├── gex.ts          # GET /api/gex (snapshot) + /api/gex/detail (full Redis cache)
 │       │   ├── volumeProfile.ts # GET /api/volume-profile (snapshot) + /detail (full)
@@ -259,6 +270,7 @@ SPY Dash/
 │       │   ├── technicalIndicatorsState.ts  # Snapshot indicadores técnicos em memória
 │       │   ├── alertEngine.ts       # Alertas de preço por usuário (proximity + debounce)
 │       │   ├── preMarketBriefing.ts      # Scheduler 9:00/16:15 ET + Claude 3.5 Sonnet briefing + Discord embeds
+│       │   ├── scheduledSignalService.ts # Scheduler 10:30/15:00 ET + runAnalysisForPayload + Redis + SSE trade_signal_update
 │       │   ├── portfolioTrackerService.ts # Scheduler 16:00 ET + DTE + Tradier + Claude Gestor Risco + Discord
 │       │   ├── portfolioLifecycleAgent.ts  # Payload + system prompt + chamada Claude (alerts JSON)
 │       │   └── analysisMemory.ts    # Persistência análise IA no Supabase + embeddings pgvector
@@ -290,7 +302,7 @@ SPY Dash/
 │       │   └── usePortfolio.ts     # GET portfolio, refresh, analyze (Carteira Put Spreads)
 │       ├── components/
 │       │   ├── cards/          # SPYCard, VIXCard, IVRankCard
-│       │   ├── ai/             # AIPanel + AnalysisResult + PreMarketBriefing
+│       │   ├── ai/             # AIPanel + AnalysisResult + PreMarketBriefing + LastScheduledSignal
 │       │   ├── options/
 │       │   │   ├── GEXPanel.tsx        # Painel GEX: gráfico byStrike + callWall/putWall/flipPoint
 │       │   │   └── OptionChainPanel.tsx # Cadeia de opções ATM com greeks Δ γ θ ν
@@ -345,7 +357,7 @@ Startup (paralelo, sem bloquear listen()):
   └─ restoreBriefingFromCache (timeout 5s):
        cache:premarket_briefing:YYYY-MM-DD ou cache:postclose_briefing:YYYY-MM-DD
 
-Após restores: startIntradayCachePersistence() + pollers iniciam + startPreMarketScheduler() + startPortfolioTrackerScheduler()
+Após restores: startIntradayCachePersistence() + pollers iniciam + startPreMarketScheduler() + startScheduledSignalScheduler() + startPortfolioTrackerScheduler()
 ```
 
 ### Fluxo de Dados — GEX + Volume Profile
@@ -494,6 +506,7 @@ Novo cliente SSE conectado:
 | `earnings` | Earnings top 10 SPY | 6h | Tastytrade | ✓ | ✓ |
 | `cache:premarket_briefing:YYYY-MM-DD` | Briefing pre-market Claude/GPT-4o (markdown) | 14h | Anthropic/OpenAI | ✓ | ✓ |
 | `cache:postclose_briefing:YYYY-MM-DD` | Resumo pós-fechamento Claude/GPT-4o (markdown) | 14h | Anthropic/OpenAI | ✓ | ✓ |
+| `cache:trade_signal:latest` | Último sinal agendado (10:30/15:00 ET): trade_signal, regime_score, no_trade_reasons, bias, key_levels, timestamp | 14h | runAnalysisForPayload | ✓ | — (enviado no snapshot SSE) |
 | `auth:tt_refresh_token` | Refresh token TT (AES-256-GCM) | 30d | Tastytrade | — | — |
 
 > Payloads >1KB são automaticamente comprimidos com Brotli por `cacheStore.ts` (prefixo `b:` para retrocompatibilidade). Reduz consumo no Redis Cloud free tier (30MB).
@@ -615,6 +628,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3001/admin/break
 | ↳ `type: headlines` | `items: NewsHeadline[]` — headlines GNews |
 | ↳ `type: sentiment` | `fearGreed: FearGreedData` — score CNN Fear & Greed |
 | `briefing` | `{ type: 'pre-market'\|'post-close', generatedAt, markdown, expiresAt }` — briefing automático 9:00/16:15 ET; enviado no snapshot inicial se válido |
+| `trade_signal_update` | `{ trade_signal, regime_score, no_trade_reasons, bias, key_levels, timestamp }` — sinal agendado 10:30/15:00 ET; enviado no snapshot inicial se existir em Redis |
 | `ping` | Heartbeat a cada 15s (timestamp) — mantém conexão viva em proxies |
 
 > Preço SPY e VIX em tempo real são servidos via eventos `quote` e `vix` do SSE (`/stream/market`), com snapshot na conexão inicial.
@@ -823,6 +837,7 @@ npm run preview # Preview do build de produção
 - Persistência de análises no Supabase com embeddings `vector(1536)` (pgvector)
 - Alertas de preço em tempo real (support/resistance/gex_flip) por usuário
 - Rate limiting: 5 análises/hora por usuário (sliding window)
+- **Sinais de trade em horários fixos:** scheduler 10:30 e 15:00 ET (dias úteis); uma análise global por horário via `runAnalysisForPayload()`; resultado em Redis e broadcast SSE `trade_signal_update`; widget "Último sinal" no dashboard.
 - **Motor de Gestão de Ciclo de Vida:** scheduler 16:00 ET para Put Spreads (posições OPEN em `portfolio_positions`); DTE + lucro % via Tradier; Claude Gestor de Risco (FECHAR_LUCRO / FECHAR_TEMPO / ROLAR / MANTER); alertas Discord com embeds (verde 50%, amarelo 21 DTE). Painel **Carteira** no dashboard com snapshot em memória, Cadastrar (modal com gerador OCC), Excluir por linha, endpoints GET/POST portfolio, POST analyze, POST/DELETE positions.
 - **Análise de Risco/Retorno Assimétrica:** `POST /api/analyze/risk-review` — motor de payoff Put Spread (`putSpreadPayoff.ts`) + eventos macro de alto impacto na janela DTE (`getMacroEventsForWindow`) + contexto GEX; Claude 3.5 Sonnet como CRO retorna decisão (APPROVED/REJECTED/NEEDS_RESTRUCTURE) e justificativa técnica.
 

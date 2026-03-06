@@ -119,6 +119,39 @@ export function calcVega(
 }
 
 /**
+ * Vanna — ∂Δ/∂σ (delta sensitivity to IV). Same for call and put in BSM.
+ *   Vanna = S · φ(d1) · √T · (-d2/σ)
+ * Used for VEX (Vanna Exposure) aggregation: OI × 100 × S × vanna → $ exposure per 1 decimal σ move.
+ */
+export function calcVanna(
+  S: number, K: number, T: number, r: number, sigma: number
+): number {
+  const dd = d1d2(S, K, T, r, sigma)
+  if (!dd) return 0
+  const sigClamped = Math.max(sigma, 0.001)
+  const sqrtT = Math.sqrt(T)
+  return S * normPdf(dd.d1) * sqrtT * (-dd.d2 / sigClamped)
+}
+
+/**
+ * Charm — ∂Δ/∂t (delta decay per year). Negative for long options as time passes.
+ *   Charm = -φ(d1) · (2rT - d2·σ·√T) / (2T·σ·√T)
+ * Return is per year. For $M/day CEX use: (OI × 100 × S × charm) / 365 / 1e6.
+ */
+export function calcCharm(
+  S: number, K: number, T: number, r: number, sigma: number
+): number {
+  const dd = d1d2(S, K, T, r, sigma)
+  if (!dd) return 0
+  const sigClamped = Math.max(sigma, 0.001)
+  const sqrtT = Math.sqrt(T)
+  const numerator = 2 * r * T - dd.d2 * sigClamped * sqrtT
+  const denominator = 2 * T * sigClamped * sqrtT
+  if (denominator <= 0) return 0
+  return -normPdf(dd.d1) * numerator / denominator
+}
+
+/**
  * Risk-neutral probability that spot finishes above K at expiry (short put expires OTM).
  * Returns N(d2). Use for POP (Probability of Profit) of a sold put: POP = P(S > K) = N(d2).
  * S, K, T, r, sigma: same conventions as other BSM functions; sigma in decimal (e.g. 0.18 for 18%).
