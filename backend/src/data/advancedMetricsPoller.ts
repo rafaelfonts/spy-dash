@@ -17,6 +17,7 @@ import { calculatePutCallRatio } from './putCallRatio'
 import { publishAdvancedMetrics } from './advancedMetricsState'
 import type { AdvancedMetricsPayload } from './advancedMetricsState'
 import { isMarketOpen } from '../lib/time'
+import { updateGexHistory } from './regimeScorer'
 
 const SYMBOL = 'SPY'
 const POLL_INTERVAL_MS   = 60_000   // 60 s during market hours
@@ -51,6 +52,10 @@ async function tick(): Promise<void> {
   const profile = profileResult.status === 'fulfilled' ? profileResult.value : null
   const pc = pcResult.status === 'fulfilled' ? pcResult.value : null
   const gexByExp = gexByExpResult.status === 'fulfilled' ? gexByExpResult.value : null
+
+  // Update GEX history for gex_vs_yesterday computation in regimeScorer
+  const currentTotal = gexByExp?.all?.totalNetGamma ?? gex?.totalNetGamma ?? null
+  if (currentTotal !== null) updateGexHistory(currentTotal)
 
   // Only publish if at least one service returned data
   if (!gex && !profile && !pc) {

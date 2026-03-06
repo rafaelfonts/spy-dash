@@ -24,6 +24,8 @@ import { registerAlertsFromAnalysis } from '../data/alertEngine'
 import { getExpectedMoveSnapshot } from '../data/expectedMoveState'
 import type { ExpectedMoveSnapshot } from '../data/expectedMoveState'
 import { calcProbabilityOTMPut } from '../lib/blackScholes'
+import { computeRegimeScore, getGexVsYesterday } from '../data/regimeScorer'
+import type { RegimeScorerResult, GexComparison } from '../data/regimeScorer'
 
 interface ContextData {
   fearGreed?: { score: FearGreedData['score']; label: FearGreedData['label'] }
@@ -150,8 +152,34 @@ const STRUCTURED_SCHEMA = {
       theta_per_day: { type: ['number', 'null'] },
       trade_signal: { type: 'string', enum: ['trade', 'wait', 'avoid'] },
       no_trade_reasons: { type: 'array', items: { type: 'string' } },
-      regime_score: { type: 'number' },
+      regime_score: { type: 'integer', minimum: 0, maximum: 10 },
       data_quality_warning: { type: ['string', 'null'] },
+      vanna_regime: { type: 'string', enum: ['tailwind', 'neutral', 'headwind'] },
+      charm_pressure: { type: 'string', enum: ['significant', 'moderate', 'neutral'] },
+      price_distribution: {
+        anyOf: [
+          {
+            type: 'object',
+            properties: {
+              p10: { type: 'number' },
+              p25: { type: 'number' },
+              p50: { type: 'number' },
+              p75: { type: 'number' },
+              p90: { type: 'number' },
+              expected_range_1sigma: { type: 'string' },
+            },
+            required: ['p10', 'p25', 'p50', 'p75', 'p90', 'expected_range_1sigma'],
+            additionalProperties: false,
+          },
+          { type: 'null' },
+        ],
+      },
+      gex_vs_yesterday: {
+        anyOf: [
+          { type: 'string', enum: ['stronger_positive', 'weaker_positive', 'unchanged', 'weaker_negative', 'stronger_negative'] },
+          { type: 'null' },
+        ],
+      },
     },
     required: [
       'bias', 'confidence', 'timeframe', 'key_levels', 'suggested_strategy',
@@ -159,6 +187,7 @@ const STRUCTURED_SCHEMA = {
       'recommended_dte', 'pop_estimate', 'supporting_gex_dte',
       'invalidation_level', 'expected_credit', 'theta_per_day',
       'trade_signal', 'no_trade_reasons', 'regime_score', 'data_quality_warning',
+      'vanna_regime', 'charm_pressure', 'price_distribution', 'gex_vs_yesterday',
     ],
     additionalProperties: false,
   },
@@ -355,6 +384,40 @@ function buildRegimeVetoBlock(
   lines.push(`Score parcial: ${passCount}/${totalChecks} condições favoráveis`)
   lines.push('NOTA: Se score < 4, o campo trade_signal DEVE ser \'wait\' ou \'avoid\'.')
   return lines.join('\n')
+}
+
+interface RegimeScoreBlockResult {
+  block: string
+  regimeScorerResult: RegimeScorerResult
+  gexVsYesterday: GexComparison | null
+}
+
+/** Pre-computes regime_score and related fields, returning a prompt block + the computed values. */
+function buildRegimeScoreBlock(gexByExpiration: GEXByExpiration | null): RegimeScoreBlockResult {
+  const regimeScorerResult = computeRegimeScore(gexByExpiration)
+  const { score, vannaRegime, charmPressure, priceDistribution } = regimeScorerResult
+
+  const totalNetGamma = gexByExpiration?.all?.totalNetGamma ?? null
+  const gexVsYesterday = totalNetGamma !== null ? getGexVsYesterday(totalNetGamma) : null
+
+  const scoreLabel = score >= 7 ? '✅ FAVORÁVEL' : score >= 5 ? '⚠️ NEUTRO' : '❌ DESFAVORÁVEL'
+
+  let distLine = 'N/A'
+  if (priceDistribution) {
+    const { p10, p25, p50, p75, p90, expected_range_1sigma } = priceDistribution
+    distLine = `p10=$${p10} p25=$${p25} p50=$${p50} p75=$${p75} p90=$${p90} | 1σ: ${expected_range_1sigma}`
+  }
+
+  const block = [
+    '\n=== REGIME SCORE (pré-computado pelo backend) ===',
+    `Score: ${score}/10 — ${scoreLabel}`,
+    `Vanna: ${vannaRegime} | Charm: ${charmPressure} | GEX vs Ontem: ${gexVsYesterday ?? 'N/A'}`,
+    `Price Distribution (~21D): ${distLine}`,
+    `INSTRUÇÃO: NÃO recalcule regime_score — copie o valor ${score} literalmente no campo regime_score.`,
+    `Score < 5: trade_signal=avoid | Score 5–6: wait | Score >= 7: analisar e decidir.`,
+  ].join('\n')
+
+  return { block, regimeScorerResult, gexVsYesterday }
 }
 
 /** Builds Vanna/Charm Exposure block from GEX-by-expiration (each bucket has totalVannaExposure, totalCharmExposure). */
@@ -666,6 +729,7 @@ function buildPrompt(
   ivByExpirationBlock?: string | null,
   popReferenceBlock?: string | null,
   regimeVetoBlock?: string | null,
+  regimeScoreBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -697,6 +761,11 @@ function buildPrompt(
       ? ` | IV/HV(30d)=${(ivRank.value / hv30).toFixed(2)}${ivRank.value / hv30 > 1.3 ? ' [VOL CARA]' : ''}`
       : ''
     prompt += `**IV Rank SPY**${ivAge}${confTag(confidence?.ivRank)}: ${ivRank.value?.toFixed(1)}% | Percentil: ${ivRank.percentile?.toFixed(1)}% | Classificação: ${ivRank.label}${ivhvRatio}\n`
+  }
+
+  // --- Regime Score (pré-computado — injetar ANTES do veto para que score apareça primeiro) ---
+  if (regimeScoreBlock) {
+    prompt += regimeScoreBlock
   }
 
   // --- Checklist de Regime (vetos quantitativos) ---
@@ -789,12 +858,30 @@ function buildPrompt(
 // Uses json_schema response_format for schema-enforced extraction (no example needed).
 // ---------------------------------------------------------------------------
 
+interface ExtractPrecomputed {
+  regimeScorerResult: RegimeScorerResult
+  gexVsYesterday: GexComparison | null
+}
+
 async function extractStructuredOutput(
   fullText: string,
   snapshot: AnalyzeBody['marketSnapshot'],
   chain?: OptionExpiry[],
+  precomputed?: ExtractPrecomputed | null,
 ): Promise<AnalysisStructuredOutput | null> {
   try {
+    const precomputedLines = precomputed
+      ? [
+          '',
+          'VALORES PRÉ-CALCULADOS (copie literalmente, sem reinterpretar):',
+          `regime_score: ${precomputed.regimeScorerResult.score}`,
+          `vanna_regime: "${precomputed.regimeScorerResult.vannaRegime}"`,
+          `charm_pressure: "${precomputed.regimeScorerResult.charmPressure}"`,
+          `gex_vs_yesterday: ${precomputed.gexVsYesterday ? `"${precomputed.gexVsYesterday}"` : 'null'}`,
+          `price_distribution: ${JSON.stringify(precomputed.regimeScorerResult.priceDistribution)}`,
+        ].join('\n')
+      : ''
+
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -803,7 +890,7 @@ async function extractStructuredOutput(
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
-        max_tokens: 600,
+        max_tokens: 700,
         response_format: { type: 'json_schema', json_schema: STRUCTURED_SCHEMA },
         messages: [
           {
@@ -811,7 +898,8 @@ async function extractStructuredOutput(
             content:
               'Extraia dados estruturados de análises de opções. Retorne JSON conforme o schema. ' +
               'Os campos confidence e pop_estimate devem ser sempre números entre 0 e 1 (ex: 0.65 para 65%, 0.70 para 70%). ' +
-              'trade_signal: "trade" se condições alinhadas, "wait" se 1 veto, "avoid" se 2+ vetos. regime_score: 0-10. no_trade_reasons: lista de razões quando não for trade.',
+              'trade_signal: "trade" se condições alinhadas, "wait" se 1 veto, "avoid" se 2+ vetos. regime_score: inteiro 0-10. no_trade_reasons: lista de razões quando não for trade. ' +
+              'Para regime_score, vanna_regime, charm_pressure, price_distribution, gex_vs_yesterday: copie os valores pré-calculados exatamente como fornecidos.',
           },
           {
             role: 'user',
@@ -819,6 +907,7 @@ async function extractStructuredOutput(
               'Baseado na análise abaixo, extraia os dados estruturados.',
               '',
               `SPY: ${snapshot?.spy?.last ?? 'N/A'} | VIX: ${snapshot?.vix?.last ?? 'N/A'}`,
+              precomputedLines,
               '',
               '--- ANÁLISE ---',
               fullText,
@@ -840,9 +929,17 @@ async function extractStructuredOutput(
     if (!structured.trade_signal) structured.trade_signal = 'trade'
     if (!Array.isArray(structured.no_trade_reasons)) structured.no_trade_reasons = []
     if (typeof structured.regime_score !== 'number') structured.regime_score = 5
-    structured.regime_score = Math.min(10, Math.max(0, structured.regime_score))
+    structured.regime_score = Math.min(10, Math.max(0, Math.round(structured.regime_score)))
     if (structured.data_quality_warning !== null && structured.data_quality_warning !== undefined && typeof structured.data_quality_warning !== 'string') {
       structured.data_quality_warning = null
+    }
+    // Safety net: always override pre-computed fields with authoritative backend values
+    if (precomputed) {
+      structured.regime_score = precomputed.regimeScorerResult.score
+      structured.vanna_regime = precomputed.regimeScorerResult.vannaRegime
+      structured.charm_pressure = precomputed.regimeScorerResult.charmPressure
+      structured.price_distribution = precomputed.regimeScorerResult.priceDistribution
+      structured.gex_vs_yesterday = precomputed.gexVsYesterday
     }
     // Validate that suggested_strategy legs use strikes present in the option chain
     if (chain && chain.length > 0 && structured.suggested_strategy?.legs?.length) {
@@ -1218,6 +1315,7 @@ export async function runAnalysisForPayload(
   const ivByExpirationBlock = buildIVByExpirationBlock()
   const popReferenceBlock = buildPOPReferenceBlock(snapshot?.spy?.last ?? 0)
   const regimeVetoBlock = buildRegimeVetoBlock(snapshot, confidence, advancedSnapshot?.gexByExpiration ?? null)
+  const regimeScoreBlockResult = buildRegimeScoreBlock(advancedSnapshot?.gexByExpiration ?? null)
 
   const userContent = buildPrompt(
     snapshot,
@@ -1233,6 +1331,7 @@ export async function runAnalysisForPayload(
     ivByExpirationBlock,
     popReferenceBlock,
     regimeVetoBlock,
+    regimeScoreBlockResult.block,
   )
 
   const marketStatusNote = isMarketOpen()
@@ -1344,7 +1443,10 @@ export async function runAnalysisForPayload(
     }
   }
 
-  const structured = await extractStructuredOutput(fullResponse, snapshot, optionChain)
+  const structured = await extractStructuredOutput(fullResponse, snapshot, optionChain, {
+    regimeScorerResult: regimeScoreBlockResult.regimeScorerResult,
+    gexVsYesterday: regimeScoreBlockResult.gexVsYesterday,
+  })
   return { fullText: fullResponse, structured }
 }
 
@@ -1467,6 +1569,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const ivByExpirationBlock = buildIVByExpirationBlock()
     const popReferenceBlock = buildPOPReferenceBlock(snapshot?.spy?.last ?? 0)
     const regimeVetoBlock = buildRegimeVetoBlock(snapshot, confidence, advancedSnapshot?.gexByExpiration ?? null)
+    const regimeScoreBlockResult = buildRegimeScoreBlock(advancedSnapshot?.gexByExpiration ?? null)
 
     const userContent = buildPrompt(
       snapshot,
@@ -1482,6 +1585,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       ivByExpirationBlock,
       popReferenceBlock,
       regimeVetoBlock,
+      regimeScoreBlockResult.block,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     if (!CONFIG.ANTHROPIC_API_KEY) {
@@ -1615,7 +1719,10 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       }
 
       // Extract structured output via JSON Schema enforcement
-      const structured = await extractStructuredOutput(fullResponse, snapshot, body.optionChain)
+      const structured = await extractStructuredOutput(fullResponse, snapshot, body.optionChain, {
+        regimeScorerResult: regimeScoreBlockResult.regimeScorerResult,
+        gexVsYesterday: regimeScoreBlockResult.gexVsYesterday,
+      })
       if (structured) {
         sendEvent('structured', structured)
         registerAlertsFromAnalysis(userId, structured)

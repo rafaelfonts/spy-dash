@@ -285,8 +285,19 @@ export interface AnalysisStructuredOutput {
   trade_signal: 'trade' | 'wait' | 'avoid'
   /** Razões quantitativas quando trade_signal !== 'trade' */
   no_trade_reasons: string[]
-  /** Score 0-10 dos critérios favoráveis; <4 = avoid, 4-6 = wait, 7-10 = trade */
+  /** Score 0-10 dos critérios favoráveis; <4 = avoid, 4-6 = wait, 7-10 = trade (pré-computado pelo backend) */
   regime_score: number
   /** Preenchido quando ≥2 fontes com Confiança BAIXA */
   data_quality_warning: string | null
+  /** Regime de Vanna Exposure dos dealers em relação ao VIX */
+  vanna_regime: 'tailwind' | 'neutral' | 'headwind'
+  /** Pressão de Charm Exposure (decaimento delta por tempo) */
+  charm_pressure: 'significant' | 'moderate' | 'neutral'
+  /** Distribuição de preços baseada no Expected Move ~21D */
+  price_distribution: {
+    p10: number; p25: number; p50: number; p75: number; p90: number
+    expected_range_1sigma: string
+  } | null
+  /** Comparação do GEX total de hoje vs ontem */
+  gex_vs_yesterday: 'stronger_positive' | 'weaker_positive' | 'unchanged' | 'weaker_negative' | 'stronger_negative' | null
 }

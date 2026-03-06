@@ -86,6 +86,13 @@ export interface AnalysisStructuredOutput {
   no_trade_reasons: string[]
   regime_score: number
   data_quality_warning: string | null
+  vanna_regime: 'tailwind' | 'neutral' | 'headwind'
+  charm_pressure: 'significant' | 'moderate' | 'neutral'
+  price_distribution: {
+    p10: number; p25: number; p50: number; p75: number; p90: number
+    expected_range_1sigma: string
+  } | null
+  gex_vs_yesterday: 'stronger_positive' | 'weaker_positive' | 'unchanged' | 'weaker_negative' | 'stronger_negative' | null
 }
 
 // Technical Indicators type (mirrored from backend technicalIndicatorsState)
