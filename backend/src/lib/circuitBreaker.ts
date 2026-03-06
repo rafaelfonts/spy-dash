@@ -26,8 +26,9 @@ export function createBreaker(
     console.info(`[CB:${name}] HALF-OPEN — testando recuperação`))
   breaker.on('close', () =>
     console.info(`[CB:${name}] FECHADO — API recuperada`))
-  breaker.fallback(() => {
-    console.warn(`[CB:${name}] Usando fallback (último dado válido)`)
+  breaker.fallback((err?: Error) => {
+    const reason = err?.message ?? 'motivo desconhecido'
+    console.warn(`[CB:${name}] Usando fallback. Motivo: ${reason}`)
     return null
   })
 

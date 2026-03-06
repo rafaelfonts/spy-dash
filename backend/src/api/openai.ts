@@ -741,7 +741,7 @@ async function streamTokens(
 // Claude 3.5 Sonnet streaming — same contract as OpenAI path (fullResponse + toolCallName)
 // ---------------------------------------------------------------------------
 
-const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022'
+const CLAUDE_MODEL = 'claude-3-5-sonnet-latest'
 const CLAUDE_MAX_TOKENS = 1200
 
 type SendEventFn = (event: string, data: unknown) => void
@@ -821,7 +821,8 @@ async function streamClaudeAnalyze(params: ClaudeStreamParams): Promise<{ fullRe
 
   return { fullResponse, toolCallName }
   } catch (err) {
-    console.error('[Claude] Erro ao instanciar ou executar SDK:', (err as Error).message)
+    const e = err as Error
+    console.error('[Claude] Erro ao instanciar ou executar SDK:', e.message, e.name ? `(${e.name})` : '')
     throw err
   }
 }
@@ -969,6 +970,9 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       popReferenceBlock,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
+    if (!CONFIG.ANTHROPIC_API_KEY) {
+      console.error('[CRITICAL] ANTHROPIC_API_KEY is missing — todas as análises serão roteadas para OpenAI')
+    }
     console.log(`[ANALYZE] user=${userId} primary=${useClaudePrimary ? 'claude' : 'gpt-4o'} tokens_max=1200`)
 
     sendEvent = (event: string, data: unknown) => {
@@ -1061,6 +1065,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       }
 
       if (!usedClaude) {
+        console.warn('[FALLBACK TRIGGERED] Claude retornou null (falha ou breaker aberto). Roteando para OpenAI...')
         const firstRes = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -1155,7 +1160,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
         sendEvent('structured', structured)
         registerAlertsFromAnalysis(userId, structured)
       }
-      sendEvent('done', {})
+      sendEvent('done', { provider: usedClaude ? 'Anthropic' : 'OpenAI Fallback' })
       saveAnalysis(userId, fullResponse, {
         spyPrice: snapshot?.spy?.last ?? 0,
         vix: snapshot?.vix?.last ?? 0,

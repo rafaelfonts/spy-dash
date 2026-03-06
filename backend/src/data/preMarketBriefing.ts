@@ -187,22 +187,30 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
     const systemContent = type === 'pre-market' ? PRE_MARKET_PROMPT : POST_MARKET_PROMPT
 
     let markdown = ''
+    let usedClaude = false
     const useClaude = Boolean(CONFIG.ANTHROPIC_API_KEY)
+
+    if (!CONFIG.ANTHROPIC_API_KEY) {
+      console.error('[CRITICAL] ANTHROPIC_API_KEY is missing — briefing será gerado via OpenAI')
+    }
 
     if (useClaude) {
       try {
         const anthropic = new Anthropic({ apiKey: CONFIG.ANTHROPIC_API_KEY })
         const msg = await anthropic.messages.create({
-          model: 'claude-3-5-sonnet-20241022',
+          model: 'claude-3-5-sonnet-latest',
           max_tokens: 4096,
           system: systemContent,
           messages: [{ role: 'user', content: userPrompt }],
         })
         const textBlock = msg.content.find((b): b is { type: 'text'; text: string } => b.type === 'text')
         markdown = textBlock?.text?.trim() ?? ''
-        if (markdown) console.log('[PreMarket] Briefing gerado via Claude')
+        if (markdown) {
+          usedClaude = true
+          console.log('[PreMarket] Briefing gerado via Claude')
+        }
       } catch (err) {
-        console.warn('[PreMarket] Claude falhou, fallback para GPT-4o:', (err as Error).message)
+        console.warn(`[FALLBACK TRIGGERED] Falha na Anthropic: ${(err as Error).message}. Roteando para OpenAI...`)
       }
     }
 
@@ -255,7 +263,8 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
     emitter.emit('briefing', briefing)
 
     // Discord webhook — fire-and-forget, failure does not affect SSE
-    sendToDiscord(markdown, type).catch((err) =>
+    const providerLabel = usedClaude ? 'Claude 3.5 Sonnet' : 'GPT-4o (Fallback)'
+    sendToDiscord(markdown, type, providerLabel).catch((err) =>
       console.error('[Discord] Falha ao enviar briefing:', err),
     )
 
@@ -539,7 +548,11 @@ function splitAtLineBreak(text: string, targetLen: number): [string, string] {
   return [text.slice(0, splitAt).trim(), text.slice(splitAt).trim()]
 }
 
-async function sendToDiscord(markdown: string, type: 'pre-market' | 'post-close'): Promise<void> {
+async function sendToDiscord(
+  markdown: string,
+  type: 'pre-market' | 'post-close',
+  provider: string,
+): Promise<void> {
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL
   if (!webhookUrl) return
 
@@ -550,17 +563,19 @@ async function sendToDiscord(markdown: string, type: 'pre-market' | 'post-close'
       : `🏁 Pós-Fechamento: SPY — ${dateET}`
 
   const embedColor = type === 'pre-market' ? DISCORD_EMBED_COLOR_PRE : DISCORD_EMBED_COLOR_POST
-  const embeds: Array<{ title: string; description: string; color: number }> = []
+  const footer = { text: `Gerado por: ${provider}` }
+  const embeds: Array<{ title: string; description: string; color: number; footer: { text: string } }> = []
 
   if (markdown.length <= DISCORD_EMBED_DESC_MAX) {
-    embeds.push({ title, description: markdown, color: embedColor })
+    embeds.push({ title, description: markdown, color: embedColor, footer })
   } else {
     const [part1, part2] = splitAtLineBreak(markdown, DISCORD_EMBED_DESC_MAX)
-    embeds.push({ title, description: part1, color: embedColor })
+    embeds.push({ title, description: part1, color: embedColor, footer })
     embeds.push({
       title: `${type === 'pre-market' ? '🌅 Pré-Market' : '🏁 Pós-Fechamento'} (continuação)`,
       description: part2,
       color: embedColor,
+      footer,
     })
   }
 
