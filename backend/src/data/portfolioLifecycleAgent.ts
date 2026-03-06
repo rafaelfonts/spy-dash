@@ -45,7 +45,7 @@ export function buildPortfolioPayload(positions: EnrichedPosition[]): PortfolioP
 // Claude call (non-streaming, no tools)
 // ---------------------------------------------------------------------------
 
-const CLAUDE_MODEL = 'claude-3-5-sonnet-latest'
+const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022'
 const CLAUDE_MAX_TOKENS = 2048
 
 export async function callGestorRisco(payload: PortfolioPayload): Promise<GestorRiscoResponse> {

@@ -741,7 +741,7 @@ async function streamTokens(
 // Claude 3.5 Sonnet streaming — same contract as OpenAI path (fullResponse + toolCallName)
 // ---------------------------------------------------------------------------
 
-const CLAUDE_MODEL = 'claude-3-5-sonnet-latest'
+const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022'
 const CLAUDE_MAX_TOKENS = 1200
 
 type SendEventFn = (event: string, data: unknown) => void
