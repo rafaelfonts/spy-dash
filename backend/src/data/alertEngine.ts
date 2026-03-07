@@ -1,5 +1,6 @@
 import type { AnalysisStructuredOutput } from '../types/market'
 import { broadcastToUser } from '../api/sse'
+import { redis } from '../lib/cacheStore'
 import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
 
 const PROXIMITY_WARN = 0.002   // 0.2% — nível próximo (approaching)
@@ -7,8 +8,7 @@ const PROXIMITY_TEST = 0.0005  // 0.05% — nível sendo testado (testing)
 const DEBOUNCE_MS = 60_000     // 60s entre alertas do mesmo nível
 const MAX_ALERTS_PER_USER = 10
 
-// Discord #feed — debounce separado (evitar flood)
-const discordAlertDebounce = new Map<string, number>()  // key: `${level}:${type}`
+// Discord #feed — lock Redis evita duplicação em multi-instância (Fly.io 2 máquinas)
 const DISCORD_DEBOUNCE_MS_APPROACHING = 10 * 60 * 1000  // 10 min
 const DISCORD_DEBOUNCE_MS_TESTING = 15 * 60 * 1000     // 15 min
 
@@ -18,11 +18,12 @@ async function maybeSendAlertToDiscord(alert: {
   alertType: 'approaching' | 'testing'
   price: number
 }): Promise<void> {
-  const debounceKey = `${alert.level}:${alert.type}`
-  const lastSent = discordAlertDebounce.get(debounceKey) ?? 0
-  const debounceMs = alert.alertType === 'testing' ? DISCORD_DEBOUNCE_MS_TESTING : DISCORD_DEBOUNCE_MS_APPROACHING
-  if (Date.now() - lastSent < debounceMs) return
-  discordAlertDebounce.set(debounceKey, Date.now())
+  const lockKey = `lock:discord_alert:${alert.level}:${alert.type}`
+  const lockTTL = Math.ceil(
+    (alert.alertType === 'testing' ? DISCORD_DEBOUNCE_MS_TESTING : DISCORD_DEBOUNCE_MS_APPROACHING) / 1000,
+  )
+  const acquired = await redis.set(lockKey, '1', 'EX', lockTTL, 'NX')
+  if (!acquired) return
 
   const isTesting = alert.alertType === 'testing'
   const typeLabel = { support: 'Suporte', resistance: 'Resistência', gex_flip: 'GEX Flip' }

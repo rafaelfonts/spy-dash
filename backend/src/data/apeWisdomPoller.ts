@@ -3,7 +3,7 @@
  * Poll a cada 4h; envia ao #feed apenas em anomalia (rank ≤ 10 ou |rankChange| ≥ 15).
  */
 
-import { cacheSet } from '../lib/cacheStore'
+import { cacheSet, redis } from '../lib/cacheStore'
 import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
 
 const CACHE_KEY = 'ape_wisdom_spy'
@@ -128,6 +128,11 @@ export function startApeWisdomPoller(): void {
   let prevData: ApeWisdomSPYData | null = null
 
   const poll = async (): Promise<void> => {
+    const lockKey = `lock:ape_wisdom_poll:${new Date().toISOString().slice(0, 13)}`
+    const lockTTL = Math.ceil(POLL_MS / 1000)
+    const acquired = await redis.set(lockKey, '1', 'EX', lockTTL, 'NX')
+    if (!acquired) return
+
     const data = await fetchApeWisdom()
     if (!data) return
 

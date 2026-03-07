@@ -6,7 +6,7 @@
 import OpenAI from 'openai'
 import { CONFIG } from '../config'
 import { marketState, newsSnapshot } from './marketState'
-import { cacheGet, cacheSet } from '../lib/cacheStore'
+import { cacheSet, redis } from '../lib/cacheStore'
 import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
 
 const openai = new OpenAI({ apiKey: CONFIG.OPENAI_API_KEY })
@@ -17,7 +17,8 @@ const DIGEST_DAYS = new Set([1, 3, 5])  // Seg, Qua, Sex
 const DIGEST_HOUR_ET = 10
 const DIGEST_MINUTE_ET = 0
 const TTL_14H_MS = 14 * 60 * 60 * 1000
-const TTL_24H_MS = 24 * 60 * 60 * 1000
+const TTL_14H_S = 14 * 60 * 60
+const TTL_24H_S = 24 * 60 * 60
 
 function getTodayDateET(): string {
   const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
@@ -93,9 +94,9 @@ async function generateAndSendMacroDigest(): Promise<void> {
   }
 
   const todayStr = getTodayDateET()
-  const sentKey = `macro_digest_sent_${todayStr}`
-  const alreadySent = await cacheGet<string>(sentKey)
-  if (alreadySent) return
+  const lockKey = `lock:macro_digest:${todayStr}`
+  const acquired = await redis.set(lockKey, '1', 'EX', TTL_14H_S, 'NX')
+  if (!acquired) return
 
   try {
     const response = await openai.chat.completions.create({
@@ -108,7 +109,6 @@ async function generateAndSendMacroDigest(): Promise<void> {
     const text = response.choices[0]?.message?.content?.trim() ?? ''
     if (!text) return
 
-    await cacheSet(sentKey, '1', TTL_14H_MS, 'macro_digest')
     await cacheSet(
       CACHE_KEY_LAST,
       { text, capturedAt: new Date().toISOString() },
@@ -152,11 +152,9 @@ async function checkAndSendDayBeforeAlert(): Promise<void> {
 
   if (!highImpactTomorrow.length) return
 
-  const alertKey = `macro_d1_alert_${tomorrowYYYYMMDD}`
-  const alreadySent = await cacheGet<string>(alertKey)
-  if (alreadySent) return
-
-  await cacheSet(alertKey, '1', TTL_24H_MS, 'macro_digest')
+  const lockKey = `lock:macro_d1_alert:${tomorrowYYYYMMDD}`
+  const acquired = await redis.set(lockKey, '1', 'EX', TTL_24H_S, 'NX')
+  if (!acquired) return
 
   const eventList = highImpactTomorrow
     .map(
@@ -181,29 +179,18 @@ async function checkAndSendDayBeforeAlert(): Promise<void> {
 }
 
 export function startMacroDigestScheduler(): void {
-  const firedDigest = new Set<string>()
-  const firedD1Alert = new Set<string>()
-
   setInterval(async () => {
     const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
     const day = etNow.getDay()
     const hour = etNow.getHours()
     const minute = etNow.getMinutes()
-    const today = etNow.toDateString()
 
-    if (DIGEST_DAYS.has(day) && hour === DIGEST_HOUR_ET && minute === DIGEST_MINUTE_ET && !firedDigest.has(today)) {
-      firedDigest.add(today)
+    if (DIGEST_DAYS.has(day) && hour === DIGEST_HOUR_ET && minute === DIGEST_MINUTE_ET) {
       await generateAndSendMacroDigest().catch(() => {})
     }
 
-    if (day >= 1 && day <= 5 && hour === 18 && minute === 0 && !firedD1Alert.has(today)) {
-      firedD1Alert.add(today)
+    if (day >= 1 && day <= 5 && hour === 18 && minute === 0) {
       await checkAndSendDayBeforeAlert().catch(() => {})
-    }
-
-    if (hour === 0 && minute === 1) {
-      firedDigest.clear()
-      firedD1Alert.clear()
     }
   }, CHECK_MS)
 

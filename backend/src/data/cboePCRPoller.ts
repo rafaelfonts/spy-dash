@@ -4,7 +4,7 @@
  */
 
 import { emitter } from './marketState'
-import { cacheGet, cacheSet } from '../lib/cacheStore'
+import { cacheGet, cacheSet, redis } from '../lib/cacheStore'
 import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
 
 const CACHE_KEY = 'cboe_pcr_daily'
@@ -100,7 +100,7 @@ export async function getLastCBOEPCR(): Promise<CBOEPCRData | null> {
 
 const SCHEDULED_HHMM = '16:35'
 const CHECK_INTERVAL_MS = 60_000
-const firedToday = new Set<string>()
+const LOCK_TTL = 14 * 60 * 60  // 14h em segundos
 
 export function startCBOEPCRScheduler(): void {
   setInterval(async () => {
@@ -110,15 +110,16 @@ export function startCBOEPCRScheduler(): void {
     if (day === 0 || day === 6) return
 
     const hhmm = `${etTime.getHours()}:${String(etTime.getMinutes()).padStart(2, '0')}`
-    const key = `cboe_pcr:${etTime.toDateString()}`
 
-    if (hhmm === SCHEDULED_HHMM && !firedToday.has(key)) {
-      firedToday.add(key)
+    if (hhmm === SCHEDULED_HHMM) {
+      const dateET = `${etTime.getFullYear()}-${String(etTime.getMonth() + 1).padStart(2, '0')}-${String(etTime.getDate()).padStart(2, '0')}`
+      const lockKey = `lock:cboe_pcr:${dateET}`
+      const acquired = await redis.set(lockKey, '1', 'EX', LOCK_TTL, 'NX')
+      if (!acquired) return
+
       const data = await fetchCBOEPCR()
       if (data) await publishCBOEPCR(data)
     }
-
-    if (hhmm === '0:01') firedToday.clear()
   }, CHECK_INTERVAL_MS)
 
   console.log('[CBOE PCR] Scheduler iniciado — disparo 16:35 ET em dias úteis')

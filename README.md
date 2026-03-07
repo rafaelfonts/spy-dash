@@ -208,7 +208,7 @@ flowchart TB
   - Debounce de 60s por alerta para evitar spam no SSE
   - Só dispara durante horário de mercado (NYSE 09:30–16:00 ET; `isMarketHours()`)
 - Alertas enviados via `broadcastToUser(userId, 'alert', {...})` — roteamento por usuário no SSE
-- **Discord #feed:** `maybeSendAlertToDiscord()` envia embed público (sem userId) quando rank approaching/testing; debounce 10min (approaching) ou 15min (testing) por nível para evitar flood
+- **Discord #feed:** `maybeSendAlertToDiscord()` envia embed público (sem userId) quando nível approaching/testing; lock Redis `lock:discord_alert:${level}:${type}` (TTL 10min ou 15min) evita duplicidade em HA e flood
 - Frontend: `AlertOverlay.tsx` exibe notificações em overlay fixo (top-right), slide-in/out com Framer Motion, auto-dismiss em 8s, dismissível por clique
 
 ### Feed de Mercado
@@ -264,7 +264,7 @@ Painel com cinco fontes de dados exibidas no frontend, agregadas via SSE (earnin
 
 ### Infraestrutura e UX
 
-- **Notificações Discord:** helper centralizado `lib/discordClient.ts` com `sendEmbed(channel, embed)` — canais `feed`, `briefings`, `sinais`, `carteira`. Cada canal usa sua variável `DISCORD_WEBHOOK_*`; webhook vazio = retorno silencioso. Embeds color-coded por tipo (paleta `DISCORD_COLORS`); descrição >4.000 caracteres dividida automaticamente. Envio fire-and-forget (nunca await no caminho crítico de SSE/resposta HTTP); falha não afeta o fluxo principal. **Canais:** #briefings (pre-market/post-close + digest macro 3x/semana + aviso D-1); #feed (alertas de preço approaching/testing, CBOE PCR, ApeWisdom SPY sentiment, digest macro); #sinais (sinais 10:30/15:00 ET, CRO risk-review); #carteira (alertas Motor de Ciclo de Vida). Legado: `DISCORD_WEBHOOK_URL` mantido em `config.ts` como fallback até migração completa.
+- **Notificações Discord:** helper centralizado `lib/discordClient.ts` com `sendEmbed(channel, embed)` — canais `feed`, `briefings`, `sinais`, `carteira`. Cada canal usa sua variável `DISCORD_WEBHOOK_*`; webhook vazio = retorno silencioso. Embeds color-coded por tipo (paleta `DISCORD_COLORS`); descrição >4.000 caracteres dividida automaticamente. Envio fire-and-forget (nunca await no caminho crítico de SSE/resposta HTTP); falha não afeta o fluxo principal. **Anti-duplicação em HA:** locks Redis (`lock:ape_wisdom_poll:*`, `lock:cboe_pcr:*`, `lock:discord_alert:*`, `lock:macro_digest:*`, `lock:macro_d1_alert:*`, `lock:briefing:*`, `lock:scheduled_signal:*`, `lock:portfolio_tracker:*`) garantem uma única mensagem por evento em ambiente multi-instância (Fly.io 2 máquinas). **Canais:** #briefings (pre-market/post-close + digest macro 3x/semana + aviso D-1); #feed (alertas de preço approaching/testing, CBOE PCR, ApeWisdom SPY sentiment); #sinais (sinais 10:30/15:00 ET, CRO risk-review); #carteira (alertas Motor de Ciclo de Vida). Legado: `DISCORD_WEBHOOK_URL` mantido em `config.ts` como fallback até migração completa.
 - **Renderização de tabelas analíticas em Markdown:** no frontend, `react-markdown` com **remark-gfm** em `AnalysisResult.tsx` (resposta da análise IA) e `PreMarketBriefing.tsx` (briefing), permitindo tabelas GFM, listas de tarefas e formatação avançada nas saídas em Markdown.
 
 ---
