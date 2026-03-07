@@ -28,6 +28,7 @@ import { computeRegimeScore, getGexVsYesterday } from '../data/regimeScorer'
 import type { RegimeScorerResult, GexComparison } from '../data/regimeScorer'
 import { getSkewSnapshot } from '../data/skewState'
 import type { SkewByDTE, SkewEntry } from '../data/skewService'
+import { getOpexStatus } from '../data/opexCalendar'
 
 interface ContextData {
   fearGreed?: { score: FearGreedData['score']; label: FearGreedData['label'] }
@@ -396,6 +397,16 @@ function buildRegimeVetoBlock(
     }
   }
 
+  // OPEX veto — computed from calendar arithmetic (not counted in passCount)
+  const opex = getOpexStatus()
+  if (opex.isPostOpex) {
+    lines.push('[!] VETO PÓS-OPEX: Dia imediatamente após OPEX mensal — GEX resetado, vol pode expandir abruptamente. NÃO abrir novas posições hoje.')
+  } else if (opex.daysToMonthlyOpex === 1) {
+    lines.push('[~] VÉSPERA DE OPEX: Pin risk elevado — mercado tende a colar no strike de maior OI. Aguardar abertura pós-OPEX para novas posições.')
+  } else if (opex.isOpexWeek && opex.daysToMonthlyOpex >= 3) {
+    lines.push(`[✓] SEMANA DE OPEX (${opex.daysToMonthlyOpex} dias): GEX tende a comprimir vol — condição estruturalmente favorável para premium selling.`)
+  }
+
   lines.push(`Score parcial: ${passCount}/${totalChecks} condições favoráveis`)
   lines.push('NOTA: Se score < 4, o campo trade_signal DEVE ser \'wait\' ou \'avoid\'.')
   return lines.join('\n')
@@ -480,6 +491,33 @@ function buildSkewBlock(skew: SkewByDTE): string | null {
   block +=
     'Interpretação: RR25 < -2.5% = prêmio elevado (favorável para venda de Put Spread) | ' +
     'RR25 > -0.5% = skew flat/invertido (CAUTELA — puts não pagam prêmio adicional sobre calls).\n'
+  return block
+}
+
+function buildOpexBlock(): string {
+  const opex = getOpexStatus()
+
+  const fmtDate = (d: Date) => {
+    const dd = String(d.getUTCDate()).padStart(2, '0')
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
+    return `${dd}/${mm}/${d.getUTCFullYear()}`
+  }
+
+  let block = '\n=== CONTEXTO OPEX ===\n'
+
+  let monthlyStatus = ''
+  if (opex.isPostOpex) {
+    monthlyStatus = '⚠️ PÓS-OPEX: GEX resetado — vol pode expandir abruptamente hoje'
+  } else if (opex.isOpexDay) {
+    monthlyStatus = '⚡ OPEX HOJE: liquidação de posições — slippage elevado, evitar novas entradas'
+  } else if (opex.isOpexWeek) {
+    monthlyStatus = `⚡ Semana de OPEX: GEX comprime vol, strikes de alta OI atuam como magnetos (pin risk)`
+  }
+
+  block += `Próximo OPEX Mensal: ${fmtDate(opex.nextMonthlyOpex)} (em ${opex.daysToMonthlyOpex} dia${opex.daysToMonthlyOpex !== 1 ? 's' : ''})\n`
+  if (monthlyStatus) block += `Status: ${monthlyStatus}\n`
+  block += `OPEX Semanal: em ${opex.daysToWeeklyOpex} dia${opex.daysToWeeklyOpex !== 1 ? 's' : ''} (sexta ${fmtDate(opex.nextWeeklyOpex)})\n`
+
   return block
 }
 
@@ -767,6 +805,7 @@ function buildPrompt(
   regimeVetoBlock?: string | null,
   regimeScoreBlock?: string | null,
   skewBlock?: string | null,
+  opexBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -813,6 +852,11 @@ function buildPrompt(
   // --- Skew de Volatilidade ---
   if (skewBlock) {
     prompt += skewBlock
+  }
+
+  // --- Contexto OPEX ---
+  if (opexBlock) {
+    prompt += opexBlock
   }
 
   // --- GEX (Gamma Exposure) ---
@@ -1266,7 +1310,13 @@ const STATIC_SYSTEM_PROMPT =
   'RR25 positivo: skew invertido — calls mais caras que puts; demanda por upside ou short squeeze. ' +
   'PutSkewSlope = IV(put 25d) − IV(put 10d): alto (> 3%) = custo de cauda elevado; preferir spread mais largo. ' +
   'VETO se RR25 > -0.3% no DTE alvo: estrutura de prêmio insuficiente para Put Spread. ' +
-  'AGUARDAR se |RR25| < 1.0%: zona de incerteza — esperar sinal de skew mais claro.'
+  'AGUARDAR se |RR25| < 1.0%: zona de incerteza — esperar sinal de skew mais claro. ' +
+  'OPEX Calendar (3ª sexta de cada mês): ' +
+  'Semana de OPEX (D-5 a D-1): GEX comprime vol — strikes de alta OI atuam como magnetos (pin risk). Favorável para premium selling com strikes além dos walls. ' +
+  'OPEX Day (D-0): liquidação forçada — evitar novas posições; slippage elevado em spreads curtos. ' +
+  'Dia Pós-OPEX (D+1, segunda-feira): GEX zerado — vol pode expandir sem amortecimento dos MMs. VETO de Put Spread. ' +
+  'Véspera de OPEX (D-1): pin risk máximo — mercado tende a colar no strike de maior OI até fechamento de quinta. ' +
+  'Use o contexto OPEX para ajustar expectativa de volatilidade realizada (HV): na semana de OPEX, HV tende a ser subestimada pela compressão mecânica de GEX.'
 
 function buildSystemPrompt(marketStatusNote: string): string {
   return marketStatusNote + STATIC_SYSTEM_PROMPT
@@ -1367,6 +1417,7 @@ export async function runAnalysisForPayload(
   const regimeScoreBlockResult = buildRegimeScoreBlock(advancedSnapshot?.gexByExpiration ?? null)
   const skewSnapshotForPrompt = getSkewSnapshot()
   const skewBlock = skewSnapshotForPrompt ? buildSkewBlock(skewSnapshotForPrompt) : null
+  const opexBlock = buildOpexBlock()
 
   const userContent = buildPrompt(
     snapshot,
@@ -1384,6 +1435,7 @@ export async function runAnalysisForPayload(
     regimeVetoBlock,
     regimeScoreBlockResult.block,
     skewBlock,
+    opexBlock,
   )
 
   const marketStatusNote = isMarketOpen()
@@ -1624,6 +1676,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const regimeScoreBlockResult = buildRegimeScoreBlock(advancedSnapshot?.gexByExpiration ?? null)
     const skewSnapshotForPrompt = getSkewSnapshot()
     const skewBlock = skewSnapshotForPrompt ? buildSkewBlock(skewSnapshotForPrompt) : null
+    const opexBlock = buildOpexBlock()
 
     const userContent = buildPrompt(
       snapshot,
@@ -1641,6 +1694,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       regimeVetoBlock,
       regimeScoreBlockResult.block,
       skewBlock,
+      opexBlock,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     if (!CONFIG.ANTHROPIC_API_KEY) {
