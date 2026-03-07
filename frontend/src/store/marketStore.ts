@@ -143,6 +143,13 @@ export interface StrikeGEX {
   putOI: number
 }
 
+export interface MaxPainData {
+  maxPainStrike: number
+  distanceFromSpot: number
+  distancePct: number
+  pinRisk: 'high' | 'moderate' | 'low'
+}
+
 export interface GEXProfile {
   byStrike: StrikeGEX[]
   totalGEX: number
@@ -157,6 +164,7 @@ export interface GEXProfile {
   totalVannaExposure?: number  // VEX $M (dealers' delta sensitivity to IV)
   totalCharmExposure?: number  // CEX $M/day (dealers' delta decay per day)
   volatilityTrigger?: number   // VT: GEX-weighted avg of 3 strikes nearest flipPoint
+  maxPain?: MaxPainData | null  // strike where MM payout is minimized
 }
 
 // Dynamic GEX entry (mirrored from backend gexService.GEXExpirationEntry)
@@ -206,6 +214,15 @@ export interface NoTradeData {
   noTradeScore: number
   activeVetos: string[]
   noTradeLevel: 'clear' | 'caution' | 'avoid'
+}
+
+// Delta-Adjusted Notional (mirrored from backend danCalculator.DANResult)
+export interface DANData {
+  callDAN: number
+  putDAN: number
+  netDAN: number
+  danBias: 'call_dominated' | 'put_dominated' | 'neutral'
+  callDominancePct: number
 }
 
 export interface StaleFlags {
@@ -288,6 +305,7 @@ interface MarketStore {
   preMarketBriefing: PreMarketBriefing | null
   lastScheduledSignal: TradeSignalPayload | null
   noTrade: NoTradeData | null
+  dan: DANData | null
 
   updateSPY: (data: Partial<SPYData>) => void
   updateVIX: (data: Partial<VIXData>) => void
@@ -306,6 +324,7 @@ interface MarketStore {
   setPreMarketBriefing: (data: PreMarketBriefing | null) => void
   setLastScheduledSignal: (data: TradeSignalPayload | null) => void
   setNoTrade: (data: NoTradeData | null) => void
+  setDAN: (data: DANData | null) => void
   alerts: AlertToast[]
   addAlert: (alert: AlertToast) => void
   dismissAlert: (id: string) => void
@@ -370,6 +389,7 @@ export const useMarketStore = create<MarketStore>()(
     preMarketBriefing: null,
     lastScheduledSignal: null,
     noTrade: null,
+    dan: null,
     alerts: [],
 
     updateSPY: (data) =>
@@ -419,6 +439,7 @@ export const useMarketStore = create<MarketStore>()(
     setPreMarketBriefing: (data) => set({ preMarketBriefing: data }),
     setLastScheduledSignal: (data) => set({ lastScheduledSignal: data }),
     setNoTrade: (data) => set({ noTrade: data }),
+    setDAN: (data) => set({ dan: data }),
 
     isDataReady: () => {
       return get().spy.last !== null

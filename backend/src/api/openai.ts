@@ -294,6 +294,25 @@ function buildGexMultiDTEBlock(gexDynamic: GEXDynamic): string {
     block += `\n⚡ PICO DE ANOMALIA: ${peak.label} (DTE=${peak.dte}) — gamma ${peak.gex.regime === 'positive' ? 'positivo' : 'NEGATIVO'} de $${peak.gex.totalNetGamma.toFixed(1)}M, flip point ${peak.gex.flipPoint != null ? `$${peak.gex.flipPoint}` : 'N/A'}. Candidato prioritário para análise de DTE.\n`
   }
 
+  // Max Pain — nearest expiration (lowest DTE, most relevant for intraday pin)
+  const entryWithMaxPain = gexDynamic.find((e) => e.gex.maxPain != null)
+  if (entryWithMaxPain?.gex.maxPain) {
+    const mp = entryWithMaxPain.gex.maxPain
+    const dirStr = mp.distanceFromSpot >= 0 ? `+$${mp.distanceFromSpot.toFixed(2)}` : `-$${Math.abs(mp.distanceFromSpot).toFixed(2)}`
+    const pctStr = `${mp.distancePct >= 0 ? '+' : ''}${mp.distancePct.toFixed(2)}%`
+    const pinLabel = mp.pinRisk === 'high'
+      ? '⚠️ ALTO — strike gravitacional: SPY tende a colapsar para este nível até expiração'
+      : mp.pinRisk === 'moderate'
+      ? '⚡ MODERADO — pin risk relevante: atenção a esse strike como suporte/resistência mecânico'
+      : '✅ BAIXO — spot distante do max pain; ausência de pin risk significativo'
+    block += `\nMax Pain (${entryWithMaxPain.label}): $${mp.maxPainStrike} | Distância do Spot: ${dirStr} (${pctStr}) | Pin Risk: ${pinLabel}\n`
+    block += `Interpretação: Em semanas de OPEX, Max Pain + Call Wall convergindo = âncora de gravidade. `
+    block += `Max Pain divergindo do spot >1.5% = ausência de pin risk = mercado mais livre para mover.\n`
+    if (mp.pinRisk === 'high') {
+      block += `[!] ALERTA MAX PAIN: SPY a menos de 0.5% do max pain $${mp.maxPainStrike} — alta probabilidade de pinagem nesse strike até a expiração de ${entryWithMaxPain.label}. Evitar posições que dependem de movimento direcional forte.\n`
+    }
+  }
+
   return block
 }
 
@@ -596,6 +615,31 @@ function buildCBOEPCRBlock(data: CBOEPCRData): string {
   return block
 }
 
+function buildDANBlock(dan: { callDAN: number; putDAN: number; netDAN: number; danBias: string; callDominancePct: number }): string {
+  const netSign = dan.netDAN >= 0 ? '+' : ''
+  const biasLabels: Record<string, string> = {
+    call_dominated: 'CALLS DOMINAM — pressão líquida de COMPRA dos dealers',
+    put_dominated:  'PUTS DOMINAM — pressão líquida de VENDA dos dealers',
+    neutral:        'NEUTRO — pressão balanceada',
+  }
+  const biasLabel = biasLabels[dan.danBias] ?? dan.danBias
+
+  let block = '\n=== DELTA-ADJUSTED NOTIONAL (DAN) — Pressão de Hedge dos Dealers ===\n'
+  block += `Call DAN: +$${dan.callDAN.toFixed(1)}M | Put DAN: $${dan.putDAN.toFixed(1)}M | Net DAN: ${netSign}$${dan.netDAN.toFixed(1)}M\n`
+  block += `Dominância Calls: ${dan.callDominancePct.toFixed(1)}% | Viés: ${biasLabel}\n`
+  block += `Interpretação: DAN positivo + GEX positivo = confirmação BULLISH estrutural (dealers compram no hedge). `
+  block += `DAN negativo + GEX negativo = dupla confirmação BEARISH (dealers vendem no hedge).\n`
+  block += `Contradição (ex: DAN negativo mas GEX positivo) = sinal misto — reduzir confiança na direção e sizing.\n`
+
+  if (dan.danBias === 'put_dominated' && dan.netDAN < -50) {
+    block += `⚠️ ALERTA DAN: Net DAN de $${dan.netDAN.toFixed(1)}M — pressão de venda de dealers muito intensa. Evitar calls nuas ou estruturas de baixo delta positivo.\n`
+  } else if (dan.danBias === 'call_dominated' && dan.netDAN > 50) {
+    block += `✅ DAN BULLISH: Net DAN de +$${dan.netDAN.toFixed(1)}M — dealers estruturalmente compradores. Favorável para Put Spread (perna vendida tem dealer como aliado).\n`
+  }
+
+  return block
+}
+
 function buildPutCallRatioBlock(pc: {
   ratio: number
   putVolume: number
@@ -884,6 +928,7 @@ function buildPrompt(
   gexHistoryBlock?: string | null,
   volAnomalyBlock?: string | null,
   cboePCRBlock?: string | null,
+  danBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -960,6 +1005,11 @@ function buildPrompt(
   // --- CBOE PCR (pregão anterior — fluxo institucional amplo) ---
   if (cboePCRBlock) {
     prompt += cboePCRBlock
+  }
+
+  // --- Delta-Adjusted Notional (pressão direcional de hedge dos dealers) ---
+  if (danBlock) {
+    prompt += danBlock
   }
 
   // --- Indicadores Técnicos ---
@@ -1558,6 +1608,7 @@ export async function runAnalysisForPayload(
     : null
   const cboePCRData = await getLastCBOEPCR()
   const cboePCRBlock = cboePCRData ? buildCBOEPCRBlock(cboePCRData) : null
+  const danBlockScheduled = advancedSnapshot?.dan ? buildDANBlock(advancedSnapshot.dan) : null
 
   const userContent = buildPrompt(
     snapshot,
@@ -1579,6 +1630,7 @@ export async function runAnalysisForPayload(
     gexHistoryBlock,
     volAnomalyBlock,
     cboePCRBlock,
+    danBlockScheduled,
   )
 
   const marketStatusNote = isMarketOpen()
@@ -1839,6 +1891,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       : null
     const cboePCRData = await getLastCBOEPCR()
     const cboePCRBlock = cboePCRData ? buildCBOEPCRBlock(cboePCRData) : null
+    const danBlockMain = advancedSnapshot?.dan ? buildDANBlock(advancedSnapshot.dan) : null
 
     const userContent = buildPrompt(
       snapshot,
@@ -1860,6 +1913,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       gexHistoryBlock,
       volAnomalyBlock,
       cboePCRBlock,
+      danBlockMain,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     if (!CONFIG.ANTHROPIC_API_KEY) {

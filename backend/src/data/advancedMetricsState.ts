@@ -10,9 +10,11 @@
 import { emitter } from './marketState'
 import type { GEXDynamic } from './gexService'
 import type { NoTradeResult } from './regimeScorer'
+import type { DANResult } from '../lib/danCalculator'
 
 export type { GEXDynamic }
 export type { NoTradeResult }
+export type { DANResult }
 
 // ---------------------------------------------------------------------------
 // SSE payload shape (what the frontend receives)
@@ -52,6 +54,8 @@ export interface AdvancedMetricsPayload {
   timestamp: string         // ISO 8601 of last successful calculation
   /** Unified operability signal aggregating all structural vetos. */
   noTrade: NoTradeResult | null
+  /** Delta-Adjusted Notional — directional hedge pressure from market makers ($M). */
+  dan: DANResult | null
 }
 
 // ---------------------------------------------------------------------------

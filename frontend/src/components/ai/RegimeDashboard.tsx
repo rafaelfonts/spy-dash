@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMarketStore } from '../../store/marketStore'
-import type { AnalysisStructuredOutput, NoTradeData } from '../../store/marketStore'
+import type { AnalysisStructuredOutput, NoTradeData, DANData } from '../../store/marketStore'
 
 // ---------------------------------------------------------------------------
 // Regime Score Gauge (semicircle SVG, adapted from FearGreedGauge)
@@ -176,6 +176,38 @@ function PriceDistributionBar({
 }
 
 // ---------------------------------------------------------------------------
+// DAN Badge
+// ---------------------------------------------------------------------------
+
+const DAN_BIAS_COLORS: Record<DANData['danBias'], string> = {
+  call_dominated: '#00ff88',
+  put_dominated:  '#ff4444',
+  neutral:        '#888888',
+}
+
+const DAN_BIAS_LABELS: Record<DANData['danBias'], string> = {
+  call_dominated: 'DAN Calls',
+  put_dominated:  'DAN Puts',
+  neutral:        'DAN Neutro',
+}
+
+function DANBadge({ dan }: { dan: DANData }) {
+  const color = DAN_BIAS_COLORS[dan.danBias]
+  const label = DAN_BIAS_LABELS[dan.danBias]
+  const netSign = dan.netDAN >= 0 ? '+' : ''
+
+  return (
+    <span
+      className="text-[10px] font-semibold px-2 py-0.5 rounded"
+      style={{ color, background: `${color}20`, border: `1px solid ${color}40` }}
+      title={`Call DAN: +$${dan.callDAN.toFixed(1)}M | Put DAN: $${dan.putDAN.toFixed(1)}M`}
+    >
+      {label} {netSign}${Math.abs(dan.netDAN).toFixed(0)}M
+    </span>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // NoTrade Semaphore
 // ---------------------------------------------------------------------------
 
@@ -245,6 +277,7 @@ export function RegimeDashboard() {
   const output = useMarketStore((s) => s.lastAnalysisOutput)
   const spyLast = useMarketStore((s) => s.spy.last)
   const noTrade = useMarketStore((s) => s.noTrade)
+  const dan = useMarketStore((s) => s.dan)
 
   if (!output) return null
 
@@ -297,6 +330,7 @@ export function RegimeDashboard() {
                 color={GEX_COLORS[gex_vs_yesterday] ?? '#888'}
               />
             )}
+            {dan && <DANBadge dan={dan} />}
           </div>
 
           {/* Score scale legend */}

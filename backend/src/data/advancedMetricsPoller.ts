@@ -25,6 +25,8 @@ import { cacheGet } from '../lib/cacheStore'
 import { fetchTodayVolumeSnapshot, saveVolumeSnapshot } from './volumeAnomalyService'
 import type { VolumeSnapshot } from './volumeAnomalyService'
 import { marketState } from './marketState'
+import { getOptionChainSnapshot } from './optionChain'
+import { calculateDAN } from '../lib/danCalculator'
 
 const SYMBOL = 'SPY'
 const POLL_INTERVAL_MS   = 60_000   // 60 s during market hours
@@ -116,6 +118,30 @@ async function tick(): Promise<void> {
     },
   }))
 
+  // Delta-Adjusted Notional — flatten all legs from option chain snapshot
+  const spotForDAN = marketState.spy.last ?? 0
+  let dan: AdvancedMetricsPayload['dan'] = null
+  if (spotForDAN > 0) {
+    const chainSnap = getOptionChainSnapshot()
+    if (chainSnap && chainSnap.length > 0) {
+      const danInputs = chainSnap.flatMap((expiry) => [
+        ...expiry.calls.map((leg) => ({
+          strike: leg.strike,
+          option_type: 'call' as const,
+          open_interest: leg.openInterest ?? 0,
+          delta: leg.delta ?? 0,
+        })),
+        ...expiry.puts.map((leg) => ({
+          strike: leg.strike,
+          option_type: 'put' as const,
+          open_interest: leg.openInterest ?? 0,
+          delta: leg.delta ?? 0,
+        })),
+      ])
+      dan = calculateDAN(danInputs, spotForDAN)
+    }
+  }
+
   const payload: AdvancedMetricsPayload = {
     gex: serializeGexBucket(gex),
     profile: profile
@@ -139,6 +165,7 @@ async function tick(): Promise<void> {
     gexDynamic: serializedGexDynamic.length > 0 ? serializedGexDynamic : null,
     timestamp: new Date().toISOString(),
     noTrade: computeNoTradeScore(serializedGexDynamic.length > 0 ? serializedGexDynamic : null),
+    dan,
   }
 
   publishAdvancedMetrics(payload)

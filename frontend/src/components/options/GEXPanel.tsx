@@ -410,6 +410,38 @@ export const GEXPanel = memo(function GEXPanel() {
             </div>
           )}
 
+          {/* Max Pain badge */}
+          {activeGex.maxPain && (() => {
+            const mp = activeGex.maxPain!
+            const abovePain = mp.distanceFromSpot < 0  // spot above max pain
+            const pinColor =
+              mp.pinRisk === 'high' ? '#ff4444' :
+              mp.pinRisk === 'moderate' ? '#ffcc00' :
+              '#888888'
+            return (
+              <div className="flex items-center gap-3 mb-3 px-2 py-1.5 rounded" style={{ background: `${pinColor}10`, border: `1px solid ${pinColor}30` }}>
+                <div className="shrink-0">
+                  <div className="text-[10px] text-text-muted uppercase tracking-wider">Max Pain</div>
+                  <div className="text-sm font-bold font-num" style={{ color: pinColor }}>
+                    ${mp.maxPainStrike}
+                  </div>
+                </div>
+                <div className="shrink-0">
+                  <div className="text-[10px] text-text-muted uppercase tracking-wider">Distância</div>
+                  <div className="text-sm font-bold font-num" style={{ color: pinColor }}>
+                    {abovePain ? '▼' : '▲'} {Math.abs(mp.distancePct).toFixed(2)}%
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] text-text-muted uppercase tracking-wider">Pin Risk</div>
+                  <div className="text-[11px] font-semibold" style={{ color: pinColor }}>
+                    {mp.pinRisk === 'high' ? 'Alto' : mp.pinRisk === 'moderate' ? 'Moderado' : 'Baixo'}
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
+
           {/* Recharts bar chart */}
           {chartData.length > 0 ? (
             <div className="border-t border-border-subtle pt-3" style={{ height: 280 }}>

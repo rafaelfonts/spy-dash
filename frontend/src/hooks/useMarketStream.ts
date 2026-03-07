@@ -21,6 +21,7 @@ export function useMarketStream(): void {
   const setLastScheduledSignal = useMarketStore((s) => s.setLastScheduledSignal)
   const setGEXDynamic = useMarketStore((s) => s.setGEXDynamic)
   const setNoTrade = useMarketStore((s) => s.setNoTrade)
+  const setDAN = useMarketStore((s) => s.setDAN)
   const addAlert = useMarketStore((s) => s.addAlert)
 
   const esRef = useRef<EventSource | null>(null)
@@ -246,6 +247,16 @@ export function useMarketStream(): void {
               noTradeScore: nt.noTradeScore,
               activeVetos: nt.activeVetos ?? [],
               noTradeLevel: nt.noTradeLevel,
+            })
+          }
+          if ((data as any).dan) {
+            const d = (data as any).dan
+            setDAN({
+              callDAN: d.callDAN,
+              putDAN: d.putDAN,
+              netDAN: d.netDAN,
+              danBias: d.danBias,
+              callDominancePct: d.callDominancePct,
             })
           }
         } catch (err) {

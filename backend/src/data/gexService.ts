@@ -17,6 +17,8 @@ import type { GEXProfile, ZeroGammaContract } from '../lib/gexCalculator'
 import { calcVanna, calcCharm } from '../lib/blackScholes'
 import { cacheGet, cacheSet } from '../lib/cacheStore'
 import { marketState, newsSnapshot } from './marketState'
+import { calculateMaxPain } from '../lib/maxPainCalculator'
+import type { MaxPainResult } from '../lib/maxPainCalculator'
 
 export type { GEXProfile }
 
@@ -46,6 +48,8 @@ export interface DailyGexResult {
    *  SPY > VT → long gamma regime (dealers suppress vol; favorable for premium selling).
    *  SPY < VT → short gamma regime (dealers amplify moves; increase margin or veto). */
   volatilityTrigger: number
+  /** Max Pain — strike where total ITM option pain is minimized (market maker minimum payout). */
+  maxPain: MaxPainResult | null
 }
 
 const CACHE_TTL_MS = 5 * 60_000  // 5 minutes
@@ -238,6 +242,11 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
   const vtRefPrice = profile.flipPoint ?? profile.zeroGammaLevel ?? spotPrice
   const volatilityTrigger = calcVolatilityTrigger(profile.byStrike, vtRefPrice)
 
+  const maxPain = calculateMaxPain(
+    profile.byStrike.map((s) => ({ strike: s.strike, callOI: s.callOI, putOI: s.putOI })),
+    spotPrice,
+  )
+
   const result: DailyGexResult = {
     totalNetGamma: profile.totalGEX,
     callWall: profile.callWall,
@@ -254,6 +263,7 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
     totalCharmExposure,
     vannaByStrike,
     volatilityTrigger,
+    maxPain,
   }
 
   console.log(
@@ -390,6 +400,11 @@ async function calculateGexForExpiration(
   const vtRefPriceExp = profile.flipPoint ?? profile.zeroGammaLevel ?? spotPrice
   const volatilityTriggerExp = calcVolatilityTrigger(profile.byStrike, vtRefPriceExp)
 
+  const maxPainExp = calculateMaxPain(
+    profile.byStrike.map((s) => ({ strike: s.strike, callOI: s.callOI, putOI: s.putOI })),
+    spotPrice,
+  )
+
   const result: DailyGexResult = {
     totalNetGamma: profile.totalGEX,
     callWall: profile.callWall,
@@ -406,6 +421,7 @@ async function calculateGexForExpiration(
     totalCharmExposure,
     vannaByStrike: vannaByStrikeExp,
     volatilityTrigger: volatilityTriggerExp,
+    maxPain: maxPainExp,
   }
 
   await cacheSet(cacheKey, result, CACHE_TTL_MS, 'gex-service')
@@ -516,6 +532,10 @@ export async function calculateAllExpirationsGex(symbol: string): Promise<GEXByE
         .slice(0, 20)
       const vtRefAll = profile.flipPoint ?? profile.zeroGammaLevel ?? spotPrice
       const volatilityTriggerAll = calcVolatilityTrigger(profile.byStrike, vtRefAll)
+      const maxPainAll = calculateMaxPain(
+        profile.byStrike.map((s) => ({ strike: s.strike, callOI: s.callOI, putOI: s.putOI })),
+        spotPrice,
+      )
       all = {
         totalNetGamma: profile.totalGEX,
         callWall: profile.callWall,
@@ -532,6 +552,7 @@ export async function calculateAllExpirationsGex(symbol: string): Promise<GEXByE
         totalCharmExposure,
         vannaByStrike: vannaByStrikeAll,
         volatilityTrigger: volatilityTriggerAll,
+        maxPain: maxPainAll,
       }
     }
   }
