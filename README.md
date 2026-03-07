@@ -174,11 +174,11 @@ flowchart TB
 - **Briefing às 9:00 ET** (seg–sex): gerado automaticamente 30min antes da abertura via Claude Sonnet 4.6 (fallback GPT-4o) — sem interação do usuário
 - **Resumo pós-fechamento às 16:15 ET**: avaliação da sessão do dia e perspectiva para amanhã
 - **Cooldown diário via Redis** (`cache:premarket_briefing:YYYY-MM-DD`, TTL 14h): o briefing é gerado uma única vez por dia; reinicializações do servidor restauram o briefing do cache sem nova chamada à API
-- **Prompts institucionais** (`preMarketBriefing.ts`): constantes `PRE_MARKET_PROMPT` (Estrategista Quantitativo Chefe — GEX, IV Rank, VIX, Risco Macro, Veredito Sniper) e `POST_MARKET_PROMPT` (Gestor de Risco — Resumo do Fechamento, Auditoria de Portfólio, Ações Exigidas). Regras inegociáveis: zero ruído, concisão extrema (&lt;2.500 caracteres), estrutura obrigatória em bullet points.
+- **Prompts institucionais** (`preMarketBriefing.ts`): constantes `PRE_MARKET_PROMPT` (Estrategista Quantitativo Chefe — GEX, IV Rank, VIX, Risco Macro, Veredito Sniper) e `POST_MARKET_PROMPT` (Gestor de Risco — Resumo do Fechamento, Auditoria de Portfólio, Ações Exigidas). Regras inegociáveis: zero ruído, concisão extrema (&lt;2.500 caracteres), estrutura obrigatória em bullet points. Interpretação macro: T5Y2Y negativo (curva 5Y-2Y invertida) por &gt;30 dias = sinal histórico de recessão em 12 meses; quando presente, mencionar no briefing e elevar cautela em posições 45 DTE.
 - **IA:** Claude Sonnet 4.6 com `max_tokens: 4096`; fallback para GPT-4o com o mesmo limite. Resposta em Markdown.
 - **Preço pré-market do SPY**: capturado via Tradier timesales (`session_filter=all`, último bar antes de 09:30 ET), com fallback para preço DXFeed disponível
 - **Entrega via SSE** (`event: briefing`): clientes conectados recebem o briefing em tempo real; novos clientes recebem no snapshot inicial de conexão (se ainda válido)
-- **Discord Webhook** (`DISCORD_WEBHOOK_URL`): briefing enviado em **embeds** (texto em `embeds[].description`, limite 4096 caracteres por embed). Cores da paleta: Pré-Market `#00ff88` (65416), Pós-Market `#ffcc00` (16763904). Se o texto ultrapassar 4.000 caracteres, divisão inteligente em dois embeds (quebra em `\n`). Fire-and-forget; falha não afeta o SSE.
+- **Discord (#briefings):** briefing enviado via `discordClient.sendEmbed('briefings', ...)` em embeds (limite 4096 caracteres; split automático em 4.000). Cores: Pré-Market `DISCORD_COLORS.preMarket`, Pós-Market `DISCORD_COLORS.postClose`. Fire-and-forget; falha não afeta o SSE. Webhook configurável em `DISCORD_WEBHOOK_BRIEFINGS` (fallback legado `DISCORD_WEBHOOK_URL`).
 - **Expiração automática**: briefing pre-market expira às 10:30 ET; pós-fechamento às 06:00 ET do dia seguinte
 - Frontend: card destacado `PreMarketBriefing.tsx` com gradiente verde (design system: `#00ff88`), accordion collapse (inicia colapsado com preview da primeira linha), renderização Markdown via `react-markdown`, auto-dismiss às 10:00 ET, botão "×" manual; posicionado acima do `AIPanel`
 
@@ -188,7 +188,7 @@ flowchart TB
 - **Serviço:** `portfolioTrackerService.ts` — executa **1x ao dia às 16:00 ET** (scheduler com verificação a cada 60s). Lock Redis `lock:portfolio_tracker:YYYY-MM-DD` (TTL 300s) evita duplicidade em HA.
 - **Ciclo:** (1) Busca posições com status OPEN no Supabase; (2) Calcula DTE em dias úteis (`diasUteisEntre(hoje_ET, expiration_date)`); (3) Tradier `getQuotes()` para short/long (uma chamada batelada); (4) `current_debit = short_ask - long_bid`, `profit_percentage = ((credit_received - current_debit) / credit_received) * 100`; (5) Payload enriquecido enviado ao Claude Sonnet 4.6 (Gestor de Risco).
 - **Agente Claude Sonnet 4.6:** `portfolioLifecycleAgent.ts` — system prompt com regras institucionais: profit ≥50% → FECHAR_LUCRO; dte ≤21 → FECHAR_TEMPO ou ROLAR (mitigação de Gamma risk); senão MANTER. Resposta JSON com array `alerts` (position_id, recommendation, message).
-- **Discord:** alertas enviados via webhook com **embeds** — cor verde (50% lucro) ou amarela (21 DTE); mensagem acionável para Tastytrade (recompra Debit a mercado). Usa o mesmo `DISCORD_WEBHOOK_URL` do briefing.
+- **Discord (#carteira):** alertas enviados via `sendEmbed('carteira', ...)` com embeds por tipo (FECHAR_LUCRO → verde, FECHAR_TEMPO/ROLAR → amarelo, MANTER → verde médio); mensagem acionável para Tastytrade. Webhook `DISCORD_WEBHOOK_CARTEIRA` (fallback `DISCORD_WEBHOOK_URL`). Fire-and-forget.
 - **Snapshot para o dashboard:** o ciclo das 16:00 e o refresh manual gravam o último enriquecimento em memória (`getPortfolioSnapshot` / `refreshPortfolioSnapshot`). Evita chamadas Tradier a cada abertura do painel; cooldown de 60s no refresh.
 - **Endpoints API:** `GET /api/portfolio` (retorna `positions` + `capturedAt` do cache), `POST /api/portfolio/refresh` (re-enriquece com Tradier e atualiza cache), `POST /api/portfolio/analyze` (usa snapshot atual e retorna `alerts` do Claude Gestor de Risco).
 - **Painel no dashboard:** card "Carteira — Put Spreads" (`PortfolioPanel.tsx`) com tabela (estratégia, DTE, lucro %, crédito, custo fechar), badges 50% (verde) e ≤21 DTE (amarelo), botões Cadastrar, Atualizar e Analisar carteira; modal de cadastro (`AddPositionModal.tsx`) com **seletor de estratégia** (Put Spread, Call Spread, Iron Condor), formulário 2 pernas ou 4 pernas (Iron Condor gera duas linhas no banco), "Gerar símbolos OCC" (P/C); botão Excluir por linha. Hook `usePortfolio.ts` consome os endpoints.
@@ -205,9 +205,10 @@ flowchart TB
 - A cada tick de preço (via eventos `quote` do SSE), `checkAlerts(price)` avalia todos os alertas ativos:
   - `approaching`: preço dentro de 0.2% do nível (`PROXIMITY_WARN`)
   - `testing`: preço dentro de 0.05% do nível (`PROXIMITY_TEST`)
-  - Debounce de 60s por alerta para evitar spam
-  - Só dispara durante horário de mercado (NYSE 09:30–16:00 ET)
+  - Debounce de 60s por alerta para evitar spam no SSE
+  - Só dispara durante horário de mercado (NYSE 09:30–16:00 ET; `isMarketHours()`)
 - Alertas enviados via `broadcastToUser(userId, 'alert', {...})` — roteamento por usuário no SSE
+- **Discord #feed:** `maybeSendAlertToDiscord()` envia embed público (sem userId) quando rank approaching/testing; debounce 10min (approaching) ou 15min (testing) por nível para evitar flood
 - Frontend: `AlertOverlay.tsx` exibe notificações em overlay fixo (top-right), slide-in/out com Framer Motion, auto-dismiss em 8s, dismissível por clique
 
 ### Feed de Mercado
@@ -223,7 +224,7 @@ Painel com cinco fontes de dados exibidas no frontend, agregadas via SSE (earnin
 
 **Earnings (backend/IA):** poller a cada 6h com 50 símbolos em 5 setores (janela -7 a +90 dias); usado no pre-market briefing, tool calling da IA (DTE≤7) e contexto macro — sem componente visual no Feed de Mercado.
 
-**Dados Macro FRED:** CPI All Items, Core CPI, PCE Deflator, Fed Funds Rate e Yield Curve (T10Y2Y), com direção vs. leitura anterior e color-coding semântico.
+**Dados Macro FRED:** CPI All Items, Core CPI, PCE Deflator, Fed Funds Rate, Yield Curve (T10Y2Y), Yield Spread 5Y-2Y (T5Y2Y), Treasury Yield 3M (DGS3MO), com direção vs. leitura anterior e color-coding semântico.
 
 **Dados Macro BLS:** Unemployment Rate, Nonfarm Payrolls, Average Hourly Earnings e PPI Final Demand, via BLS API v2.
 
@@ -263,7 +264,7 @@ Painel com cinco fontes de dados exibidas no frontend, agregadas via SSE (earnin
 
 ### Infraestrutura e UX
 
-- **Notificações Discord:** sistema robusto via webhook (`DISCORD_WEBHOOK_URL`). Uso de **Embeds** color-coded para bypass do limite de caracteres do Discord: briefing pré-mercado `#00ff88`, pós-fechamento `#ffcc00`; alertas do Motor de Ciclo de Vida em verde (50% lucro) ou amarelo (21 DTE). Texto longo é dividido em múltiplos embeds (quebra em 4.000 caracteres). Envio fire-and-forget; falha do webhook não afeta SSE nem o fluxo principal.
+- **Notificações Discord:** helper centralizado `lib/discordClient.ts` com `sendEmbed(channel, embed)` — canais `feed`, `briefings`, `sinais`, `carteira`. Cada canal usa sua variável `DISCORD_WEBHOOK_*`; webhook vazio = retorno silencioso. Embeds color-coded por tipo (paleta `DISCORD_COLORS`); descrição >4.000 caracteres dividida automaticamente. Envio fire-and-forget (nunca await no caminho crítico de SSE/resposta HTTP); falha não afeta o fluxo principal. **Canais:** #briefings (pre-market/post-close + digest macro 3x/semana + aviso D-1); #feed (alertas de preço approaching/testing, CBOE PCR, ApeWisdom SPY sentiment, digest macro); #sinais (sinais 10:30/15:00 ET, CRO risk-review); #carteira (alertas Motor de Ciclo de Vida). Legado: `DISCORD_WEBHOOK_URL` mantido em `config.ts` como fallback até migração completa.
 - **Renderização de tabelas analíticas em Markdown:** no frontend, `react-markdown` com **remark-gfm** em `AnalysisResult.tsx` (resposta da análise IA) e `PreMarketBriefing.tsx` (briefing), permitindo tabelas GFM, listas de tarefas e formatação avançada nas saídas em Markdown.
 
 ---
@@ -302,7 +303,7 @@ SPY Dash/
 │       │   ├── optionChain.ts       # Fetch + cache de options (Tastytrade)
 │       │   ├── priceHistory.ts      # Persistência Supabase + restoreFromTradier()
 │       │   ├── earningsCalendar.ts  # Earnings 50 símbolos (Tastytrade, 6h; janela -7..90d; backend/IA)
-│       │   ├── fredPoller.ts        # CPI/PCE/Fed Rate/Yield Curve (FRED, 24h)
+│       │   ├── fredPoller.ts        # CPI/PCE/Fed Rate/Yield Curve T10Y2Y/T5Y2Y/DGS3MO (FRED, 24h)
 │       │   ├── blsPoller.ts         # NFP/Desemprego/PPI/Earnings (BLS, 24h)
 │       │   ├── macroCalendar.ts     # Eventos econômicos EUA (Finnhub, 1h)
 │       │   ├── newsAggregator.ts    # Headlines de mercado (GNews, 30min)
@@ -323,15 +324,19 @@ SPY Dash/
 │       │   ├── technicalIndicatorsState.ts  # Snapshot indicadores técnicos em memória
 │       │   ├── alertEngine.ts       # Alertas de preço por usuário (proximity + debounce)
 │       │   ├── preMarketBriefing.ts      # Scheduler 9:00/16:15 ET + Claude Sonnet 4.6 briefing + Discord embeds
-│       │   ├── scheduledSignalService.ts # Scheduler 10:30/15:00 ET + runAnalysisForPayload + Redis + SSE trade_signal_update
-│       │   ├── portfolioTrackerService.ts # Scheduler 16:00 ET + DTE + Tradier + Claude Gestor Risco + Discord
+│       │   ├── scheduledSignalService.ts # Scheduler 10:30/15:00 ET + runAnalysisForPayload + Redis + SSE + Discord #sinais
+│       │   ├── portfolioTrackerService.ts # Scheduler 16:00 ET + DTE + Tradier + Claude Gestor Risco + Discord #carteira
 │       │   ├── portfolioLifecycleAgent.ts  # Payload + system prompt + chamada Claude (alerts JSON)
+│       │   ├── cboePCRPoller.ts      # CBOE Put/Call Ratio 16:35 ET (dias úteis); Redis 14h; Discord #feed + SSE cboe_pcr
+│       │   ├── apeWisdomPoller.ts    # Reddit WSB SPY sentiment (ApeWisdom, 4h); Discord #feed só em anomalia (rank ≤10 ou |Δrank|≥15)
+│       │   ├── macroDigestService.ts # Digest macro+notícias 10:00 ET Seg/Qua/Sex + aviso D-1 18:00 ET; gpt-4o-mini; Discord #briefings
 │       │   └── analysisMemory.ts    # Persistência análise IA no Supabase + embeddings pgvector
 │       ├── lib/                # Utilitários
+│       │   ├── discordClient.ts    # sendEmbed(channel, embed) — feed/briefings/sinais/carteira; fire-and-forget; split 4k chars
 │       │   ├── circuitBreaker.ts    # Opossum wrapper: CLOSED/HALF_OPEN/OPEN; registry global
 │       │   ├── confidenceScorer.ts  # Score 0.0–1.0 por fonte (frescor × CB multiplier)
 │       │   ├── cacheStore.ts        # Cache Redis (ioredis) + compressão Brotli (payloads >1KB)
-│       │   ├── restoreCache.ts      # Restaura 8 chaves Redis no startup (incluindo ivrank + vix)
+│       │   ├── restoreCache.ts      # Restaura 9 chaves Redis no startup (ivrank, vix, CBOE PCR, macro, etc.)
 │       │   ├── sseBatcher.ts        # Batch de eventos newsfeed em janela de 500ms
 │       │   ├── time.ts              # isMarketOpen() DST-aware ET — compartilhado entre pollers
 │       │   ├── tradierClient.ts     # TradierClient singleton: getQuotes(), getTimeSales(), getOptionChain(), getExpirations()
@@ -687,6 +692,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" http://localhost:3001/admin/break
 | ↳ `type: sentiment` | `fearGreed: FearGreedData` — score CNN Fear & Greed |
 | `briefing` | `{ type: 'pre-market'\|'post-close', generatedAt, markdown, expiresAt }` — briefing automático 9:00/16:15 ET; enviado no snapshot inicial se válido |
 | `trade_signal_update` | `{ trade_signal, regime_score, no_trade_reasons, bias, key_levels, timestamp }` — sinal agendado 10:30/15:00 ET; enviado no snapshot inicial se existir em Redis |
+| `cboe_pcr` | `{ totalPCR, equityPCR, indexPCR, label, capturedAt }` — CBOE Put/Call Ratio diário (16:35 ET); enviado no snapshot inicial se existir em Redis |
 | `ping` | Heartbeat a cada 15s (timestamp) — mantém conexão viva em proxies |
 
 > Preço SPY e VIX em tempo real são servidos via eventos `quote` e `vix` do SSE (`/stream/market`), com snapshot na conexão inicial.
@@ -810,8 +816,13 @@ ENCRYPTION_KEY=<gere_com_openssl_rand_hex_32>
 SUPABASE_URL=https://<projeto>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service_role_key>
 
-# Discord Webhook — briefing pre-market/pós-fechamento + alertas do Motor de Ciclo de Vida (opcional)
+# Discord — 4 canais (opcional; sem key = retorno silencioso)
 # Crie em: Servidor Discord → Integrações → Webhooks
+DISCORD_WEBHOOK_FEED=https://discord.com/api/webhooks/<id>/<token>       # Alertas preço, CBOE PCR, ApeWisdom, digest
+DISCORD_WEBHOOK_BRIEFINGS=https://discord.com/api/webhooks/<id>/<token> # Pre-market, post-close, digest macro, D-1
+DISCORD_WEBHOOK_SINAIS=https://discord.com/api/webhooks/<id>/<token>     # Sinais 10:30/15:00 ET, CRO risk-review
+DISCORD_WEBHOOK_CARTEIRA=https://discord.com/api/webhooks/<id>/<token>   # Motor Ciclo de Vida (50%/21 DTE)
+# Legado (fallback até migração completa):
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/<id>/<token>
 ```
 
@@ -901,9 +912,9 @@ npm run preview # Preview do build de produção
 - Alertas de preço em tempo real (support/resistance/gex_flip) por usuário
 - Rate limiting: 5 análises/hora por usuário (sliding window)
 - **Follow-up:** `POST /api/chat-followup` (gpt-4o-mini, sem rate limit) para perguntas sobre a análise atual
-- **Sinais de trade em horários fixos:** scheduler 10:30 e 15:00 ET (dias úteis); uma análise global por horário via `runAnalysisForPayload()`; resultado em Redis e broadcast SSE `trade_signal_update`; widget "Último sinal" no dashboard.
+- **Sinais de trade em horários fixos:** scheduler 10:30 e 15:00 ET (dias úteis); uma análise global por horário via `runAnalysisForPayload()`; resultado em Redis e broadcast SSE `trade_signal_update`; envio ao Discord #sinais via `sendSignalToDiscord()` (embed com decisão, regime score, bias, níveis); widget "Último sinal" no dashboard.
 - **Motor de Gestão de Ciclo de Vida:** scheduler 16:00 ET para Put Spreads (posições OPEN em `portfolio_positions`); DTE + lucro % via Tradier; Claude Gestor de Risco (FECHAR_LUCRO / FECHAR_TEMPO / ROLAR / MANTER); alertas Discord com embeds (verde 50%, amarelo 21 DTE). Painel **Carteira** no dashboard com snapshot em memória, Cadastrar (modal com gerador OCC), Excluir por linha, endpoints GET/POST portfolio, POST analyze, POST/DELETE positions.
-- **Análise de Risco/Retorno Assimétrica:** `POST /api/analyze/risk-review` — motor de payoff Put Spread (`putSpreadPayoff.ts`) + eventos macro de alto impacto na janela DTE (`getMacroEventsForWindow`) + contexto GEX; Claude Sonnet 4.6 como CRO retorna decisão (APPROVED/REJECTED/NEEDS_RESTRUCTURE) e justificativa técnica.
+- **Análise de Risco/Retorno Assimétrica:** `POST /api/analyze/risk-review` — motor de payoff Put Spread (`putSpreadPayoff.ts`) + eventos macro de alto impacto na janela DTE (`getMacroEventsForWindow`) + contexto GEX; Claude Sonnet 4.6 como CRO retorna decisão (APPROVED/REJECTED/NEEDS_RESTRUCTURE) e justificativa técnica. Decisão enviada ao Discord #sinais via `sendEmbed('sinais', ...)` (fire-and-forget).
 
 **Pesquisa Semântica:**
 - `POST /api/search` — busca em análises históricas por similaridade cosine (pgvector HNSW)
@@ -911,7 +922,7 @@ npm run preview # Preview do build de produção
 
 **Feed de Mercado:**
 - Earnings via Tastytrade (6h; 50 símbolos em 5 setores; janela -7..90d) — backend/IA apenas; sem componente no frontend
-- Dados Macro via FRED: CPI, Core CPI, PCE, Fed Funds Rate, Yield Curve T10Y2Y (24h)
+- Dados Macro via FRED: CPI, Core CPI, PCE, Fed Funds Rate, Yield Curve T10Y2Y, T5Y2Y, DGS3MO (24h)
 - Dados Macro via BLS: Unemployment Rate, Nonfarm Payrolls, Avg Hourly Earnings, PPI Final Demand (24h)
 - Calendário de Eventos Econômicos via Finnhub: US high/medium impact (1h)
 - Headlines de mercado via GNews com query focada em Fed/macro/SPY (30min)
@@ -922,7 +933,7 @@ npm run preview # Preview do build de produção
 **Infraestrutura:**
 - Circuit breakers para todas as APIs externas (opossum)
 - Cache Redis com TTL + compressão Brotli automática em payloads >1KB (`cacheStore.ts`)
-- Restauração de cache no startup (`restoreCache.ts`) — 8 chaves restauradas + intraday + quote SPY
+- Restauração de cache no startup (`restoreCache.ts`) — 9 chaves (fear_greed, fred_macro, bls, headlines, macro_events, earnings, ivrank_snapshot, vix_snapshot, cboe_pcr_daily) + intraday + quote SPY
 - TTLs de 14h para `ivrank_snapshot`, `vix_snapshot`, `spy_intraday`, `vix_intraday`, `spy_quote_snapshot` — sobrevivem ao fechamento do mercado e reinícios overnight
 - Bootstrap não-bloqueante: `withTimeout()` por operação garante que o servidor sobe mesmo se Redis/Supabase/Tradier estiverem lentos
 - DXFeed watchdog com `lastFeedDataAt` — evita loops de reconexão em fins de semana
@@ -932,7 +943,7 @@ npm run preview # Preview do build de produção
 - Confidence scorer por fonte de dados (`confidenceScorer.ts`)
 - SSE roteado por usuário (`broadcastToUser`) para alertas direcionados
 - RLS em `ai_analyses`, `price_ticks` e `portfolio_positions`; pgvector e RPC `search_historical_analyses` seguras (migrations `20260228000000`, `20260228000001`)
-- Notificações Discord via webhook com embeds color-coded (briefing + alertas 50%/21 DTE)
+- Notificações Discord via `discordClient.sendEmbed()` em 4 canais (feed, briefings, sinais, carteira); embeds color-coded; fire-and-forget; CBOE PCR 16:35 ET, ApeWisdom 4h, digest macro Seg/Qua/Sex 10:00 ET + aviso D-1 18:00 ET
 - Endpoint `/admin/breakers` para gestão de circuit breakers
 
 **UI & Autenticação:**

@@ -11,6 +11,7 @@ import { marketState } from '../data/marketState'
 import { getAdvancedMetricsSnapshot } from '../data/advancedMetricsState'
 import { getMacroEventsForWindow } from '../data/macroCalendar'
 import { calculatePutSpreadPayoff } from '../lib/putSpreadPayoff'
+import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
 import { analysisRateLimit } from '../middleware/rateLimiter'
 
 // ---------------------------------------------------------------------------
@@ -172,6 +173,35 @@ export async function registerRiskReview(fastify: FastifyInstance): Promise<void
         const textBlock = msg.content.find((b): b is { type: 'text'; text: string } => b.type === 'text')
         const rawText = textBlock?.text?.trim() ?? ''
         const { decision, justification } = parseRiskReviewOutput(rawText)
+
+        const colorMap: Record<string, number> = {
+          APPROVED: DISCORD_COLORS.croApproved,
+          REJECTED: DISCORD_COLORS.croRejected,
+          NEEDS_RESTRUCTURE: DISCORD_COLORS.croRestructure,
+        }
+        const iconMap: Record<string, string> = {
+          APPROVED: '✅',
+          REJECTED: '❌',
+          NEEDS_RESTRUCTURE: '🔄',
+        }
+        const tradeLabel =
+          body.short_strike && body.long_strike
+            ? `Put Spread ${body.short_strike}/${body.long_strike} (${body.dte} DTE)`
+            : 'Put Spread'
+
+        sendEmbed('sinais', {
+          title: `${iconMap[decision] ?? '🔍'} CRO ${decision} — ${tradeLabel}`,
+          description: [
+            `**Decisão:** ${decision}`,
+            `**Crédito proposto:** $${body.credit_received_per_contract}/contrato`,
+            ``,
+            `**Justificativa:**`,
+            justification,
+          ].join('\n'),
+          color: colorMap[decision] ?? DISCORD_COLORS.signalWait,
+          footer: { text: 'SPY Dash · Risk Review CRO' },
+          timestamp: new Date().toISOString(),
+        }).catch(() => {})
 
         return reply.send({
           decision,

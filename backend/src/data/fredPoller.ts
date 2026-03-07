@@ -22,6 +22,8 @@ const SERIES: FredSeries[] = [
   { seriesId: 'PCEPI',     name: 'PCE Deflator',         unit: '% YoY' },
   { seriesId: 'DFF',       name: 'Fed Funds Rate',       unit: '%'     },
   { seriesId: 'T10Y2Y',    name: 'Yield Curve (10Y-2Y)', unit: '%'     },
+  { seriesId: 'T5Y2Y',     name: 'Yield Spread 5Y-2Y',   unit: '%'     },  // melhor preditor de recessão em 12 meses
+  { seriesId: 'DGS3MO',    name: 'Treasury Yield 3M',    unit: '%'     },  // taxa base de curto prazo
 ]
 
 // Last successfully fetched+validated full items array — used as fallback on total poll failure

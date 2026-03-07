@@ -1,10 +1,47 @@
 import type { AnalysisStructuredOutput } from '../types/market'
 import { broadcastToUser } from '../api/sse'
+import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
 
 const PROXIMITY_WARN = 0.002   // 0.2% — nível próximo (approaching)
 const PROXIMITY_TEST = 0.0005  // 0.05% — nível sendo testado (testing)
 const DEBOUNCE_MS = 60_000     // 60s entre alertas do mesmo nível
 const MAX_ALERTS_PER_USER = 10
+
+// Discord #feed — debounce separado (evitar flood)
+const discordAlertDebounce = new Map<string, number>()  // key: `${level}:${type}`
+const DISCORD_DEBOUNCE_MS_APPROACHING = 10 * 60 * 1000  // 10 min
+const DISCORD_DEBOUNCE_MS_TESTING = 15 * 60 * 1000     // 15 min
+
+async function maybeSendAlertToDiscord(alert: {
+  level: number
+  type: 'support' | 'resistance' | 'gex_flip'
+  alertType: 'approaching' | 'testing'
+  price: number
+}): Promise<void> {
+  const debounceKey = `${alert.level}:${alert.type}`
+  const lastSent = discordAlertDebounce.get(debounceKey) ?? 0
+  const debounceMs = alert.alertType === 'testing' ? DISCORD_DEBOUNCE_MS_TESTING : DISCORD_DEBOUNCE_MS_APPROACHING
+  if (Date.now() - lastSent < debounceMs) return
+  discordAlertDebounce.set(debounceKey, Date.now())
+
+  const isTesting = alert.alertType === 'testing'
+  const typeLabel = { support: 'Suporte', resistance: 'Resistência', gex_flip: 'GEX Flip' }
+  const statusLabel = isTesting ? '🔴 SENDO TESTADO' : '🟡 APROXIMANDO'
+  const color = isTesting ? DISCORD_COLORS.alertTesting : DISCORD_COLORS.alertApproaching
+  const distancePct = (Math.abs(alert.price - alert.level) / alert.level * 100).toFixed(2)
+
+  await sendEmbed('feed', {
+    title: `${statusLabel} — ${typeLabel[alert.type]} $${alert.level}`,
+    description: [
+      `**SPY:** $${alert.price.toFixed(2)}`,
+      `**Nível:** $${alert.level} (${typeLabel[alert.type]})`,
+      `**Distância:** ${distancePct}%`,
+    ].join('\n'),
+    color,
+    footer: { text: 'SPY Dash · Alert Engine' },
+    timestamp: new Date().toISOString(),
+  })
+}
 
 export interface ActiveAlert {
   userId: string
@@ -70,6 +107,12 @@ export function checkAlerts(price: number): void {
           price,
           timestamp: now,
         })
+        maybeSendAlertToDiscord({
+          level: alert.level,
+          type: alert.type,
+          alertType,
+          price,
+        }).catch(() => {})
       }
     }
   }

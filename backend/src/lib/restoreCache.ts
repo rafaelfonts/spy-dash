@@ -7,6 +7,7 @@ import type {
   MacroEvent,
   EarningsItem,
 } from '../types/market'
+import type { CBOEPCRData } from '../data/cboePCRPoller'
 
 interface CachedMacro {
   items: MacroDataItem[]
@@ -26,7 +27,7 @@ interface CachedEarnings {
 export async function restoreSnapshotsFromCache(): Promise<void> {
   console.log('[Cache] Restaurando snapshots do Supabase...')
 
-  const [fg, fred, bls, headlines, events, earnings, ivrank, vix] = await Promise.allSettled([
+  const [fg, fred, bls, headlines, events, earnings, ivrank, vix, cboePcr] = await Promise.allSettled([
     cacheGet<FearGreedData>('fear_greed'),
     cacheGet<CachedMacro>('fred_macro'),
     cacheGet<CachedMacro>('bls_macro'),
@@ -35,6 +36,7 @@ export async function restoreSnapshotsFromCache(): Promise<void> {
     cacheGet<CachedEarnings>('earnings'),
     cacheGet<{ value: number; percentile: number | null; ivx: number | null }>('ivrank_snapshot'),
     cacheGet<{ last: number; change: number }>('vix_snapshot'),
+    cacheGet<CBOEPCRData>('cboe_pcr_daily'),
   ])
 
   if (fg.status === 'fulfilled' && fg.value) {
@@ -97,5 +99,10 @@ export async function restoreSnapshotsFromCache(): Promise<void> {
   if (vix.status === 'fulfilled' && vix.value) {
     updateVIX(vix.value)
     console.log('[Cache] ✓ vix restored')
+  }
+
+  if (cboePcr.status === 'fulfilled' && cboePcr.value) {
+    emitter.emit('cboe_pcr', cboePcr.value)
+    console.log('[Cache] ✓ CBOE PCR restored')
   }
 }

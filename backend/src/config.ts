@@ -30,6 +30,16 @@ export const CONFIG = {
   TRADIER_BASE_URL: process.env.TRADIER_BASE_URL ?? 'https://sandbox.tradier.com',
   REDIS_URL: process.env.REDIS_URL ?? '',
   ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ?? '',
+  discord: {
+    // LEGADO — manter como fallback durante migração; remover após P2–P4 validados
+    webhookUrl: process.env.DISCORD_WEBHOOK_URL ?? '',
+
+    // Novos canais
+    webhookFeed: process.env.DISCORD_WEBHOOK_FEED ?? '',
+    webhookBriefings: process.env.DISCORD_WEBHOOK_BRIEFINGS ?? '',
+    webhookSinais: process.env.DISCORD_WEBHOOK_SINAIS ?? '',
+    webhookCarteira: process.env.DISCORD_WEBHOOK_CARTEIRA ?? '',
+  },
 } as const
 
 // Validar chaves críticas no startup

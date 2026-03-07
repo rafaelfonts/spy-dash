@@ -7,6 +7,7 @@ import { getVIXTermStructureSnapshot } from '../data/vixTermStructureState'
 import { getTechnicalSnapshot } from '../data/technicalIndicatorsState'
 import { getTodaysBriefing } from '../data/preMarketBriefing'
 import { getLastScheduledSignal } from '../data/scheduledSignalService'
+import { getLastCBOEPCR } from '../data/cboePCRPoller'
 import type { SSEClient } from '../types/market'
 import { SSEBatcher } from '../lib/sseBatcher'
 import { checkAlerts } from '../data/alertEngine'
@@ -65,6 +66,7 @@ emitter.on('vix-term-structure', (data) => broadcast('vix-term-structure', data)
 emitter.on('technical-indicators', (data) => broadcast('technical-indicators', data))
 emitter.on('briefing', (data) => broadcast('briefing', data))
 emitter.on('trade_signal_update', (data) => broadcast('trade_signal_update', data))
+emitter.on('cboe_pcr', (data) => broadcast('cboe_pcr', data))
 emitter.on('quote', (data) => {
   if (data.last !== null) checkAlerts(data.last)
   broadcast('quote', {
@@ -221,6 +223,13 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     getLastScheduledSignal()
       .then((payload) => {
         if (payload) client.write('trade_signal_update', payload)
+      })
+      .catch(() => {})
+
+    // Send last CBOE PCR from Redis if available
+    getLastCBOEPCR()
+      .then((payload) => {
+        if (payload) client.write('cboe_pcr', payload)
       })
       .catch(() => {})
 

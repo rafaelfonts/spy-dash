@@ -5,6 +5,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js'
+import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
 import { getTradierClient } from '../lib/tradierClient'
 import { redis } from '../lib/cacheStore'
 import {
@@ -197,36 +198,6 @@ async function enrichPositions(rows: PortfolioPositionRow[]): Promise<EnrichedPo
 }
 
 // ---------------------------------------------------------------------------
-// Discord alert (embeds with color)
-// ---------------------------------------------------------------------------
-
-const DISCORD_COLOR_50PCT = 65280   // green
-const DISCORD_COLOR_21DTE = 16776960 // yellow
-
-export async function sendPortfolioAlertToDiscord(
-  alert: { recommendation: string; message: string },
-  type: '50pct' | '21dte',
-): Promise<void> {
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL
-  if (!webhookUrl) return
-
-  const title = type === '50pct' ? 'Alerta 50% Lucro' : 'Alerta 21 DTE'
-  const color = type === '50pct' ? DISCORD_COLOR_50PCT : DISCORD_COLOR_21DTE
-
-  const res = await fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      embeds: [{ title, color, description: alert.message }],
-    }),
-  })
-
-  if (!res.ok) {
-    throw new Error(`Discord webhook HTTP ${res.status}`)
-  }
-}
-
-// ---------------------------------------------------------------------------
 // In-memory snapshot for dashboard (updated by cycle or by refresh)
 // ---------------------------------------------------------------------------
 
@@ -318,16 +289,27 @@ export async function runPortfolioTrackerCycle(): Promise<void> {
   }
 
   for (const alert of response.alerts) {
-    const rec = alert.recommendation
-    if (rec === 'FECHAR_LUCRO') {
-      sendPortfolioAlertToDiscord(alert, '50pct').catch((err) =>
-        console.error('[Discord] Alerta portfolio 50%:', err),
-      )
-    } else if (rec === 'FECHAR_TEMPO' || rec === 'ROLAR') {
-      sendPortfolioAlertToDiscord(alert, '21dte').catch((err) =>
-        console.error('[Discord] Alerta portfolio 21 DTE:', err),
-      )
-    }
+    const isProfit = alert.recommendation === 'FECHAR_LUCRO'
+    const isTime = alert.recommendation === 'FECHAR_TEMPO' || alert.recommendation === 'ROLAR'
+    const isHold = alert.recommendation === 'MANTER'
+
+    const color = isProfit ? DISCORD_COLORS.portfolioProfit
+      : isTime ? DISCORD_COLORS.portfolioTime
+      : DISCORD_COLORS.portfolioHold
+
+    const icon = isProfit ? '💰' : isTime ? '⏰' : '✅'
+
+    await sendEmbed('carteira', {
+      title: `${icon} ${alert.recommendation} — ${alert.position_id ?? 'N/A'}`,
+      description: alert.message,
+      color,
+      fields: [
+        { name: 'Posição', value: alert.position_id ?? '—', inline: true },
+        { name: 'Recomendação', value: alert.recommendation, inline: true },
+      ],
+      footer: { text: 'Motor de Ciclo de Vida 16:00 ET' },
+      timestamp: new Date().toISOString(),
+    })
   }
 
   console.log(`[PortfolioTracker] Cycle done: ${enriched.length} positions, ${response.alerts.length} alerts`)

@@ -19,6 +19,9 @@ import { startTechnicalIndicatorsPoller } from './data/technicalIndicatorsPoller
 import { startPreMarketScheduler, restoreBriefingFromCache } from './data/preMarketBriefing'
 import { startScheduledSignalScheduler } from './data/scheduledSignalService'
 import { startPortfolioTrackerScheduler } from './data/portfolioTrackerService'
+import { startCBOEPCRScheduler } from './data/cboePCRPoller'
+import { startApeWisdomPoller } from './data/apeWisdomPoller'
+import { startMacroDigestScheduler } from './data/macroDigestService'
 import { registerSSE } from './api/sse'
 import { registerOpenAI } from './api/openai'
 import { registerRiskReview } from './api/riskReview'
@@ -173,6 +176,9 @@ async function bootstrap(): Promise<void> {
     startPreMarketScheduler()
     startScheduledSignalScheduler()
     startPortfolioTrackerScheduler()
+    startCBOEPCRScheduler()
+    startApeWisdomPoller()
+    startMacroDigestScheduler()
   }).catch(console.error)
 }
 

@@ -13,6 +13,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { marketState, newsSnapshot, emitter } from './marketState'
 import { cacheGet, cacheSet, redis } from '../lib/cacheStore'
+import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
 import { CONFIG } from '../config'
 import type {
   PreMarketBriefing,
@@ -28,9 +29,6 @@ import type {
 // ---------------------------------------------------------------------------
 
 const BRIEFING_TTL_MS = 14 * 60 * 60 * 1000  // 14h — survives overnight in Redis
-const DISCORD_EMBED_DESC_MAX = 4000          // safe under Discord's 4096 limit
-const DISCORD_EMBED_COLOR_PRE = 65416        // #00ff88 — Pré-Market (paleta frontend)
-const DISCORD_EMBED_COLOR_POST = 16763904    // #ffcc00 — Pós-Market (paleta frontend)
 
 const PRE_MARKET_PROMPT = `Você é o Estrategista Quantitativo Chefe do SPY Dash. Sua tarefa é analisar os dados pré-mercado fornecidos (Preço SPY, GEX, IV Rank, VIX, Macro Events) e entregar o briefing de abertura. Identifique o DTE com maior oportunidade matemática hoje (0 DTE em diante).
 REGRAS DE FORMATAÇÃO E ESTILO (INEGOCIÁVEIS):
@@ -41,6 +39,7 @@ REGRAS DE FORMATAÇÃO E ESTILO (INEGOCIÁVEIS):
 - 🌪️ **Volatilidade**: Status do VIX e IV Rank. Indique se o IV Rank favorece venda de prêmio (> 30%) ou exige cautela.
 - 📅 **Risco Macro**: Liste apenas os eventos binários de ALTO IMPACTO do dia. Se não houver, diga 'Sessão Livre de Eventos Macro'.
 - 🎯 **Veredito Sniper**: Com base nos dados, há configuração matemática para buscar entradas de Put Spread hoje? Se sim, indique o DTE com maior oportunidade clara. (Sim/Não e justificativa em 1 linha).
+INTERPRETAÇÃO MACRO: T5Y2Y negativo (curva 5Y-2Y invertida) por mais de 30 dias = sinal histórico de recessão em 12 meses. Quando presente nos dados, mencionar no briefing e elevar cautela em posições de longo prazo (45 DTE).
 Não explique o que é GEX ou IV Rank. Entregue apenas o sinal.
 PROIBIÇÃO DE TERMOS TÉCNICOS DE BACKEND: Nunca instrua o usuário a 'ir ao banco de dados' ou 'abrir o Supabase'. Se recomendar a abertura de uma posição, use o jargão correto: 'Execute a ordem na sua corretora e registre o trade no módulo de Portfólio do dashboard'.`
 
@@ -264,11 +263,24 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
     // Broadcast to all connected SSE clients
     emitter.emit('briefing', briefing)
 
-    // Discord webhook — fire-and-forget, failure does not affect SSE
-    const providerLabel = usedClaude ? 'Claude 3.5 Sonnet' : 'GPT-4o (Fallback)'
-    sendToDiscord(markdown, type, providerLabel).catch((err) =>
-      console.error('[Discord] Falha ao enviar briefing:', err),
-    )
+    // Discord — fire-and-forget via discordClient (#briefings)
+    if (type === 'pre-market') {
+      await sendEmbed('briefings', {
+        title: '🌅 Pre-Market Briefing — SPY Dash',
+        description: markdown,
+        color: DISCORD_COLORS.preMarket,
+        footer: { text: `Gerado às ${new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/New_York' })} ET` },
+        timestamp: new Date().toISOString(),
+      })
+    } else {
+      await sendEmbed('briefings', {
+        title: '🌆 Resumo Pós-Fechamento — SPY Dash',
+        description: markdown,
+        color: DISCORD_COLORS.postClose,
+        footer: { text: `Fechamento ${new Date().toLocaleDateString('pt-BR', { timeZone: 'America/New_York' })} ET` },
+        timestamp: new Date().toISOString(),
+      })
+    }
 
     console.log(`[PreMarket] Briefing '${type}' gerado com sucesso`)
   } catch (err) {
@@ -528,67 +540,6 @@ async function getSpyPreMarketPrice(): Promise<number | null> {
   } catch {
     // Non-critical: briefing still generates without pre-market price
     return null
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Discord webhook (embeds — description limit 4096; we use 4000 and split if needed)
-// ---------------------------------------------------------------------------
-
-/** Splits text at a line break near targetLen so we don't cut mid-sentence. */
-function splitAtLineBreak(text: string, targetLen: number): [string, string] {
-  if (text.length <= targetLen) return [text, '']
-  const margin = 400
-  const start = Math.max(0, targetLen - margin)
-  const end = Math.min(text.length, targetLen + margin)
-  const chunk = text.slice(start, end)
-  const double = chunk.indexOf('\n\n')
-  const single = chunk.indexOf('\n')
-  let splitAt = targetLen
-  if (double !== -1) splitAt = start + double + 2
-  else if (single !== -1) splitAt = start + single + 1
-  return [text.slice(0, splitAt).trim(), text.slice(splitAt).trim()]
-}
-
-async function sendToDiscord(
-  markdown: string,
-  type: 'pre-market' | 'post-close',
-  provider: string,
-): Promise<void> {
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL
-  if (!webhookUrl) return
-
-  const dateET = getTodayDateET()
-  const title =
-    type === 'pre-market'
-      ? `🌅 Pré-Market Report: SPY — ${dateET}`
-      : `🏁 Pós-Fechamento: SPY — ${dateET}`
-
-  const embedColor = type === 'pre-market' ? DISCORD_EMBED_COLOR_PRE : DISCORD_EMBED_COLOR_POST
-  const footer = { text: `Gerado por: ${provider}` }
-  const embeds: Array<{ title: string; description: string; color: number; footer: { text: string } }> = []
-
-  if (markdown.length <= DISCORD_EMBED_DESC_MAX) {
-    embeds.push({ title, description: markdown, color: embedColor, footer })
-  } else {
-    const [part1, part2] = splitAtLineBreak(markdown, DISCORD_EMBED_DESC_MAX)
-    embeds.push({ title, description: part1, color: embedColor, footer })
-    embeds.push({
-      title: `${type === 'pre-market' ? '🌅 Pré-Market' : '🏁 Pós-Fechamento'} (continuação)`,
-      description: part2,
-      color: embedColor,
-      footer,
-    })
-  }
-
-  const res = await fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ embeds }),
-  })
-
-  if (!res.ok) {
-    throw new Error(`Discord webhook HTTP ${res.status}`)
   }
 }
 

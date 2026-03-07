@@ -5,6 +5,7 @@
 
 import { emitter } from './marketState'
 import { cacheGet, cacheSet, redis } from '../lib/cacheStore'
+import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
 import { runAnalysisForPayload } from '../api/openai'
 import type { AnalysisStructuredOutput } from '../types/market'
 
@@ -64,6 +65,56 @@ function structuredToPayload(structured: AnalysisStructuredOutput): TradeSignalP
 }
 
 // ---------------------------------------------------------------------------
+// Discord — envio para #sinais (fire-and-forget)
+// ---------------------------------------------------------------------------
+
+async function sendSignalToDiscord(
+  result: TradeSignalPayload,
+  slot: '10:30' | '15:00',
+): Promise<void> {
+  const colorMap = {
+    trade: DISCORD_COLORS.signalProceed,
+    wait: DISCORD_COLORS.signalWait,
+    avoid: DISCORD_COLORS.signalAvoid,
+  }
+  const iconMap = { trade: '🟢', wait: '🟡', avoid: '🔴' }
+  const labelMap = { trade: 'OPERAR', wait: 'AGUARDAR', avoid: 'NÃO OPERAR' }
+
+  const signal = result.trade_signal ?? 'wait'
+  const color = colorMap[signal] ?? DISCORD_COLORS.signalWait
+  const icon = iconMap[signal] ?? '🟡'
+  const label = labelMap[signal] ?? signal.toUpperCase()
+
+  const lines: string[] = [
+    `**Decisão:** ${icon} ${label}`,
+    `**Regime Score:** ${result.regime_score ?? 'N/A'}/10`,
+    `**Bias:** ${result.bias ?? 'N/A'}`,
+  ]
+
+  if (result.no_trade_reasons?.length) {
+    lines.push(`**Razões de veto:** ${result.no_trade_reasons.join(' · ')}`)
+  }
+
+  if (result.key_levels) {
+    const kl = result.key_levels
+    const kvParts = [
+      kl.support?.length ? `Suporte $${kl.support.join(', ')}` : null,
+      kl.resistance?.length ? `Resist. $${kl.resistance.join(', ')}` : null,
+      kl.gex_flip != null ? `GEX Flip $${kl.gex_flip}` : null,
+    ].filter(Boolean).join(' · ')
+    if (kvParts) lines.push(`**Níveis:** ${kvParts}`)
+  }
+
+  await sendEmbed('sinais', {
+    title: `🎯 Sinal ${slot} ET — ${new Date().toLocaleDateString('pt-BR', { timeZone: 'America/New_York' })}`,
+    description: lines.join('\n'),
+    color,
+    footer: { text: 'SPY Dash · Sinal Agendado' },
+    timestamp: new Date().toISOString(),
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Core: run one scheduled analysis and broadcast
 // ---------------------------------------------------------------------------
 
@@ -91,6 +142,7 @@ export async function runScheduledSignalAnalysis(slotLabel: string): Promise<voi
 
     await cacheSet(TRADE_SIGNAL_CACHE_KEY, payload, TRADE_SIGNAL_TTL_MS, 'scheduled_signal')
     emitter.emit('trade_signal_update', payload)
+    await sendSignalToDiscord(payload, slotLabel as '10:30' | '15:00')
     console.log(`[ScheduledSignal] ${slotLabel} ET concluído: trade_signal=${payload.trade_signal} regime_score=${payload.regime_score}`)
   } catch (err) {
     console.error('[ScheduledSignal] Erro na análise agendada:', (err as Error).message)
