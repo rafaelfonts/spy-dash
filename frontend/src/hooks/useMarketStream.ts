@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react'
 import { useMarketStore } from '../store/marketStore'
-import type { GEXProfile } from '../store/marketStore'
 import { supabase } from '../lib/supabase'
 import { getApiBase } from '../lib/apiBase'
 
@@ -20,7 +19,7 @@ export function useMarketStream(): void {
   const setTechnicalIndicators = useMarketStore((s) => s.setTechnicalIndicators)
   const setPreMarketBriefing = useMarketStore((s) => s.setPreMarketBriefing)
   const setLastScheduledSignal = useMarketStore((s) => s.setLastScheduledSignal)
-  const setGEXByExpiration = useMarketStore((s) => s.setGEXByExpiration)
+  const setGEXDynamic = useMarketStore((s) => s.setGEXDynamic)
   const addAlert = useMarketStore((s) => s.addAlert)
 
   const esRef = useRef<EventSource | null>(null)
@@ -214,34 +213,31 @@ export function useMarketStream(): void {
               lastUpdated: Date.now(),
             })
           }
-          if ((data as any).gexByExpiration) {
-            const byExp = (data as any).gexByExpiration
-            const toProfile = (bucket: any): GEXProfile | null => {
-              if (!bucket) return null
-              return {
-                byStrike: bucket.profile?.byStrike ?? [],
-                totalGEX: bucket.totalNetGamma,
-                flipPoint: bucket.flipPoint,
-                zeroGammaLevel: bucket.zeroGammaLevel,
-                maxGammaStrike: bucket.maxGexStrike,
-                minGammaStrike: bucket.minGexStrike,
-                callWall: bucket.callWall,
-                putWall: bucket.putWall,
-                regime: bucket.regime,
-                calculatedAt: bucket.calculatedAt,
-                totalVannaExposure: bucket.totalVannaExposure,
-                totalCharmExposure: bucket.totalCharmExposure,
-                volatilityTrigger: bucket.volatilityTrigger,
-              }
-            }
-            setGEXByExpiration({
-              dte0:  toProfile(byExp.dte0),
-              dte1:  toProfile(byExp.dte1),
-              dte7:  toProfile(byExp.dte7),
-              dte21: toProfile(byExp.dte21),
-              dte45: toProfile(byExp.dte45),
-              all:   toProfile(byExp.all),
-            })
+          if ((data as any).gexDynamic) {
+            const entries = (data as any).gexDynamic as Array<any>
+            setGEXDynamic(entries.map((e: any) => ({
+              expiration: e.expiration,
+              dte: e.dte,
+              isMonthlyOPEX: e.isMonthlyOPEX,
+              isWeeklyOPEX: e.isWeeklyOPEX,
+              label: e.label,
+              gammaAnomaly: e.gammaAnomaly,
+              gex: {
+                byStrike: e.gex.profile?.byStrike ?? [],
+                totalGEX: e.gex.totalNetGamma,
+                flipPoint: e.gex.flipPoint,
+                zeroGammaLevel: e.gex.zeroGammaLevel,
+                maxGammaStrike: e.gex.maxGexStrike,
+                minGammaStrike: e.gex.minGexStrike,
+                callWall: e.gex.callWall,
+                putWall: e.gex.putWall,
+                regime: e.gex.regime,
+                calculatedAt: e.gex.calculatedAt,
+                totalVannaExposure: e.gex.totalVannaExposure,
+                totalCharmExposure: e.gex.totalCharmExposure,
+                volatilityTrigger: e.gex.volatilityTrigger,
+              },
+            })))
           }
         } catch (err) {
           console.warn('[SSE] advanced-metrics parse error:', (err as Error).message)

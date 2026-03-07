@@ -9,7 +9,7 @@
 import { marketState, newsSnapshot } from './marketState'
 import { getVIXTermStructureSnapshot } from './vixTermStructureState'
 import { getExpectedMoveSnapshot } from './expectedMoveState'
-import type { GEXByExpiration } from './gexService'
+import type { GEXDynamic } from './gexService'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -114,19 +114,28 @@ function computePriceDistribution(spot: number): PriceDistribution | null {
 // Main regime scorer
 // ---------------------------------------------------------------------------
 
-export function computeRegimeScore(gexByExpiration: GEXByExpiration | null): RegimeScorerResult {
+export function computeRegimeScore(gexDynamic: GEXDynamic | null): RegimeScorerResult {
   const ivRank = marketState.ivRank.value ?? null
   const hv30 = marketState.ivRank.hv30 ?? null
   const ivHvRatio = ivRank != null && hv30 != null && hv30 > 0 ? ivRank / hv30 : null
   const vixLast = marketState.vix.last ?? null
   const spyLast = marketState.spy.last ?? null
 
-  const gexAll = gexByExpiration?.all ?? null
-  const totalNetGamma = gexAll?.totalNetGamma ?? null
-  const vex = gexAll?.totalVannaExposure ?? null
-  const cex = gexAll?.totalCharmExposure ?? null
-  const vt = gexAll?.volatilityTrigger ?? null
-  const zgl = gexAll?.zeroGammaLevel ?? null
+  // Aggregate across all dynamic entries; use lowest-DTE entry for intraday anchors (VT, ZGL)
+  const entries = gexDynamic ?? []
+  const lowestDTE = entries.length > 0 ? entries[0].gex : null
+  const totalNetGamma = entries.length > 0
+    ? entries.reduce((sum, e) => sum + e.gex.totalNetGamma, 0)
+    : null
+  const vex = entries.length > 0
+    ? entries.reduce((sum, e) => sum + (e.gex.totalVannaExposure ?? 0), 0)
+    : null
+  const cex = entries.length > 0
+    ? entries.reduce((sum, e) => sum + (e.gex.totalCharmExposure ?? 0), 0)
+    : null
+  // VT and ZGL from lowest-DTE entry (most impactful for intraday regime)
+  const vt = lowestDTE?.volatilityTrigger ?? null
+  const zgl = lowestDTE?.zeroGammaLevel ?? null
 
   const termStructure = getVIXTermStructureSnapshot()
 

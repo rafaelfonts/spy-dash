@@ -548,3 +548,167 @@ export async function calculateAllExpirationsGex(symbol: string): Promise<GEXByE
 
   return { dte0, dte1, dte7, dte21, dte45, all }
 }
+
+// ===========================================================================
+// Dynamic GEX — term structure scanner (0–60 DTE, structural landmarks)
+// ===========================================================================
+
+export interface GEXExpirationEntry {
+  expiration: string        // YYYY-MM-DD
+  dte: number               // days to expiry (0 = today in ET)
+  isMonthlyOPEX: boolean    // true if 3rd Friday of the month
+  isWeeklyOPEX: boolean     // true if any Friday
+  label: string             // e.g. "MAR-14 (7D) OPEX" or "0DTE"
+  gex: DailyGexResult
+  gammaAnomaly: number      // |netGamma| normalised 0–1 across all selected expirations
+}
+
+export type GEXDynamic = GEXExpirationEntry[]
+
+/** Returns DTE relative to today (ET time zone). Negative = past expiration. */
+function calcDTEFromDate(expiration: string): number {
+  const todayET = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date()).replace(/(\d+)\/(\d+)\/(\d+)/, '$3-$1-$2')
+  const msPerDay = 86_400_000
+  return Math.round((new Date(expiration).getTime() - new Date(todayET).getTime()) / msPerDay)
+}
+
+/** Returns true if `dateStr` (YYYY-MM-DD) is the 3rd Friday of its month. */
+function isMonthlyOPEX(dateStr: string): boolean {
+  const d = new Date(dateStr + 'T12:00:00Z')
+  if (d.getUTCDay() !== 5) return false  // not a Friday
+  const day = d.getUTCDate()
+  return day >= 15 && day <= 21
+}
+
+/** Returns true if `dateStr` is any Friday. */
+function isWeeklyOPEX(dateStr: string): boolean {
+  return new Date(dateStr + 'T12:00:00Z').getUTCDay() === 5
+}
+
+/** Builds a human-readable label for an expiration entry. */
+function buildExpirationLabel(dateStr: string, dte: number, monthly: boolean): string {
+  const d = new Date(dateStr + 'T12:00:00Z')
+  const monthAbbr = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'][d.getUTCMonth()]
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  const dteStr = dte === 0 ? '0DTE' : `${dte}D`
+  const opexSuffix = monthly ? ' OPEX' : ''
+  return `${monthAbbr}-${day} (${dteStr})${opexSuffix}`
+}
+
+/**
+ * Selects up to 8 structurally significant expirations from the available list.
+ * Targets DTE landmarks: [0, 3, 7, 14, 21, 35, 45, 60].
+ * Prefers OPEX mensais when two expirations are equidistant from a landmark.
+ */
+export function selectStructuralExpirations(expirations: string[]): string[] {
+  const LANDMARKS = [0, 3, 7, 14, 21, 35, 45, 60]
+  const MAX_COUNT = 8
+
+  const candidates = expirations
+    .map((exp) => ({ exp, dte: calcDTEFromDate(exp), monthly: isMonthlyOPEX(exp) }))
+    .filter((c) => c.dte >= 0 && c.dte <= 60)
+    .sort((a, b) => a.dte - b.dte)
+
+  if (candidates.length === 0) return []
+
+  const selected = new Set<string>()
+  for (const landmark of LANDMARKS) {
+    let best: { exp: string; dist: number; monthly: boolean } | null = null
+    for (const c of candidates) {
+      const dist = Math.abs(c.dte - landmark)
+      if (!best) {
+        best = { exp: c.exp, dist, monthly: c.monthly }
+      } else if (dist < best.dist) {
+        best = { exp: c.exp, dist, monthly: c.monthly }
+      } else if (dist === best.dist && c.monthly && !best.monthly) {
+        // Prefer OPEX mensal on equidistant tie
+        best = { exp: c.exp, dist, monthly: c.monthly }
+      }
+    }
+    if (best) selected.add(best.exp)
+    if (selected.size >= MAX_COUNT) break
+  }
+
+  return Array.from(selected).sort()
+}
+
+/**
+ * Fetches all available expirations (0–60 DTE), selects the most structurally
+ * significant ones via selectStructuralExpirations(), computes GEX for each in
+ * parallel, and returns a GEXDynamic array sorted by DTE, annotated with metadata
+ * and gammaAnomaly scores (0–1).
+ */
+export async function calculateDynamicGex(symbol: string): Promise<GEXDynamic> {
+  if (!CONFIG.TRADIER_API_KEY) {
+    console.warn('[GexService] TRADIER_API_KEY not set — skipping dynamic GEX')
+    return []
+  }
+
+  const client = getTradierClient()
+  const allExpirations = await client.getExpirations(symbol)
+  if (allExpirations.length === 0) return []
+
+  const selected = selectStructuralExpirations(allExpirations)
+  if (selected.length === 0) return []
+
+  // Resolve spot price once for all parallel calculations
+  let spotPrice = marketState.spy.last ?? 0
+  if (spotPrice <= 0) {
+    const quotes = await client.getQuotes(symbol)
+    spotPrice = quotes[0]?.last ?? 0
+  }
+  if (spotPrice <= 0) return []
+
+  console.log(
+    `[GexService] Dynamic GEX — expirations selecionadas: [${
+      selected.map((e) => `${e}(${calcDTEFromDate(e)}D)`).join(', ')
+    }]`,
+  )
+
+  const results = await Promise.allSettled(
+    selected.map((exp) => calculateGexForExpiration(symbol, exp, spotPrice)),
+  )
+
+  const entries: GEXExpirationEntry[] = []
+  for (let i = 0; i < selected.length; i++) {
+    const r = results[i]
+    if (r.status === 'rejected' || r.value === null) continue
+    const expStr = selected[i]
+    const dte = calcDTEFromDate(expStr)
+    const monthly = isMonthlyOPEX(expStr)
+    entries.push({
+      expiration: expStr,
+      dte,
+      isMonthlyOPEX: monthly,
+      isWeeklyOPEX: isWeeklyOPEX(expStr),
+      label: buildExpirationLabel(expStr, dte, monthly),
+      gex: r.value,
+      gammaAnomaly: 0,  // normalised below
+    })
+  }
+
+  if (entries.length > 0) {
+    const maxAbs = Math.max(...entries.map((e) => Math.abs(e.gex.totalNetGamma)))
+    if (maxAbs > 0) {
+      for (const entry of entries) {
+        entry.gammaAnomaly = Math.round((Math.abs(entry.gex.totalNetGamma) / maxAbs) * 100) / 100
+      }
+    }
+  }
+
+  entries.sort((a, b) => a.dte - b.dte)
+
+  console.log(
+    `[GexService] Dynamic GEX resultado: ` +
+    entries.map((e) =>
+      `${e.label}=${e.gex.regime}(${e.gex.totalNetGamma >= 0 ? '+' : ''}$${e.gex.totalNetGamma}M anomaly=${e.gammaAnomaly})`,
+    ).join(' '),
+  )
+
+  return entries
+}

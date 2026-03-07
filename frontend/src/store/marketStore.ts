@@ -159,14 +159,15 @@ export interface GEXProfile {
   volatilityTrigger?: number   // VT: GEX-weighted avg of 3 strikes nearest flipPoint
 }
 
-// GEX by expiration bucket (mirrored from backend gexService.GEXByExpiration)
-export interface GEXByExpirationData {
-  dte0:  GEXProfile | null
-  dte1:  GEXProfile | null
-  dte7:  GEXProfile | null
-  dte21: GEXProfile | null
-  dte45: GEXProfile | null
-  all:   GEXProfile | null
+// Dynamic GEX entry (mirrored from backend gexService.GEXExpirationEntry)
+export interface GEXExpirationEntry {
+  expiration: string        // YYYY-MM-DD
+  dte: number               // days to expiry (0 = today)
+  isMonthlyOPEX: boolean    // 3rd Friday of the month
+  isWeeklyOPEX: boolean     // any Friday
+  label: string             // e.g. "MAR-14 (7D) OPEX" or "0DTE"
+  gex: GEXProfile           // GEX data for this expiration
+  gammaAnomaly: number      // |netGamma| normalised 0–1 across all selected expirations
 }
 
 // Option chain types (mirrored from backend OptionLeg/OptionExpiry)
@@ -272,7 +273,7 @@ interface MarketStore {
   optionChain: OptionExpiry[]
   optionChainMeta: OptionChainMeta | null
   gexProfile: GEXProfile | null
-  gexByExpiration: GEXByExpirationData | null
+  gexDynamic: GEXExpirationEntry[] | null
   lastAnalysisOutput: AnalysisStructuredOutput | null
   putCallRatio: PutCallRatioData | null
   vixTermStructure: VIXTermStructureData | null
@@ -289,7 +290,7 @@ interface MarketStore {
   setOptionChain: (chain: OptionExpiry[]) => void
   setOptionChainMeta: (meta: OptionChainMeta) => void
   setGEXProfile: (gex: GEXProfile | null) => void
-  setGEXByExpiration: (data: GEXByExpirationData | null) => void
+  setGEXDynamic: (data: GEXExpirationEntry[] | null) => void
   setLastAnalysisOutput: (output: AnalysisStructuredOutput | null) => void
   setPutCallRatio: (data: PutCallRatioData | null) => void
   setVIXTermStructure: (data: VIXTermStructureData | null) => void
@@ -352,7 +353,7 @@ export const useMarketStore = create<MarketStore>()(
     optionChain: [],
     optionChainMeta: null,
     gexProfile: null,
-    gexByExpiration: null,
+    gexDynamic: null,
     lastAnalysisOutput: null,
     putCallRatio: null,
     vixTermStructure: null,
@@ -400,7 +401,7 @@ export const useMarketStore = create<MarketStore>()(
     setOptionChain: (chain) => set({ optionChain: chain }),
     setOptionChainMeta: (meta) => set({ optionChainMeta: meta }),
     setGEXProfile: (gex) => set({ gexProfile: gex }),
-    setGEXByExpiration: (data) => set({ gexByExpiration: data }),
+    setGEXDynamic: (data: GEXExpirationEntry[] | null) => set({ gexDynamic: data }),
     setLastAnalysisOutput: (output) => set({ lastAnalysisOutput: output }),
     setPutCallRatio: (data) => set({ putCallRatio: data }),
     setVIXTermStructure: (data) => set({ vixTermStructure: data }),

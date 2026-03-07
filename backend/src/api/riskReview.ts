@@ -123,9 +123,13 @@ export async function registerRiskReview(fastify: FastifyInstance): Promise<void
 
       const metrics = getAdvancedMetricsSnapshot()
       let major_negative_gex_level: number | null = null
-      if (metrics?.gexByExpiration) {
-        const bucket = dte <= 30 ? metrics.gexByExpiration.dte21 : metrics.gexByExpiration.dte45
-        major_negative_gex_level = bucket?.minGexStrike ?? metrics.gex?.minGexStrike ?? null
+      if (metrics?.gexDynamic && metrics.gexDynamic.length > 0) {
+        // Find the entry with DTE closest to the trade's DTE (prefer shorter for conservatism)
+        const target = dte <= 30 ? 21 : 45
+        const closest = metrics.gexDynamic.reduce((best, e) =>
+          Math.abs(e.dte - target) < Math.abs(best.dte - target) ? e : best,
+        )
+        major_negative_gex_level = closest.gex.minGexStrike ?? metrics.gex?.minGexStrike ?? null
       } else if (metrics?.gex) {
         major_negative_gex_level = metrics.gex.minGexStrike
       }

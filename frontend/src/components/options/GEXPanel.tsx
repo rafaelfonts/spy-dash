@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, useCallback } from 'react'
+import { memo, useMemo, useState, useCallback, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import {
   ResponsiveContainer,
@@ -13,7 +13,7 @@ import {
   LabelList,
 } from 'recharts'
 import { useMarketStore } from '../../store/marketStore'
-import type { GEXProfile } from '../../store/marketStore'
+import type { GEXProfile, GEXExpirationEntry } from '../../store/marketStore'
 import { supabase } from '../../lib/supabase'
 import { getApiBase } from '../../lib/apiBase'
 
@@ -51,43 +51,52 @@ const REFERENCE_LINES = [
   { color: '#ff4488', label: 'VT' },
 ]
 
-type DteKey = '0DTE' | '1D' | '7D' | '21D' | '45D' | 'ALL'
-
-const DTE_TABS: { key: DteKey; label: string }[] = [
-  { key: '0DTE', label: '0DTE' },
-  { key: '1D',   label: '1D' },
-  { key: '7D',   label: '7D' },
-  { key: '21D',  label: '21D' },
-  { key: '45D',  label: '45D' },
-  { key: 'ALL',  label: 'ALL' },
-]
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function TermStructureTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null
+  const d = payload[0].payload as { label: string; totalGEX: number; regime: string }
+  return (
+    <div className="bg-bg-elevated border border-border rounded px-2 py-1 text-[10px] pointer-events-none">
+      <div className="text-text-primary font-semibold">{d.label}</div>
+      <div className={d.regime === 'positive' ? 'text-[#00ff88]' : 'text-red-400'}>
+        {d.totalGEX >= 0 ? '+' : ''}{d.totalGEX.toFixed(1)}M
+      </div>
+    </div>
+  )
+}
 
 type FlowState = 'idle' | 'streaming' | 'done' | 'error'
 
 export const GEXPanel = memo(function GEXPanel() {
   const gexProfile = useMarketStore((s) => s.gexProfile)
-  const gexByExpiration = useMarketStore((s) => s.gexByExpiration)
+  const gexDynamic = useMarketStore((s) => s.gexDynamic)
   const spyLast = useMarketStore((s) => s.spy.last)
   const vixLast = useMarketStore((s) => s.vix.last)
 
-  const [selectedDte, setSelectedDte] = useState<DteKey>('0DTE')
+  const [selectedExpiration, setSelectedExpiration] = useState<string | null>(null)
   const [flowState, setFlowState] = useState<FlowState>('idle')
   const [flowText, setFlowText] = useState('')
 
-  // Resolve which GEXProfile to display based on the selected DTE tab
+  // Auto-select entry with highest gammaAnomaly when gexDynamic arrives or changes
+  useEffect(() => {
+    if (!gexDynamic || gexDynamic.length === 0) return
+    const peak = gexDynamic.reduce((best, e) => e.gammaAnomaly > best.gammaAnomaly ? e : best, gexDynamic[0])
+    setSelectedExpiration((prev) => {
+      // Keep current selection if it still exists in the new data
+      if (prev && gexDynamic.some((e) => e.expiration === prev)) return prev
+      return peak.expiration
+    })
+  }, [gexDynamic])
+
+  const activeEntry: GEXExpirationEntry | null = useMemo(() =>
+    gexDynamic?.find((e) => e.expiration === selectedExpiration) ?? null,
+    [gexDynamic, selectedExpiration],
+  )
+
   const activeGex: GEXProfile | null = useMemo(() => {
-    if (selectedDte === '0DTE') return gexProfile
-    if (!gexByExpiration) return null
-    const keyMap: Record<DteKey, keyof typeof gexByExpiration> = {
-      '0DTE': 'dte0',
-      '1D':   'dte1',
-      '7D':   'dte7',
-      '21D':  'dte21',
-      '45D':  'dte45',
-      'ALL':  'all',
-    }
-    return gexByExpiration[keyMap[selectedDte]]
-  }, [selectedDte, gexProfile, gexByExpiration])
+    if (activeEntry) return activeEntry.gex
+    return gexProfile
+  }, [activeEntry, gexProfile])
 
   const chartData = useMemo(() => {
     if (!activeGex || !spyLast) return []
@@ -119,7 +128,7 @@ export const GEXPanel = memo(function GEXPanel() {
           ...(authHeader ? { Authorization: authHeader } : {}),
         },
         body: JSON.stringify({
-          selectedDte,
+          selectedDte: activeEntry?.label ?? selectedExpiration ?? 'ALL',
           gexData: {
             totalNetGamma: activeGex.totalGEX,
             callWall: activeGex.callWall,
@@ -129,7 +138,7 @@ export const GEXPanel = memo(function GEXPanel() {
             flipPoint: activeGex.flipPoint,
             zeroGammaLevel: activeGex.zeroGammaLevel,
             regime: activeGex.regime,
-            expiration: selectedDte,
+            expiration: selectedExpiration ?? activeGex.calculatedAt,
             profile: { byStrike: activeGex.byStrike },
             calculatedAt: activeGex.calculatedAt,
           },
@@ -174,7 +183,7 @@ export const GEXPanel = memo(function GEXPanel() {
     } catch {
       setFlowState('error')
     }
-  }, [activeGex, spyLast, vixLast, selectedDte])
+  }, [activeGex, activeEntry, selectedExpiration, spyLast, vixLast])
 
   if (!gexProfile) {
     return (
@@ -237,27 +246,80 @@ export const GEXPanel = memo(function GEXPanel() {
         )}
       </div>
 
-      {/* DTE selector + Analisar Fluxo button */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex gap-1 flex-wrap">
-          {DTE_TABS.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => { setSelectedDte(tab.key); setFlowText(''); setFlowState('idle') }}
-              className={`px-2 py-0.5 text-[10px] font-semibold rounded border transition-colors ${
-                selectedDte === tab.key
-                  ? 'bg-[#00ff88]/10 border-[#00ff88]/40 text-[#00ff88]'
-                  : 'border-border-subtle text-text-muted hover:text-text-secondary'
-              }`}
+      {/* Mini Term Structure Curve */}
+      {gexDynamic && gexDynamic.length > 0 && (
+        <div className="mb-3" style={{ height: 72 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={gexDynamic.map((e) => ({
+                label: e.label,
+                expiration: e.expiration,
+                totalGEX: e.gex.totalGEX,
+                regime: e.gex.regime,
+                gammaAnomaly: e.gammaAnomaly,
+              }))}
+              margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
+              barCategoryGap="15%"
+              onClick={(d) => {
+                if (d?.activePayload?.[0]?.payload?.expiration) {
+                  setSelectedExpiration(d.activePayload[0].payload.expiration)
+                  setFlowText('')
+                  setFlowState('idle')
+                }
+              }}
             >
-              {tab.label}
-            </button>
-          ))}
+              <YAxis hide domain={['auto', 'auto']} />
+              <Tooltip content={<TermStructureTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
+              <Bar dataKey="totalGEX" maxBarSize={32} isAnimationActive={false} radius={[2, 2, 0, 0]}>
+                {gexDynamic.map((entry) => (
+                  <Cell
+                    key={entry.expiration}
+                    fill={entry.gex.regime === 'positive' ? '#00ff88' : '#ff4444'}
+                    fillOpacity={entry.expiration === selectedExpiration ? 1 : 0.4}
+                    stroke={entry.expiration === selectedExpiration ? (entry.gex.regime === 'positive' ? '#00ff88' : '#ff4444') : 'none'}
+                    strokeWidth={entry.expiration === selectedExpiration ? 1.5 : 0}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Expiration dropdown + anomaly badge + Analisar Fluxo button */}
+      <div className="flex items-center justify-between mb-3 gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {gexDynamic && gexDynamic.length > 0 ? (
+            <select
+              value={selectedExpiration ?? ''}
+              onChange={(e) => { setSelectedExpiration(e.target.value); setFlowText(''); setFlowState('idle') }}
+              className="bg-bg-elevated border border-border-subtle text-text-primary text-[11px] rounded px-2 py-1 cursor-pointer focus:outline-none focus:border-[#00ff88]/40 max-w-[220px] truncate"
+            >
+              {gexDynamic.map((entry) => (
+                <option key={entry.expiration} value={entry.expiration}>
+                  {entry.label}{entry.gammaAnomaly > 0.7 ? ' ⚡' : ''}{entry.isMonthlyOPEX ? ' OPEX' : ''}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-[11px] text-text-muted">—</span>
+          )}
+          {activeEntry && (
+            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+              activeEntry.gammaAnomaly > 0.7
+                ? 'bg-yellow-400/10 text-yellow-400'
+                : activeEntry.gammaAnomaly > 0.4
+                ? 'bg-blue-400/10 text-blue-400'
+                : 'bg-surface-2 text-text-muted'
+            }`}>
+              {activeEntry.gammaAnomaly > 0.7 ? '⚡ Alta' : activeEntry.gammaAnomaly > 0.4 ? 'Média' : 'Baixa'}
+            </span>
+          )}
         </div>
         <button
           onClick={analyzeFlow}
           disabled={flowState === 'streaming' || !activeGex}
-          className={`ml-2 px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 whitespace-nowrap ${
+          className={`shrink-0 px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 whitespace-nowrap ${
             flowState === 'streaming' || !activeGex
               ? 'bg-bg-elevated text-text-muted cursor-not-allowed border border-border-subtle'
               : 'bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/30 hover:bg-[#00ff88]/20 hover:border-[#00ff88]/50 active:scale-95'
@@ -566,7 +628,7 @@ export const GEXPanel = memo(function GEXPanel() {
       {flowText && (
         <div className="mt-4 border-t border-border-subtle pt-3">
           <div className="text-[10px] text-text-muted uppercase tracking-wider mb-2">
-            Análise de Fluxo — {selectedDte}
+            Análise de Fluxo — {activeEntry?.label ?? selectedExpiration ?? ''}
           </div>
           <div className="text-xs text-text-secondary leading-relaxed whitespace-pre-wrap">
             {flowText}

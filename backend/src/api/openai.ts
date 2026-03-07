@@ -11,7 +11,7 @@ import { humanizeAge, isMarketOpen } from '../lib/time'
 import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem, AnalysisStructuredOutput, PricePoint } from '../types/market'
 import { saveAnalysis, buildMemoryBlock } from '../data/analysisMemory'
 import { getLastVwap } from '../data/priceHistory'
-import type { DailyGexResult, GEXByExpiration } from '../data/gexService'
+import type { DailyGexResult, GEXDynamic } from '../data/gexService'
 import { getAdvancedMetricsSnapshot } from '../data/advancedMetricsState'
 import { getVIXTermStructureSnapshot } from '../data/vixTermStructureState'
 import { getTechnicalSnapshot } from '../data/technicalIndicatorsState'
@@ -223,70 +223,54 @@ function confTag(c: ConfidenceResult | undefined): string {
   return ` [Confiança: ${c.score} ${c.label}]`
 }
 
-function buildGexMultiDTEBlock(gex: GEXByExpiration): string {
-  const LABELS: Record<string, string> = {
-    dte0: '0DTE', dte1: '1D', dte7: '7D', dte21: '21D', dte45: '45D', all: 'ALL',
+function buildGexMultiDTEBlock(gexDynamic: GEXDynamic): string {
+  if (gexDynamic.length === 0) return ''
+
+  let block = `\n=== GEX POR EXPIRAÇÃO (Term Structure Dinâmica — 0–60 DTE) ===\n`
+  block += `INSTRUÇÃO: Varra TODOS os vencimentos abaixo. Identifique o DTE com maior anomalia de Gamma\n`
+  block += `e justifique matematicamente a escolha de janela de tempo.\n\n`
+  block += `| Label               | DTE | Expiração  | Regime   | GEX Total  | Flip Point | Max Gamma | Anomalia |\n`
+  block += `|---------------------|-----|-----------|----------|------------|------------|-----------|---------|\n`
+
+  for (const entry of gexDynamic) {
+    const { label, dte, expiration, gex, gammaAnomaly } = entry
+    const regime = gex.regime === 'positive' ? 'POSITIVO' : 'NEGATIVO'
+    const total = `${gex.totalNetGamma >= 0 ? '+' : ''}$${gex.totalNetGamma.toFixed(1)}M`
+    const flip = gex.flipPoint != null ? `$${gex.flipPoint.toFixed(2)}` : 'N/A'
+    const anomalyLabel = gammaAnomaly >= 0.8 ? '⚡ ALTA' : gammaAnomaly >= 0.5 ? 'MÉD' : 'baixa'
+    block += `| ${label.padEnd(19)} | ${String(dte).padEnd(3)} | ${expiration} | ${regime} | ${total.padEnd(10)} | ${flip.padEnd(10)} | $${gex.maxGexStrike} | ${anomalyLabel} |\n`
   }
 
-  const buckets = (['dte0', 'dte1', 'dte7', 'dte21', 'dte45', 'all'] as const).filter(
-    (k) => gex[k] != null,
-  )
-
-  if (buckets.length === 0) return ''
-
-  let block = `\n=== GEX POR EXPIRAÇÃO (Multi-DTE) ===\n`
-  block += `| DTE  | Expiração  | Regime   | GEX Total | Flip Point | Max Gamma |\n`
-  block += `|------|-----------|----------|-----------|------------|-----------|\n`
-
-  for (const key of buckets) {
-    const d = gex[key]!
-    const label = LABELS[key]
-    const expLabel = key === 'all' ? 'Agregado  ' : d.expiration
-    const regime = d.regime === 'positive' ? 'POSITIVO' : 'NEGATIVO'
-    const total = `${d.totalNetGamma >= 0 ? '+' : ''}$${d.totalNetGamma}M`
-    const flip = d.flipPoint != null ? `$${d.flipPoint.toFixed(2)}` : 'N/A'
-    block += `| ${label.padEnd(4)} | ${expLabel} | ${regime} | ${total.padEnd(9)} | ${flip.padEnd(10)} | $${d.maxGexStrike} |\n`
+  // Call Wall / Put Wall por expiração
+  block += `\nCall Wall / Put Wall por expiração:\n`
+  for (const entry of gexDynamic) {
+    block += `- ${entry.label}: Call Wall $${entry.gex.callWall} | Put Wall $${entry.gex.putWall}\n`
   }
 
-  const wallLines: string[] = []
-  for (const key of buckets) {
-    const d = gex[key]!
-    const label = LABELS[key]
-    if (key === 'all') continue
-    wallLines.push(`- ${label}: Call Wall $${d.callWall} | Put Wall $${d.putWall}`)
-  }
-  if (wallLines.length > 0) {
-    block += `\nCall Wall / Put Wall por DTE:\n${wallLines.join('\n')}\n`
-  }
+  // VEX/CEX summary — aggregated across all entries
+  const aggVex = gexDynamic.reduce((sum, e) => sum + (e.gex.totalVannaExposure ?? 0), 0)
+  const aggCex = gexDynamic.reduce((sum, e) => sum + (e.gex.totalCharmExposure ?? 0), 0)
+  const vexSign = aggVex >= 0 ? '+' : ''
+  const cexSign = aggCex >= 0 ? '+' : ''
+  const vexInterp = aggVex > 2
+    ? 'POSITIVO → IV comprimindo = dealers de-hedge comprando spot (viés altista estrutural)'
+    : aggVex < -2
+    ? 'NEGATIVO → IV subindo = dealers vendendo spot (amplificador bearish)'
+    : 'neutro'
+  const cexInterp = Math.abs(aggCex) > 1
+    ? `SIGNIFICATIVO → Power Hour (14:30–16:00 ET) pode ter drift direcional mecânico`
+    : 'neutro'
+  block += `\nVEX Agregado (Vanna): ${vexSign}$${aggVex.toFixed(1)}M → ${vexInterp}\n`
+  block += `CEX Agregado (Charm): ${cexSign}$${aggCex.toFixed(1)}M/dia → ${cexInterp}\n`
 
-  // VEX/CEX summary — use ALL bucket if available, otherwise first non-null
-  const refBucket = gex.all ?? gex.dte0 ?? gex.dte1 ?? gex.dte7 ?? gex.dte21 ?? gex.dte45
-  if (refBucket) {
-    const vex = refBucket.totalVannaExposure ?? 0
-    const cex = refBucket.totalCharmExposure ?? 0
-    const vexSign = vex >= 0 ? '+' : ''
-    const cexSign = cex >= 0 ? '+' : ''
-    const vexInterp = vex > 2
-      ? 'POSITIVO → IV comprimindo = dealers de-hedge comprando spot (viés altista estrutural)'
-      : vex < -2
-      ? 'NEGATIVO → IV subindo = dealers vendendo spot (amplificador bearish)'
-      : 'neutro'
-    const cexInterp = Math.abs(cex) > 1
-      ? `SIGNIFICATIVO → Power Hour (14:30–16:00 ET) pode ter drift direcional mecânico`
-      : 'neutro'
-    block += `\nVEX (Vanna): ${vexSign}$${vex.toFixed(1)}M → ${vexInterp}\n`
-    block += `CEX (Charm): ${cexSign}$${cex.toFixed(1)}M/dia → ${cexInterp}\n`
-  }
-
-  // Volatility Trigger + ZGL per DTE
+  // Volatility Trigger + ZGL per expiration
   const spyNow = marketState.spy.last ?? 0
   const vtLines: string[] = []
-  for (const key of buckets) {
-    const d = gex[key]!
-    const label = LABELS[key]
-    const vt = d.volatilityTrigger
+  for (const entry of gexDynamic) {
+    const { label, gex } = entry
+    const vt = gex.volatilityTrigger
     if (vt == null) continue
-    const zgl = d.zeroGammaLevel
+    const zgl = gex.zeroGammaLevel
     const vtRelation = spyNow > 0 && vt > 0
       ? (spyNow > vt
         ? `ACIMA ✅ (+${((spyNow - vt) / vt * 100).toFixed(2)}%)`
@@ -298,8 +282,14 @@ function buildGexMultiDTEBlock(gex: GEXByExpiration): string {
     vtLines.push(`- ${label}: VT=$${vt.toFixed(2)} | SPY ${vtRelation} | ZGL=${zglStr}`)
   }
   if (vtLines.length > 0) {
-    block += `\nVolatility Trigger / Zero Gamma Level por DTE:\n${vtLines.join('\n')}\n`
+    block += `\nVolatility Trigger / Zero Gamma Level por expiração:\n${vtLines.join('\n')}\n`
     block += 'SPY acima do VT → long gamma (dealers suprimem vol). SPY abaixo do VT → short gamma (dealers amplificam).\n'
+  }
+
+  // Highlight the expiration with highest gammaAnomaly
+  const peak = [...gexDynamic].sort((a, b) => b.gammaAnomaly - a.gammaAnomaly)[0]
+  if (peak && peak.gammaAnomaly > 0) {
+    block += `\n⚡ PICO DE ANOMALIA: ${peak.label} (DTE=${peak.dte}) — gamma ${peak.gex.regime === 'positive' ? 'positivo' : 'NEGATIVO'} de $${peak.gex.totalNetGamma.toFixed(1)}M, flip point ${peak.gex.flipPoint != null ? `$${peak.gex.flipPoint}` : 'N/A'}. Candidato prioritário para análise de DTE.\n`
   }
 
   return block
@@ -309,7 +299,7 @@ function buildGexMultiDTEBlock(gex: GEXByExpiration): string {
 function buildRegimeVetoBlock(
   snapshot: AnalyzeBody['marketSnapshot'],
   confidence: Record<string, ConfidenceResult>,
-  gexByExpiration: GEXByExpiration | null,
+  gexDynamic: GEXDynamic | null,
 ): string {
   const lines: string[] = ['\n=== CHECKLIST DE REGIME (calculado pelo sistema) ===']
   let passCount = 0
@@ -335,12 +325,13 @@ function buildRegimeVetoBlock(
     lines.push('[?] IV/HV30: indisponível')
   }
 
-  if (gexByExpiration) {
-    const buckets = [gexByExpiration.dte0, gexByExpiration.dte1, gexByExpiration.dte7, gexByExpiration.dte21, gexByExpiration.dte45].filter(Boolean) as DailyGexResult[]
-    const allNegative = buckets.length > 0 && buckets.every((b) => b.regime === 'negative')
+  if (gexDynamic && gexDynamic.length > 0) {
+    const allNegative = gexDynamic.every((e) => e.gex.regime === 'negative')
     const pass = !allNegative
     if (pass) passCount += 1
-    const regimeLabel = allNegative ? 'NEGATIVO em todos os DTEs' : 'pelo menos um DTE POSITIVO'
+    const regimeLabel = allNegative
+      ? `NEGATIVO em todos os ${gexDynamic.length} vencimentos`
+      : `pelo menos um vencimento POSITIVO (${gexDynamic.filter((e) => e.gex.regime === 'positive').length}/${gexDynamic.length})`
     lines.push(`${pass ? '[✓]' : '[✗]'} GEX Regime: ${regimeLabel} — ${pass ? 'PASSA' : 'VETO (ambiente de amplificação)'}`)
   } else {
     lines.push('[?] GEX Regime: indisponível')
@@ -370,14 +361,17 @@ function buildRegimeVetoBlock(
   }
 
   // Compound VEX + VIX veto (not counted in score — additional hard veto)
-  const vexAll = gexByExpiration?.all?.totalVannaExposure ?? gexByExpiration?.dte0?.totalVannaExposure ?? null
+  const vexAll = gexDynamic && gexDynamic.length > 0
+    ? gexDynamic.reduce((sum, e) => sum + (e.gex.totalVannaExposure ?? 0), 0)
+    : null
   const vixLevel = snapshot?.vix?.last ?? marketState.vix.last ?? null
   if (vexAll !== null && vixLevel !== null && vexAll < -5 && vixLevel > 20) {
     lines.push(`[!] VETO COMPOSTO: VEX=${vexAll.toFixed(1)}$M (NEGATIVO) + VIX=${vixLevel.toFixed(1)} (>20) — ambiente de amplificação bearish. VETO de Put Spread curto.`)
   }
 
   // Volatility Trigger veto + transition zone warning
-  const vtAll = gexByExpiration?.all?.volatilityTrigger ?? gexByExpiration?.dte0?.volatilityTrigger ?? null
+  // Use lowest-DTE entry's VT (most impactful for intraday regime)
+  const vtAll = gexDynamic && gexDynamic.length > 0 ? gexDynamic[0].gex.volatilityTrigger ?? null : null
   const spyLastVT = snapshot?.spy?.last ?? marketState.spy.last ?? null
   if (vtAll !== null && spyLastVT !== null) {
     const distPct = (spyLastVT - vtAll) / vtAll * 100
@@ -423,11 +417,13 @@ interface RegimeScoreBlockResult {
 }
 
 /** Pre-computes regime_score and related fields, returning a prompt block + the computed values. */
-function buildRegimeScoreBlock(gexByExpiration: GEXByExpiration | null): RegimeScoreBlockResult {
-  const regimeScorerResult = computeRegimeScore(gexByExpiration)
+function buildRegimeScoreBlock(gexDynamic: GEXDynamic | null): RegimeScoreBlockResult {
+  const regimeScorerResult = computeRegimeScore(gexDynamic)
   const { score, vannaRegime, charmPressure, priceDistribution } = regimeScorerResult
 
-  const totalNetGamma = gexByExpiration?.all?.totalNetGamma ?? null
+  const totalNetGamma = gexDynamic && gexDynamic.length > 0
+    ? gexDynamic.reduce((sum, e) => sum + e.gex.totalNetGamma, 0)
+    : null
   const gexVsYesterday = totalNetGamma !== null ? getGexVsYesterday(totalNetGamma) : null
 
   const scoreLabel = score >= 7 ? '✅ FAVORÁVEL' : score >= 5 ? '⚠️ NEUTRO' : '❌ DESFAVORÁVEL'
@@ -450,26 +446,17 @@ function buildRegimeScoreBlock(gexByExpiration: GEXByExpiration | null): RegimeS
   return { block, regimeScorerResult, gexVsYesterday }
 }
 
-/** Builds Vanna/Charm Exposure block from GEX-by-expiration (each bucket has totalVannaExposure, totalCharmExposure). */
-function buildVannaCharmBlock(gexByExpiration: GEXByExpiration | null): string | null {
-  if (!gexByExpiration) return null
-  const LABELS: Record<string, string> = {
-    dte0: '0DTE', dte1: '1D', dte7: '7D', dte21: '21D', dte45: '45D', all: 'ALL',
-  }
-  const buckets = (['dte0', 'dte1', 'dte7', 'dte21', 'dte45', 'all'] as const).filter(
-    (k) => gexByExpiration[k] != null,
-  )
-  if (buckets.length === 0) return null
+/** Builds Vanna/Charm Exposure block from GEXDynamic (each entry has totalVannaExposure, totalCharmExposure). */
+function buildVannaCharmBlock(gexDynamic: GEXDynamic | null): string | null {
+  if (!gexDynamic || gexDynamic.length === 0) return null
 
-  let block = '\n=== VANNA/CHARM EXPOSURE (Flows de Dealers) ===\n'
-  for (const key of buckets) {
-    const d = gexByExpiration[key]!
-    const vex = (d as { totalVannaExposure?: number }).totalVannaExposure ?? 0
-    const cex = (d as { totalCharmExposure?: number }).totalCharmExposure ?? 0
-    const label = LABELS[key]
+  let block = '\n=== VANNA/CHARM EXPOSURE (Flows de Dealers por Expiração) ===\n'
+  for (const entry of gexDynamic) {
+    const vex = entry.gex.totalVannaExposure ?? 0
+    const cex = entry.gex.totalCharmExposure ?? 0
     const vexStr = `${vex >= 0 ? '+' : ''}$${vex.toFixed(1)}M`
     const cexStr = `${cex >= 0 ? '+' : ''}$${cex.toFixed(1)}M/dia`
-    block += `${label}: VEX ${vexStr} | CEX ${cexStr}\n`
+    block += `${entry.label}: VEX ${vexStr} | CEX ${cexStr}\n`
   }
   block +=
     'Interpretação: VEX positivo → se IV comprimir, dealers compram spot (suporte bullish). ' +
@@ -1333,13 +1320,18 @@ const STATIC_SYSTEM_PROMPT =
   'MACD crossover bullish + GEX positivo = momentum sustentável. Use indicadores técnicos como confirmação, não como sinal primário. ' +
   'Tens à disposição a ferramenta fetch_24h_context para contexto macro (FRED, BLS, Fear & Greed, eventos, earnings). ' +
   'Invoca-a quando: VIX acima de 20 ou spike (>15%), P/C acima de 1.3 ou abaixo de 0.6, RSI extremo com MACD crossover, ou quando o utilizador pedir macro/earnings. ' +
-  'Varredura de DTE: Analise TODOS os vencimentos disponíveis no option chain e no Expected Move. ' +
+  'TERMO CRÍTICO — TERM STRUCTURE DINÂMICA: Você recebe o espectro completo da cadeia de opções (0 a 60 DTE) via expirations dinâmicas reais — NÃO buckets fixos. ' +
+  'É estritamente proibido limitar sua análise a DTEs tradicionais pré-definidos. ' +
+  'Varra a term structure completa e identifique o DTE exato com maior distorção de prêmio, melhor Risco/Retorno ou proteção via Gamma. ' +
+  'Justifique matematicamente a escolha: use gammaAnomaly, flipPoint, e o regime (positivo/negativo) de cada expiration. ' +
+  'A expiration com ⚡ (gammaAnomaly alta) é candidata prioritária — analise-a primeiro. ' +
+  'Varredura de DTE: Analise TODOS os vencimentos disponíveis no bloco GEX e no Expected Move. ' +
   'Para cada DTE candidato, avalie em sequência: (1) IV do vencimento (term structure) — eliminar se IV < percentil 25% da curva. ' +
   '(2) PoP na perna vendida (delta proxy) — eliminar se PoP < 65% no strike OTM selecionado. ' +
-  '(3) Alinhamento GEX — o strike vendido deve ficar além do put wall do DTE. ' +
+  '(3) Alinhamento GEX — o strike vendido deve ficar além do put wall do DTE exato. ' +
   '(4) Expected Move — o strike vendido deve ficar fora do cone 1σ. ' +
   '(5) Theta/dia relativo ao prêmio recebido — preferir DTEs com theta eficiente. ' +
-  'O DTE com MAIOR score nos 5 critérios é a oportunidade clara. Justifique a escolha com números. ' +
+  'O DTE com MAIOR score nos 5 critérios é a oportunidade clara. Justifique a escolha com números reais dos dados. ' +
   'DTEs curtos (0-7D): válidos em regime GEX positivo + IV backwardation + tendência clara. ' +
   'DTEs médios (14-30D): válidos em contango + IV Rank >30% + cone bem definido. ' +
   'DTEs longos (45-60D): válidos em estrutura de médio prazo sólida + IV barata. ' +
@@ -1348,7 +1340,7 @@ const STATIC_SYSTEM_PROMPT =
   'VEX NEGATIVO com VIX > 20: VETO de Put Spread curto — dealers amplificam queda mecanicamente. ' +
   'CEX |>$1M/dia|: Power Hour (14:30–16:00 ET) pode ter drift direcional mecânico — não confundir com tendência real. ' +
   'Vanna/Charm são forças mecânicas de hedge de dealers, não sinais de entrada independentes — sempre confirmar com GEX regime e técnicos. ' +
-  'GEX por DTE: use o bucket (0/1/7/21/45/ALL) que corresponda ao DTE escolhido; flip point e max gamma desse DTE são os níveis de âncora. ' +
+  'GEX por expiração: use o entry dinâmico (label "MMM-DD (XDTE)") que corresponda ao DTE escolhido; flip point e max gamma desse entry são os níveis de âncora. ' +
   'Expected Move (soma Call ATM + Put ATM = straddle) por vencimento indica o movimento esperado em 1 desvio padrão (~68% de probabilidade). ' +
   'Para Put Spreads, a perna vendida deve ficar fora do cone (strike short abaixo de SPY − Expected Move do vencimento escolhido). ' +
   'Se a perna vendida estiver dentro do cone, **alerte criticamente** que o risco da operação está mal calculado. ' +
@@ -1467,8 +1459,8 @@ export async function runAnalysisForPayload(
   const optionChain = body.optionChain ?? getOptionChainSnapshot() ?? undefined
 
   const advancedSnapshot = getAdvancedMetricsSnapshot()
-  const gexMultiBlock = advancedSnapshot?.gexByExpiration
-    ? buildGexMultiDTEBlock(advancedSnapshot.gexByExpiration)
+  const gexMultiBlock = advancedSnapshot?.gexDynamic && advancedSnapshot.gexDynamic.length > 0
+    ? buildGexMultiDTEBlock(advancedSnapshot.gexDynamic)
     : null
   const pcBlock = advancedSnapshot?.putCallRatio
     ? buildPutCallRatioBlock(advancedSnapshot.putCallRatio)
@@ -1505,8 +1497,8 @@ export async function runAnalysisForPayload(
   const expectedMoveBlock = buildExpectedMoveBlock(expectedMoveSnapshot, snapshot?.spy?.last ?? 0)
   const ivByExpirationBlock = buildIVByExpirationBlock()
   const popReferenceBlock = buildPOPReferenceBlock(snapshot?.spy?.last ?? 0)
-  const regimeVetoBlock = buildRegimeVetoBlock(snapshot, confidence, advancedSnapshot?.gexByExpiration ?? null)
-  const regimeScoreBlockResult = buildRegimeScoreBlock(advancedSnapshot?.gexByExpiration ?? null)
+  const regimeVetoBlock = buildRegimeVetoBlock(snapshot, confidence, advancedSnapshot?.gexDynamic ?? null)
+  const regimeScoreBlockResult = buildRegimeScoreBlock(advancedSnapshot?.gexDynamic ?? null)
   const skewSnapshotForPrompt = getSkewSnapshot()
   const skewBlock = skewSnapshotForPrompt ? buildSkewBlock(skewSnapshotForPrompt) : null
   const opexBlock = buildOpexBlock()
@@ -1728,13 +1720,19 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
 
     const userId = (request as any).user?.id ?? 'unknown'
     const advancedSnapshot = getAdvancedMetricsSnapshot()
+    // Derive dominant GEX regime from dynamic entries (majority wins)
+    const gexDynEntries = advancedSnapshot?.gexDynamic ?? []
+    const positiveCount = gexDynEntries.filter((e) => e.gex.regime === 'positive').length
+    const dominantRegime = gexDynEntries.length > 0
+      ? (positiveCount >= gexDynEntries.length / 2 ? 'positive' : 'negative')
+      : undefined
     const memoryBlock = await buildMemoryBlock(userId, {
       ivRank: snapshot?.ivRank?.value ?? 0,
       vix: snapshot?.vix?.last ?? 0,
-      gexRegime: advancedSnapshot?.gexByExpiration?.all?.regime,
+      gexRegime: dominantRegime,
     })
-    const gexMultiBlock = advancedSnapshot?.gexByExpiration
-      ? buildGexMultiDTEBlock(advancedSnapshot.gexByExpiration)
+    const gexMultiBlock = advancedSnapshot?.gexDynamic && advancedSnapshot.gexDynamic.length > 0
+      ? buildGexMultiDTEBlock(advancedSnapshot.gexDynamic)
       : null
     const pcBlock = advancedSnapshot?.putCallRatio
       ? buildPutCallRatioBlock(advancedSnapshot.putCallRatio)
@@ -1777,8 +1775,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     )
     const ivByExpirationBlock = buildIVByExpirationBlock()
     const popReferenceBlock = buildPOPReferenceBlock(snapshot?.spy?.last ?? 0)
-    const regimeVetoBlock = buildRegimeVetoBlock(snapshot, confidence, advancedSnapshot?.gexByExpiration ?? null)
-    const regimeScoreBlockResult = buildRegimeScoreBlock(advancedSnapshot?.gexByExpiration ?? null)
+    const regimeVetoBlock = buildRegimeVetoBlock(snapshot, confidence, advancedSnapshot?.gexDynamic ?? null)
+    const regimeScoreBlockResult = buildRegimeScoreBlock(advancedSnapshot?.gexDynamic ?? null)
     const skewSnapshotForPrompt = getSkewSnapshot()
     const skewBlock = skewSnapshotForPrompt ? buildSkewBlock(skewSnapshotForPrompt) : null
     const opexBlock = buildOpexBlock()

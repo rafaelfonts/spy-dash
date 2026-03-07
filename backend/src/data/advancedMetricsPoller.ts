@@ -11,7 +11,8 @@
  *  - Outside market hours the poller backs off to every 5 min to save API quota.
  */
 
-import { calculateDailyGex, calculateAllExpirationsGex } from './gexService'
+import { calculateDailyGex, calculateDynamicGex } from './gexService'
+import type { GEXDynamic } from './gexService'
 import { buildVolumeProfile } from './volumeProfileService'
 import { calculatePutCallRatio } from './putCallRatio'
 import { publishAdvancedMetrics } from './advancedMetricsState'
@@ -34,11 +35,11 @@ const OFFHOURS_INTERVAL_MS = 5 * 60_000  // 5 min outside market hours
 // ---------------------------------------------------------------------------
 
 async function tick(): Promise<void> {
-  const [gexResult, profileResult, pcResult, gexByExpResult] = await Promise.allSettled([
+  const [gexResult, profileResult, pcResult, gexDynamicResult] = await Promise.allSettled([
     calculateDailyGex(SYMBOL),
     buildVolumeProfile(SYMBOL),
     calculatePutCallRatio(SYMBOL),
-    calculateAllExpirationsGex(SYMBOL),
+    calculateDynamicGex(SYMBOL),
   ])
 
   if (gexResult.status === 'rejected') {
@@ -50,17 +51,21 @@ async function tick(): Promise<void> {
   if (pcResult.status === 'rejected') {
     console.error('[AdvancedMetrics] P/C Ratio failed:', pcResult.reason)
   }
-  if (gexByExpResult.status === 'rejected') {
-    console.error('[AdvancedMetrics] GEX multi-exp failed:', gexByExpResult.reason)
+  if (gexDynamicResult.status === 'rejected') {
+    console.error('[AdvancedMetrics] GEX dynamic failed:', gexDynamicResult.reason)
   }
 
   const gex = gexResult.status === 'fulfilled' ? gexResult.value : null
   const profile = profileResult.status === 'fulfilled' ? profileResult.value : null
   const pc = pcResult.status === 'fulfilled' ? pcResult.value : null
-  const gexByExp = gexByExpResult.status === 'fulfilled' ? gexByExpResult.value : null
+  const gexDynamic: GEXDynamic = gexDynamicResult.status === 'fulfilled' ? gexDynamicResult.value : []
 
   // Update GEX history for gex_vs_yesterday computation in regimeScorer
-  const currentTotal = gexByExp?.all?.totalNetGamma ?? gex?.totalNetGamma ?? null
+  // Use aggregated totalNetGamma across all dynamic entries (equivalent of old "all" bucket)
+  const dynamicTotal = gexDynamic.length > 0
+    ? gexDynamic.reduce((sum, e) => sum + e.gex.totalNetGamma, 0)
+    : null
+  const currentTotal = dynamicTotal ?? gex?.totalNetGamma ?? null
   if (currentTotal !== null) updateGexHistory(currentTotal)
 
   // Only publish if at least one service returned data
@@ -93,6 +98,20 @@ async function tick(): Promise<void> {
     }
   }
 
+  // Serialize each GEXDynamic entry: trim byStrike to top-20 for SSE payload size
+  const serializedGexDynamic: GEXDynamic = gexDynamic.map((entry) => ({
+    ...entry,
+    gex: {
+      ...entry.gex,
+      profile: {
+        ...entry.gex.profile,
+        byStrike: [...entry.gex.profile.byStrike]
+          .sort((a, b) => Math.abs(b.netGEX) - Math.abs(a.netGEX))
+          .slice(0, 20),
+      },
+    },
+  }))
+
   const payload: AdvancedMetricsPayload = {
     gex: serializeGexBucket(gex),
     profile: profile
@@ -113,24 +132,16 @@ async function tick(): Promise<void> {
           expiration: pc.expiration,
         }
       : null,
-    gexByExpiration: gexByExp
-      ? {
-          dte0:  gexByExp.dte0,
-          dte1:  gexByExp.dte1,
-          dte7:  gexByExp.dte7,
-          dte21: gexByExp.dte21,
-          dte45: gexByExp.dte45,
-          all:   gexByExp.all,
-        }
-      : null,
+    gexDynamic: serializedGexDynamic.length > 0 ? serializedGexDynamic : null,
     timestamp: new Date().toISOString(),
   }
 
   publishAdvancedMetrics(payload)
 
   // Persist daily GEX snapshot to Redis (once per ET day, 7-day TTL)
-  if (gexByExp?.all) {
-    const d = gexByExp.all
+  // Uses first entry (lowest DTE) as the reference for walls/flip — most liquid/impactful
+  if (gexDynamic.length > 0) {
+    const ref = gexDynamic[0].gex  // entry with smallest DTE (most liquid)
     const today = new Intl.DateTimeFormat('en-US', {
       timeZone: 'America/New_York',
       year: 'numeric',
@@ -140,15 +151,19 @@ async function tick(): Promise<void> {
     const redisKey = `gex:history:SPY:${today}`
     const existing = await cacheGet<GEXDailySnapshot>(redisKey)
     if (!existing) {
+      // Aggregate totals across all dynamic entries
+      const aggNetGex = gexDynamic.reduce((sum, e) => sum + e.gex.totalNetGamma, 0)
+      const aggVanna  = gexDynamic.reduce((sum, e) => sum + (e.gex.totalVannaExposure ?? 0), 0)
+      const aggCharm  = gexDynamic.reduce((sum, e) => sum + (e.gex.totalCharmExposure ?? 0), 0)
       const snap: GEXDailySnapshot = {
-        netGex:             (d.totalNetGamma ?? 0) / 1000,
-        callWall:           d.callWall,
-        putWall:            d.putWall,
-        flipPoint:          d.flipPoint ?? null,
-        volatilityTrigger:  d.volatilityTrigger ?? null,
-        zeroGammaLevel:     d.zeroGammaLevel ?? null,
-        vannaExposure:      d.totalVannaExposure ?? 0,
-        charmExposure:      d.totalCharmExposure ?? 0,
+        netGex:             aggNetGex / 1000,
+        callWall:           ref.callWall,
+        putWall:            ref.putWall,
+        flipPoint:          ref.flipPoint ?? null,
+        volatilityTrigger:  ref.volatilityTrigger ?? null,
+        zeroGammaLevel:     ref.zeroGammaLevel ?? null,
+        vannaExposure:      Math.round(aggVanna * 100) / 100,
+        charmExposure:      Math.round(aggCharm * 100) / 100,
         capturedAt:         today,
       }
       await saveGEXDailySnapshot(snap)

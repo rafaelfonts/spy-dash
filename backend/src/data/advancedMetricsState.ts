@@ -8,9 +8,9 @@
  */
 
 import { emitter } from './marketState'
-import type { GEXByExpiration } from './gexService'
+import type { GEXDynamic } from './gexService'
 
-export type { GEXByExpiration }
+export type { GEXDynamic }
 
 // ---------------------------------------------------------------------------
 // SSE payload shape (what the frontend receives)
@@ -46,7 +46,7 @@ export interface AdvancedMetricsPayload {
     label: 'bearish' | 'neutral' | 'bullish'
     expiration: string
   } | null
-  gexByExpiration: GEXByExpiration | null  // per-DTE GEX buckets (0DTE, 1D, 7D, 21D, 45D, ALL)
+  gexDynamic: GEXDynamic | null  // dynamic term structure: array of GEXExpirationEntry sorted by DTE (0–60 DTE)
   timestamp: string         // ISO 8601 of last successful calculation
 }
 
