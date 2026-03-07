@@ -21,6 +21,9 @@ import { updateGexHistory } from './regimeScorer'
 import { saveGEXDailySnapshot } from './gexHistoryService'
 import type { GEXDailySnapshot } from './gexHistoryService'
 import { cacheGet } from '../lib/cacheStore'
+import { fetchTodayVolumeSnapshot, saveVolumeSnapshot } from './volumeAnomalyService'
+import type { VolumeSnapshot } from './volumeAnomalyService'
+import { marketState } from './marketState'
 
 const SYMBOL = 'SPY'
 const POLL_INTERVAL_MS   = 60_000   // 60 s during market hours
@@ -149,6 +152,17 @@ async function tick(): Promise<void> {
         capturedAt:         today,
       }
       await saveGEXDailySnapshot(snap)
+    }
+  }
+
+  // Volume Anomaly Snapshot (0DTE) — save once per ET day, 7-day TTL
+  const spyPrice = marketState.spy.last
+  if (spyPrice) {
+    const todayVolSnap = await fetchTodayVolumeSnapshot(SYMBOL, spyPrice)
+    if (todayVolSnap) {
+      const volKey = `vol:history:SPY:0dte:${todayVolSnap.date}`
+      const existingVol = await cacheGet<VolumeSnapshot>(volKey)
+      if (!existingVol) await saveVolumeSnapshot(todayVolSnap)
     }
   }
 

@@ -31,6 +31,8 @@ import type { SkewByDTE, SkewEntry } from '../data/skewService'
 import { getOpexStatus } from '../data/opexCalendar'
 import { loadGEXHistory, computeGEXHistoryContext } from '../data/gexHistoryService'
 import type { GEXHistoryContext } from '../data/gexHistoryService'
+import { loadVolumeHistory, computeVolumeAnomaly } from '../data/volumeAnomalyService'
+import type { VolumeAnomalyData } from '../data/volumeAnomalyService'
 
 interface ContextData {
   fearGreed?: { score: FearGreedData['score']; label: FearGreedData['label'] }
@@ -548,6 +550,28 @@ function buildGexHistoryBlock(ctx: GEXHistoryContext): string {
   return block
 }
 
+function buildVolumeAnomalyBlock(data: VolumeAnomalyData): string {
+  const anomalyLabels: Record<VolumeAnomalyData['anomalyLabel'], string> = {
+    extreme_put:  'EXTREMO PUTS',
+    high_put:     'PUTS ELEVADO',
+    neutral:      'neutro',
+    high_call:    'CALLS ELEVADO',
+    extreme_call: 'EXTREMO CALLS',
+  }
+
+  let block = '\n=== FLUXO ANÔMALO DETECTADO (0DTE) ===\n'
+  block += `Sizzle 0DTE: ${data.sizzle0dte.toFixed(1)}x (${anomalyLabels[data.anomalyLabel]}) | ATM Straddle: ${data.sizzleAtmStraddle.toFixed(1)}x\n`
+  block += `Put/Call Volume Ratio: ${data.putCallVolumeRatio0dte.toFixed(2)} | Puts: ${data.putBuyingPressure} | Calls: ${data.callBuyingPressure} (${data.daysAvailable}d histórico)\n`
+
+  if (data.sizzle0dte > 2.5 && data.anomalyLabel === 'extreme_put') {
+    block += '⚠️ VETO FLUXO: Possível evento não precificado — fluxo institucional de proteção detectado. AGUARDAR ou reduzir size em 50%.\n'
+  } else if (data.sizzle0dte < 0.5) {
+    block += '⚠️ LIQUIDEZ REDUZIDA: Volume 0DTE anormalmente baixo — spreads mais largos. Confirmar bid/ask antes de recomendar entrada.\n'
+  }
+
+  return block
+}
+
 function buildPutCallRatioBlock(pc: {
   ratio: number
   putVolume: number
@@ -834,6 +858,7 @@ function buildPrompt(
   skewBlock?: string | null,
   opexBlock?: string | null,
   gexHistoryBlock?: string | null,
+  volAnomalyBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -890,6 +915,11 @@ function buildPrompt(
   // --- GEX Histórico (5 Dias) ---
   if (gexHistoryBlock) {
     prompt += gexHistoryBlock
+  }
+
+  // --- Fluxo Anômalo 0DTE (Sizzle) ---
+  if (volAnomalyBlock) {
+    prompt += volAnomalyBlock
   }
 
   // --- GEX (Gamma Exposure) ---
@@ -1354,6 +1384,10 @@ const STATIC_SYSTEM_PROMPT =
   'GEX decrescendo → dealers descarregando → vol tende a subir → cautela com Put Spread vendido. ' +
   'Flip Point migrando consistentemente em uma direção por 3+ dias = tendência estrutural de nível de magnetismo. ' +
   'Use GEX histórico para confirmar ou questionar o sinal do GEX spot atual — divergência entre spot e tendência histórica = sinal de atenção. ' +
+  'Sizzle 0DTE: ratio vol hoje / vol médio 5d para opções 0DTE SPY. ' +
+  'Sizzle > 2.5 + extreme_put = fluxo institucional de proteção → possível evento não precificado → AGUARDAR ou reduzir size 50%. ' +
+  'Sizzle < 0.5 = liquidez reduzida → spreads mais largos → confirmar bid/ask antes de recomendar entrada. ' +
+  'Bloco Sizzle ausente = vol 0DTE normal (0.6x–1.5x) — sem anomalia; não mencionar. ' +
   'Bloco Técnico (RSI/MACD/BBands): quando ausente do prompt, a análise é estrutural (GEX + IV + Expected Move + Skew + OPEX). ' +
   'NÃO solicite dados técnicos via tool call quando o bloco técnico estiver ausente. ' +
   'RSI e MACD são irrelevantes para Put Spread de 21–45 DTE sem regime de alta vol (VIX>25), RSI extremo (<35 ou >70), ou pós-OPEX.'
@@ -1479,6 +1513,14 @@ export async function runAnalysisForPayload(
   const gexHistory = await loadGEXHistory(5)
   const gexHistoryCtx = computeGEXHistoryContext(gexHistory)
   const gexHistoryBlock = gexHistoryCtx ? buildGexHistoryBlock(gexHistoryCtx) : null
+  const volHistory = await loadVolumeHistory(5)
+  const todayVolSnap = volHistory.length > 0 ? volHistory[volHistory.length - 1] : null
+  const volAnomalyData = (todayVolSnap && volHistory.length >= 2)
+    ? computeVolumeAnomaly(todayVolSnap, volHistory.slice(0, -1))
+    : null
+  const volAnomalyBlock = (volAnomalyData && (volAnomalyData.sizzle0dte > 1.5 || volAnomalyData.sizzle0dte < 0.6))
+    ? buildVolumeAnomalyBlock(volAnomalyData)
+    : null
 
   const userContent = buildPrompt(
     snapshot,
@@ -1498,6 +1540,7 @@ export async function runAnalysisForPayload(
     skewBlock,
     opexBlock,
     gexHistoryBlock,
+    volAnomalyBlock,
   )
 
   const marketStatusNote = isMarketOpen()
@@ -1742,6 +1785,14 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const gexHistory = await loadGEXHistory(5)
     const gexHistoryCtx = computeGEXHistoryContext(gexHistory)
     const gexHistoryBlock = gexHistoryCtx ? buildGexHistoryBlock(gexHistoryCtx) : null
+    const volHistory = await loadVolumeHistory(5)
+    const todayVolSnap = volHistory.length > 0 ? volHistory[volHistory.length - 1] : null
+    const volAnomalyData = (todayVolSnap && volHistory.length >= 2)
+      ? computeVolumeAnomaly(todayVolSnap, volHistory.slice(0, -1))
+      : null
+    const volAnomalyBlock = (volAnomalyData && (volAnomalyData.sizzle0dte > 1.5 || volAnomalyData.sizzle0dte < 0.6))
+      ? buildVolumeAnomalyBlock(volAnomalyData)
+      : null
 
     const userContent = buildPrompt(
       snapshot,
@@ -1761,6 +1812,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       skewBlock,
       opexBlock,
       gexHistoryBlock,
+      volAnomalyBlock,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     if (!CONFIG.ANTHROPIC_API_KEY) {
