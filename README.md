@@ -148,7 +148,53 @@ flowchart TB
 - **`regimeScorer.ts`:** computa o `regime_score` (0–10, inteiro) **server-side** a cada tick do `advancedMetricsPoller`, a partir de GEX total, VEX, CEX, P/C ratio, IV Rank e `price_distribution` (percentis p10/p25/p50/p75/p90 calculados via Expected Move ~21D)
 - **`gex_vs_yesterday`:** rastreado por `updateGexHistory()` com 2 entradas em memória rotativa — se GEX hoje > GEX ontem = acúmulo; se menor = desacúmulo
 - **`buildRegimeScoreBlock()`** em `openai.ts` injeta o score pré-computado no prompt com instrução explícita **"NÃO recalcule"** — o agente apenas interpreta, nunca sobrescreve. Safety net pós-extração garante que gpt-4o-mini preserve os valores computados no `STRUCTURED_SCHEMA` (`regime_score: integer`, `vanna_regime`, `charm_pressure`, `gex_vs_yesterday`)
-- **`RegimeDashboard.tsx`:** gauge semicircular 0–10 (adaptado de `FearGreedGauge`), 3 badges (vanna_regime / charm_pressure / gex_vs_yesterday) e barra de distribuição de preços com marcador ao vivo do SPY (p10–p90)
+- **Regime Flip Counter:** `updateRegimeHistory(regime)` rastreia mudanças de sinal positive↔negative intraday (reset por dia ET, máx. 100 snapshots). `getRegimeFlipCount()` retorna número de flips. Flip ≥ 2 → veto **INSTABILIDADE** em `buildRegimeVetoBlock()` — mercado estruturalmente indeciso, vetar novas posições direcionais
+- **`RegimeDashboard.tsx`:** gauge semicircular 0–10, 4 badges (vanna_regime / charm_pressure / gex_vs_yesterday / **DAN**), barra de distribuição de preços com marcador ao vivo do SPY (p10–p90), e semáforo **NoTrade** expansível
+
+### NoTrade Score Unificado
+
+- **`computeNoTradeScore(gexDynamic)`** em `regimeScorer.ts` agrega todos os vetos estruturais em um score único de "não-operabilidade":
+
+| Veto | Peso |
+|---|---|
+| Pós-OPEX (GEX resetado) | 3 |
+| VEX < −$5M + VIX > 20 | 3 |
+| Regime GEX flipou ≥ 2× no dia | 2 |
+| Skew flat/invertido (RR25 > −0.3%) | 2 |
+| SPY < VT + VIX > 18 | 2 |
+| OPEX hoje | 2 |
+| Earnings ≤ 2 dias (por componente, máx. 2) | 1 |
+| GEX negativo em todos os vencimentos | 1 |
+| VIX spike > 20% | 1 |
+
+- **`noTradeLevel`:** `clear` (0–1) / `caution` (2–4) / `avoid` (≥ 5)
+- Publicado em `AdvancedMetricsPayload.noTrade` → SSE `advanced-metrics` → store Zustand → **semáforo visual** no `RegimeDashboard.tsx` (ponto colorido + label + lista de vetos ativos expansível ao clicar)
+
+### CBOE Put/Call Ratio no Prompt IA
+
+- **`cboePCRPoller.ts`** já coletava o CBOE PCR diário (equity/index/total) após o fechamento (16:35 ET); agora integrado ao prompt da IA via **`buildCBOEPCRBlock()`**
+- Equity PCR > 0.8 → ✅ confirmação: mercado comprando proteção, prêmio de put estruturalmente elevado
+- Equity PCR < 0.5 → ⚠️ **VETO CBOE**: complacência excessiva, puts não pagam prêmio adicional justificável
+- Dado do pregão anterior (D-1); marcado explicitamente no bloco do prompt
+
+### Max Pain
+
+- **`lib/maxPainCalculator.ts`:** algoritmo puro — para cada strike candidato S, `pain(S) = Σ max(0, S − K) × callOI(K) + max(0, K − S) × putOI(K)`; mínimo = max pain strike
+- Campo `maxPain: { maxPainStrike, distanceFromSpot, distancePct, pinRisk }` adicionado ao `DailyGexResult` (calculado em todos os buckets DTE)
+- **Pin Risk:** `high` se |distância| < 0.5%, `moderate` se < 1.5%, `low` acima disso
+- Prompt IA: alerta hard quando `pinRisk === 'high'` (SPY tendendo a colar no max pain até expiração)
+- **GEXPanel:** badge max pain com cor semafórica (vermelho = alto, amarelo = moderado, cinza = baixo) e % de distância
+
+### Delta-Adjusted Notional (DAN)
+
+- **`lib/danCalculator.ts`:** `DAN = |delta| × OI × 100 × spot` por side em $M — mede a pressão real de hedge de mercado maker, em dólares, independentemente de volume ou P/C ratio
+  - **Call DAN** (positivo): dealers short em calls → hedge = comprar spot (pressão compradora)
+  - **Put DAN** (negativo): dealers short em puts → hedge = vender spot (pressão vendedora)
+  - **Net DAN** = callDAN + putDAN; `neutral` se |netDAN| < 10% do total
+- Calculado a cada tick do `advancedMetricsPoller` a partir do `getOptionChainSnapshot()` (em memória, sem fetch adicional)
+- Campo `dan` em `AdvancedMetricsPayload` → SSE → store Zustand
+- **Prompt IA (`buildDANBlock`):** DAN positivo + GEX positivo = confirmação bullish estrutural; DAN negativo + GEX negativo = dupla confirmação bearish; contradição = sinal misto, reduzir confiança e sizing
+- **RegimeDashboard:** badge DAN inline (verde = call dominated, vermelho = put dominated, cinza = neutro) com net DAN em $M
 
 ### Put Skew / Risk Reversal 25Δ
 
