@@ -29,6 +29,8 @@ import type { RegimeScorerResult, GexComparison } from '../data/regimeScorer'
 import { getSkewSnapshot } from '../data/skewState'
 import type { SkewByDTE, SkewEntry } from '../data/skewService'
 import { getOpexStatus } from '../data/opexCalendar'
+import { loadGEXHistory, computeGEXHistoryContext } from '../data/gexHistoryService'
+import type { GEXHistoryContext } from '../data/gexHistoryService'
 
 interface ContextData {
   fearGreed?: { score: FearGreedData['score']; label: FearGreedData['label'] }
@@ -521,6 +523,31 @@ function buildOpexBlock(): string {
   return block
 }
 
+function buildGexHistoryBlock(ctx: GEXHistoryContext): string {
+  const d1Sign = ctx.gexChangeD1 >= 0 ? '+' : ''
+  const d5Sign = ctx.gexChange5d >= 0 ? '+' : ''
+  const trendLabels: Record<GEXHistoryContext['gexTrend'], string> = {
+    accelerating_positive: 'acúmulo acelerado',
+    stable_positive:       'acúmulo moderado',
+    declining:             'desacúmulo',
+    accelerating_negative: 'desacúmulo acelerado',
+  }
+  const flipStr = ctx.flipPointTrend === 'unavailable' ? 'n/d' : ctx.flipPointTrend
+  const vtStr   = ctx.vtTrend       === 'unavailable' ? 'n/d' : `${ctx.vtTrend} (${ctx.vtChangeD1 >= 0 ? '+' : ''}$${ctx.vtChangeD1.toFixed(0)})`
+
+  let block = '\n=== GEX HISTÓRICO (5 Dias) ===\n'
+  block += `Tendência: ${trendLabels[ctx.gexTrend]} | D-1: ${d1Sign}$${ctx.gexChangeD1.toFixed(1)}B`
+  if (ctx.daysAvailable >= 5) block += ` | D-5: ${d5Sign}$${ctx.gexChange5d.toFixed(1)}B`
+  block += ` (${ctx.daysAvailable}d de dados)\n`
+  block += `Flip Point: ${flipStr} | Volatility Trigger: ${vtStr}\n`
+  block += `Resumo: ${ctx.historySummary}\n`
+  block +=
+    'Interpretação: GEX crescendo → dealers acumulam posições estabilizadoras → vol tende a cair. ' +
+    'GEX decrescendo → dealers descarregam → vol pode expandir. ' +
+    'Use para confirmar/questionar o sinal do GEX spot atual.\n'
+  return block
+}
+
 function buildPutCallRatioBlock(pc: {
   ratio: number
   putVolume: number
@@ -806,6 +833,7 @@ function buildPrompt(
   regimeScoreBlock?: string | null,
   skewBlock?: string | null,
   opexBlock?: string | null,
+  gexHistoryBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -857,6 +885,11 @@ function buildPrompt(
   // --- Contexto OPEX ---
   if (opexBlock) {
     prompt += opexBlock
+  }
+
+  // --- GEX Histórico (5 Dias) ---
+  if (gexHistoryBlock) {
+    prompt += gexHistoryBlock
   }
 
   // --- GEX (Gamma Exposure) ---
@@ -1316,7 +1349,11 @@ const STATIC_SYSTEM_PROMPT =
   'OPEX Day (D-0): liquidação forçada — evitar novas posições; slippage elevado em spreads curtos. ' +
   'Dia Pós-OPEX (D+1, segunda-feira): GEX zerado — vol pode expandir sem amortecimento dos MMs. VETO de Put Spread. ' +
   'Véspera de OPEX (D-1): pin risk máximo — mercado tende a colar no strike de maior OI até fechamento de quinta. ' +
-  'Use o contexto OPEX para ajustar expectativa de volatilidade realizada (HV): na semana de OPEX, HV tende a ser subestimada pela compressão mecânica de GEX.'
+  'Use o contexto OPEX para ajustar expectativa de volatilidade realizada (HV): na semana de OPEX, HV tende a ser subestimada pela compressão mecânica de GEX. ' +
+  'GEX Histórico (5 dias): GEX crescendo ($B) → dealers acumulando posições estabilizadoras → vol tende a cair (favorável para premium selling). ' +
+  'GEX decrescendo → dealers descarregando → vol tende a subir → cautela com Put Spread vendido. ' +
+  'Flip Point migrando consistentemente em uma direção por 3+ dias = tendência estrutural de nível de magnetismo. ' +
+  'Use GEX histórico para confirmar ou questionar o sinal do GEX spot atual — divergência entre spot e tendência histórica = sinal de atenção.'
 
 function buildSystemPrompt(marketStatusNote: string): string {
   return marketStatusNote + STATIC_SYSTEM_PROMPT
@@ -1418,6 +1455,9 @@ export async function runAnalysisForPayload(
   const skewSnapshotForPrompt = getSkewSnapshot()
   const skewBlock = skewSnapshotForPrompt ? buildSkewBlock(skewSnapshotForPrompt) : null
   const opexBlock = buildOpexBlock()
+  const gexHistory = await loadGEXHistory(5)
+  const gexHistoryCtx = computeGEXHistoryContext(gexHistory)
+  const gexHistoryBlock = gexHistoryCtx ? buildGexHistoryBlock(gexHistoryCtx) : null
 
   const userContent = buildPrompt(
     snapshot,
@@ -1436,6 +1476,7 @@ export async function runAnalysisForPayload(
     regimeScoreBlockResult.block,
     skewBlock,
     opexBlock,
+    gexHistoryBlock,
   )
 
   const marketStatusNote = isMarketOpen()
@@ -1677,6 +1718,9 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const skewSnapshotForPrompt = getSkewSnapshot()
     const skewBlock = skewSnapshotForPrompt ? buildSkewBlock(skewSnapshotForPrompt) : null
     const opexBlock = buildOpexBlock()
+    const gexHistory = await loadGEXHistory(5)
+    const gexHistoryCtx = computeGEXHistoryContext(gexHistory)
+    const gexHistoryBlock = gexHistoryCtx ? buildGexHistoryBlock(gexHistoryCtx) : null
 
     const userContent = buildPrompt(
       snapshot,
@@ -1695,6 +1739,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       regimeScoreBlockResult.block,
       skewBlock,
       opexBlock,
+      gexHistoryBlock,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     if (!CONFIG.ANTHROPIC_API_KEY) {

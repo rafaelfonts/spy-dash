@@ -18,6 +18,9 @@ import { publishAdvancedMetrics } from './advancedMetricsState'
 import type { AdvancedMetricsPayload } from './advancedMetricsState'
 import { isMarketOpen } from '../lib/time'
 import { updateGexHistory } from './regimeScorer'
+import { saveGEXDailySnapshot } from './gexHistoryService'
+import type { GEXDailySnapshot } from './gexHistoryService'
+import { cacheGet } from '../lib/cacheStore'
 
 const SYMBOL = 'SPY'
 const POLL_INTERVAL_MS   = 60_000   // 60 s during market hours
@@ -121,6 +124,33 @@ async function tick(): Promise<void> {
   }
 
   publishAdvancedMetrics(payload)
+
+  // Persist daily GEX snapshot to Redis (once per ET day, 7-day TTL)
+  if (gexByExp?.all) {
+    const d = gexByExp.all
+    const today = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date()).replace(/(\d+)\/(\d+)\/(\d+)/, '$3-$1-$2')
+    const redisKey = `gex:history:SPY:${today}`
+    const existing = await cacheGet<GEXDailySnapshot>(redisKey)
+    if (!existing) {
+      const snap: GEXDailySnapshot = {
+        netGex:             (d.totalNetGamma ?? 0) / 1000,
+        callWall:           d.callWall,
+        putWall:            d.putWall,
+        flipPoint:          d.flipPoint ?? null,
+        volatilityTrigger:  d.volatilityTrigger ?? null,
+        zeroGammaLevel:     d.zeroGammaLevel ?? null,
+        vannaExposure:      d.totalVannaExposure ?? 0,
+        charmExposure:      d.totalCharmExposure ?? 0,
+        capturedAt:         today,
+      }
+      await saveGEXDailySnapshot(snap)
+    }
+  }
 
   console.log(
     `[AdvancedMetrics] Published: ` +
