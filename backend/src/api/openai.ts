@@ -26,6 +26,8 @@ import type { ExpectedMoveSnapshot } from '../data/expectedMoveState'
 import { calcProbabilityOTMPut } from '../lib/blackScholes'
 import { computeRegimeScore, getGexVsYesterday } from '../data/regimeScorer'
 import type { RegimeScorerResult, GexComparison } from '../data/regimeScorer'
+import { getSkewSnapshot } from '../data/skewState'
+import type { SkewByDTE, SkewEntry } from '../data/skewService'
 
 interface ContextData {
   fearGreed?: { score: FearGreedData['score']; label: FearGreedData['label'] }
@@ -381,6 +383,19 @@ function buildRegimeVetoBlock(
     }
   }
 
+  // Skew veto — reads snapshot directly (not counted in passCount)
+  const skewSnap = getSkewSnapshot()
+  const relevantSkew = skewSnap?.dte21 ?? skewSnap?.dte7 ?? skewSnap?.dte0
+  if (relevantSkew) {
+    const rr25 = relevantSkew.riskReversal25
+    const dteLabel = relevantSkew.dte <= 3 ? '0DTE' : relevantSkew.dte <= 10 ? '7D' : '21D'
+    if (rr25 > -0.3) {
+      lines.push(`[!] VETO SKEW: RR25=${rr25.toFixed(2)}% (${dteLabel}) — skew flat/invertido → puts não pagam prêmio adicional sobre calls. Estrutura desfavorável para Put Spread.`)
+    } else if (Math.abs(rr25) < 1.0) {
+      lines.push(`[~] INCERTEZA SKEW: |RR25|=${Math.abs(rr25).toFixed(2)}% (${dteLabel}) — skew pouco definido; aguardar maior diferencial put/call.`)
+    }
+  }
+
   lines.push(`Score parcial: ${passCount}/${totalChecks} condições favoráveis`)
   lines.push('NOTA: Se score < 4, o campo trade_signal DEVE ser \'wait\' ou \'avoid\'.')
   return lines.join('\n')
@@ -444,6 +459,27 @@ function buildVannaCharmBlock(gexByExpiration: GEXByExpiration | null): string |
   block +=
     'Interpretação: VEX positivo → se IV comprimir, dealers compram spot (suporte bullish). ' +
     'CEX negativo → decaimento de delta causa selling intraday. Use como confirmação, não sinal primário.\n'
+  return block
+}
+
+function buildSkewBlock(skew: SkewByDTE): string | null {
+  const DTE_LABELS: Record<string, string> = { dte0: '0DTE', dte7: '7D', dte21: '21D', dte45: '45D' }
+  const entries = (['dte0', 'dte7', 'dte21', 'dte45'] as const)
+    .map((k) => ({ key: k, label: DTE_LABELS[k], entry: skew[k] as SkewEntry | null }))
+    .filter((r) => r.entry != null)
+
+  if (entries.length === 0) return null
+
+  let block = '\n=== SKEW DE VOLATILIDADE SPY ===\n'
+  for (const { label, entry } of entries) {
+    const e = entry!
+    const rrSign = e.riskReversal25 >= 0 ? '+' : ''
+    const slopeSign = e.putSkewSlope >= 0 ? '+' : ''
+    block += `${label}: RR25=${rrSign}${e.riskReversal25.toFixed(2)}% | PutSlope=${slopeSign}${e.putSkewSlope.toFixed(2)}% | IVRatio=${e.ivAtmSkewRatio.toFixed(2)} | ${e.skewLabel}\n`
+  }
+  block +=
+    'Interpretação: RR25 < -2.5% = prêmio elevado (favorável para venda de Put Spread) | ' +
+    'RR25 > -0.5% = skew flat/invertido (CAUTELA — puts não pagam prêmio adicional sobre calls).\n'
   return block
 }
 
@@ -730,6 +766,7 @@ function buildPrompt(
   popReferenceBlock?: string | null,
   regimeVetoBlock?: string | null,
   regimeScoreBlock?: string | null,
+  skewBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -771,6 +808,11 @@ function buildPrompt(
   // --- Checklist de Regime (vetos quantitativos) ---
   if (regimeVetoBlock) {
     prompt += regimeVetoBlock
+  }
+
+  // --- Skew de Volatilidade ---
+  if (skewBlock) {
+    prompt += skewBlock
   }
 
   // --- GEX (Gamma Exposure) ---
@@ -1217,7 +1259,14 @@ const STATIC_SYSTEM_PROMPT =
   'Ancoragem GEX: [nível — put wall/call wall/flip point do DTE] | ' +
   'Invalidação: [preço e descrição do nível] | ' +
   'Confiança: ALTA/MÉDIA/BAIXA — [justificativa em 1 linha]. ' +
-  'Os dados de porcentagem no payload (PoP, Confiança, IV Rank, etc.) já estão em formato absoluto. Utilize-os diretamente acompanhados do sinal %, sem re-multiplicar por 100.'
+  'Os dados de porcentagem no payload (PoP, Confiança, IV Rank, etc.) já estão em formato absoluto. Utilize-os diretamente acompanhados do sinal %, sem re-multiplicar por 100. ' +
+  'Skew de Volatilidade (Risk Reversal 25-delta): RR25 = IV(put 25d) − IV(call 25d), em pontos percentuais. ' +
+  'RR25 muito negativo (< -2.5%): puts caras em relação a calls — hedgers comprando proteção; prêmio elevado favorável a vendedores de Put Spread. ' +
+  'RR25 próximo de zero (> -0.5%): skew flat — mercado sem viés de proteção; desfavorável para venda de puts. ' +
+  'RR25 positivo: skew invertido — calls mais caras que puts; demanda por upside ou short squeeze. ' +
+  'PutSkewSlope = IV(put 25d) − IV(put 10d): alto (> 3%) = custo de cauda elevado; preferir spread mais largo. ' +
+  'VETO se RR25 > -0.3% no DTE alvo: estrutura de prêmio insuficiente para Put Spread. ' +
+  'AGUARDAR se |RR25| < 1.0%: zona de incerteza — esperar sinal de skew mais claro.'
 
 function buildSystemPrompt(marketStatusNote: string): string {
   return marketStatusNote + STATIC_SYSTEM_PROMPT
@@ -1316,6 +1365,8 @@ export async function runAnalysisForPayload(
   const popReferenceBlock = buildPOPReferenceBlock(snapshot?.spy?.last ?? 0)
   const regimeVetoBlock = buildRegimeVetoBlock(snapshot, confidence, advancedSnapshot?.gexByExpiration ?? null)
   const regimeScoreBlockResult = buildRegimeScoreBlock(advancedSnapshot?.gexByExpiration ?? null)
+  const skewSnapshotForPrompt = getSkewSnapshot()
+  const skewBlock = skewSnapshotForPrompt ? buildSkewBlock(skewSnapshotForPrompt) : null
 
   const userContent = buildPrompt(
     snapshot,
@@ -1332,6 +1383,7 @@ export async function runAnalysisForPayload(
     popReferenceBlock,
     regimeVetoBlock,
     regimeScoreBlockResult.block,
+    skewBlock,
   )
 
   const marketStatusNote = isMarketOpen()
@@ -1570,6 +1622,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const popReferenceBlock = buildPOPReferenceBlock(snapshot?.spy?.last ?? 0)
     const regimeVetoBlock = buildRegimeVetoBlock(snapshot, confidence, advancedSnapshot?.gexByExpiration ?? null)
     const regimeScoreBlockResult = buildRegimeScoreBlock(advancedSnapshot?.gexByExpiration ?? null)
+    const skewSnapshotForPrompt = getSkewSnapshot()
+    const skewBlock = skewSnapshotForPrompt ? buildSkewBlock(skewSnapshotForPrompt) : null
 
     const userContent = buildPrompt(
       snapshot,
@@ -1586,6 +1640,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       popReferenceBlock,
       regimeVetoBlock,
       regimeScoreBlockResult.block,
+      skewBlock,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     if (!CONFIG.ANTHROPIC_API_KEY) {

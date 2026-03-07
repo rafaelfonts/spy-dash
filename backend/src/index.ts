@@ -14,6 +14,7 @@ import { startMacroCalendar } from './data/macroCalendar'
 import { startNewsAggregator } from './data/newsAggregator'
 import { startBlsPoller } from './data/blsPoller'
 import { startVIXTermStructurePoller } from './data/vixTermStructurePoller'
+import { startSkewPoller } from './data/skewPoller'
 import { startTechnicalIndicatorsPoller } from './data/technicalIndicatorsPoller'
 import { startPreMarketScheduler, restoreBriefingFromCache } from './data/preMarketBriefing'
 import { startScheduledSignalScheduler } from './data/scheduledSignalService'
@@ -157,6 +158,7 @@ async function bootstrap(): Promise<void> {
       startDXFeedStream()
       startVIXPoller()
       startVIXTermStructurePoller()
+      startSkewPoller()
       startIVRankPoller()
       startEarningsCalendar()
       startFredPoller()
