@@ -1,4 +1,5 @@
 import { emitter } from './marketState'
+import type { IVConeSnapshot } from './ivConeService'
 
 export interface TechnicalData {
   rsi14: number
@@ -14,7 +15,8 @@ export interface TechnicalData {
     lower: number
     position: 'above_upper' | 'near_upper' | 'middle' | 'near_lower' | 'below_lower'
   }
-  capturedAt: string  // ISO 8601
+  capturedAt: string     // ISO 8601
+  ivCone?: IVConeSnapshot | null
 }
 
 let snapshot: TechnicalData | null = null

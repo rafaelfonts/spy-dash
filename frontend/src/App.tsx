@@ -16,6 +16,7 @@ import { OptionChainPanel } from './components/options/OptionChainPanel'
 import { GEXPanel } from './components/options/GEXPanel'
 import { PortfolioPanel } from './components/portfolio/PortfolioPanel'
 import { TechnicalIndicatorsCard } from './components/cards/TechnicalIndicatorsCard'
+import { VolSurfaceChart } from './components/charts/VolSurfaceChart'
 import { NewsFeedPanel } from './components/news/NewsFeedPanel'
 import { AlertOverlay } from './components/ui/AlertOverlay'
 
@@ -46,6 +47,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         <AIPanel />
         <RegimeDashboard />
         <GEXPanel />
+        <VolSurfaceChart />
         <TechnicalIndicatorsCard />
         <OptionChainPanel />
         <NewsFeedPanel />

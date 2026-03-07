@@ -5,7 +5,9 @@ import { emitter, marketState, newsSnapshot } from '../data/marketState'
 import { getAdvancedMetricsSnapshot } from '../data/advancedMetricsState'
 import { getVIXTermStructureSnapshot } from '../data/vixTermStructureState'
 import { getTechnicalSnapshot } from '../data/technicalIndicatorsState'
+import { getSkewSnapshot } from '../data/skewState'
 import { getTodaysBriefing } from '../data/preMarketBriefing'
+import { getLastMacroDigest } from '../data/macroDigestService'
 import { getLastScheduledSignal } from '../data/scheduledSignalService'
 import { getLastCBOEPCR } from '../data/cboePCRPoller'
 import type { SSEClient } from '../types/market'
@@ -64,6 +66,8 @@ emitter.on('newsfeed', (data) => {
 emitter.on('advanced-metrics', (data) => broadcast('advanced-metrics', data))
 emitter.on('vix-term-structure', (data) => broadcast('vix-term-structure', data))
 emitter.on('technical-indicators', (data) => broadcast('technical-indicators', data))
+emitter.on('skew', (data) => broadcast('skew', data))
+emitter.on('macro-digest', (data) => broadcast('macro-digest', data))
 emitter.on('briefing', (data) => broadcast('briefing', data))
 emitter.on('trade_signal_update', (data) => broadcast('trade_signal_update', data))
 emitter.on('cboe_pcr', (data) => broadcast('cboe_pcr', data))
@@ -211,6 +215,18 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     const techSnapshot = getTechnicalSnapshot()
     if (techSnapshot) {
       client.write('technical-indicators', techSnapshot)
+    }
+
+    // Send cached skew snapshot
+    const skewSnap = getSkewSnapshot()
+    if (skewSnap) {
+      client.write('skew', skewSnap)
+    }
+
+    // Send last macro digest if available
+    const macroDigest = getLastMacroDigest()
+    if (macroDigest) {
+      client.write('macro-digest', macroDigest)
     }
 
     // Send today's pre-market or post-close briefing if still valid

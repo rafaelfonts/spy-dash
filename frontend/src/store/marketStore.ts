@@ -95,6 +95,21 @@ export interface AnalysisStructuredOutput {
   gex_vs_yesterday: 'stronger_positive' | 'weaker_positive' | 'unchanged' | 'weaker_negative' | 'stronger_negative' | null
 }
 
+// IV Cone type (mirrored from backend ivConeService.IVConeSnapshot)
+export interface IVConeData {
+  hv10:  number | null
+  hv20:  number | null
+  hv30:  number | null
+  hv60:  number | null
+  ivx:   number | null
+  ivVsHv10:  number | null
+  ivVsHv20:  number | null
+  ivVsHv30:  number | null
+  ivVsHv60:  number | null
+  coneLabel: 'rich' | 'fair' | 'cheap' | null
+  capturedAt: string
+}
+
 // Technical Indicators type (mirrored from backend technicalIndicatorsState)
 export interface TechnicalIndicatorsData {
   rsi14: number
@@ -111,6 +126,7 @@ export interface TechnicalIndicatorsData {
     position: 'above_upper' | 'near_upper' | 'middle' | 'near_lower' | 'below_lower'
   }
   capturedAt: string
+  ivCone?: IVConeData | null
 }
 
 // VIX Term Structure type (mirrored from backend vixTermStructure)
@@ -225,6 +241,25 @@ export interface DANData {
   callDominancePct: number
 }
 
+// Vol Skew types (mirrored from backend skewService.ts)
+export interface SkewEntry {
+  expiration: string
+  dte: number
+  riskReversal25: number     // IV(put25d) − IV(call25d), %pts
+  putSkewSlope: number       // IV(put25d) − IV(put10d), %pts
+  ivAtm: number              // ATM IV, %
+  ivAtmSkewRatio: number     // iv_put_25d / iv_atm
+  skewLabel: 'steep' | 'normal' | 'flat' | 'inverted'
+  capturedAt: string
+}
+
+export interface SkewByDTE {
+  dte0:  SkewEntry | null
+  dte7:  SkewEntry | null
+  dte21: SkewEntry | null
+  dte45: SkewEntry | null
+}
+
 export interface StaleFlags {
   macro?: boolean
   bls?: boolean
@@ -306,6 +341,7 @@ interface MarketStore {
   lastScheduledSignal: TradeSignalPayload | null
   noTrade: NoTradeData | null
   dan: DANData | null
+  skewByDTE: SkewByDTE | null
 
   updateSPY: (data: Partial<SPYData>) => void
   updateVIX: (data: Partial<VIXData>) => void
@@ -325,6 +361,7 @@ interface MarketStore {
   setLastScheduledSignal: (data: TradeSignalPayload | null) => void
   setNoTrade: (data: NoTradeData | null) => void
   setDAN: (data: DANData | null) => void
+  setSkewByDTE: (data: SkewByDTE | null) => void
   alerts: AlertToast[]
   addAlert: (alert: AlertToast) => void
   dismissAlert: (id: string) => void
@@ -390,6 +427,7 @@ export const useMarketStore = create<MarketStore>()(
     lastScheduledSignal: null,
     noTrade: null,
     dan: null,
+    skewByDTE: null,
     alerts: [],
 
     updateSPY: (data) =>
@@ -440,6 +478,7 @@ export const useMarketStore = create<MarketStore>()(
     setLastScheduledSignal: (data) => set({ lastScheduledSignal: data }),
     setNoTrade: (data) => set({ noTrade: data }),
     setDAN: (data) => set({ dan: data }),
+    setSkewByDTE: (data) => set({ skewByDTE: data }),
 
     isDataReady: () => {
       return get().spy.last !== null

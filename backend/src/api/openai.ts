@@ -35,6 +35,9 @@ import type { CBOEPCRData } from '../data/cboePCRPoller'
 import type { GEXHistoryContext } from '../data/gexHistoryService'
 import { loadVolumeHistory, computeVolumeAnomaly } from '../data/volumeAnomalyService'
 import type { VolumeAnomalyData } from '../data/volumeAnomalyService'
+import { getIVConeSnapshot } from '../data/ivConeService'
+import type { IVConeSnapshot } from '../data/ivConeService'
+import { getLastMacroDigest } from '../data/macroDigestService'
 
 interface ContextData {
   fearGreed?: { score: FearGreedData['score']; label: FearGreedData['label'] }
@@ -640,6 +643,45 @@ function buildDANBlock(dan: { callDAN: number; putDAN: number; netDAN: number; d
   return block
 }
 
+function buildIVConeBlock(cone: IVConeSnapshot): string {
+  let block = '\n=== IV CONE — IV vs Volatilidade Histórica ===\n'
+  block += `IVx atual: ${cone.ivx != null ? `${cone.ivx.toFixed(1)}%` : 'n/d'}`
+  block += ` | Cone: ${cone.coneLabel?.toUpperCase() ?? 'n/d'}\n`
+
+  const fmtRatio = (r: number | null) => r != null ? `${r.toFixed(2)}x` : 'n/d'
+  const fmtHv    = (h: number | null) => h != null ? `${h.toFixed(1)}%` : 'n/d'
+
+  block += `HV10: ${fmtHv(cone.hv10)} (IVx/HV10=${fmtRatio(cone.ivVsHv10)}) | `
+  block += `HV20: ${fmtHv(cone.hv20)} (IVx/HV20=${fmtRatio(cone.ivVsHv20)}) | `
+  block += `HV30: ${fmtHv(cone.hv30)} (IVx/HV30=${fmtRatio(cone.ivVsHv30)}) | `
+  block += `HV60: ${fmtHv(cone.hv60)} (IVx/HV60=${fmtRatio(cone.ivVsHv60)})\n`
+
+  if (cone.coneLabel === 'rich') {
+    block += `⚠ IV CARA vs HV: IVx está ${cone.ivVsHv30?.toFixed(2)}x acima da HV30. `
+    block += `Venda de prêmio ainda tem edge teórico, mas IV pode comprimir — usar sizing conservador.\n`
+  } else if (cone.coneLabel === 'cheap') {
+    block += `📉 IV BARATA vs HV: IVx abaixo da realizada. Edge para vendedor é menor — preferir estruturas de baixo risco (spreads, não naked).\n`
+  } else if (cone.coneLabel === 'fair') {
+    block += `✅ IV JUSTA vs HV: IVx alinhada com volatilidade realizada. Venda de prêmio tem pricing equilibrado.\n`
+  }
+
+  return block
+}
+
+function buildMacroDigestBlock(digest: { text: string; capturedAt: string }): string | null {
+  // Skip if digest is older than 3 days
+  const age = Date.now() - new Date(digest.capturedAt).getTime()
+  if (age > 3 * 24 * 60 * 60 * 1000) return null
+
+  const date = new Date(digest.capturedAt).toLocaleDateString('pt-BR', { timeZone: 'America/New_York' })
+  let block = `\n=== DIGEST MACRO (${date}) ===\n`
+  // Truncate to 500 chars to keep prompt concise
+  block += digest.text.slice(0, 500)
+  if (digest.text.length > 500) block += '...'
+  block += '\n'
+  return block
+}
+
 function buildPutCallRatioBlock(pc: {
   ratio: number
   putVolume: number
@@ -929,6 +971,8 @@ function buildPrompt(
   volAnomalyBlock?: string | null,
   cboePCRBlock?: string | null,
   danBlock?: string | null,
+  ivConeBlock?: string | null,
+  macroDigestBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -939,6 +983,10 @@ function buildPrompt(
   if (memoryBlock) {
     prompt += `=== SUAS ANÁLISES ANTERIORES (HOJE) ===\n${memoryBlock}\n\n`
     prompt += `INSTRUÇÃO: Compare sua análise atual com as anteriores. Se mudou de opinião, explique por quê. Se os níveis anteriores foram testados, comente o resultado. Mantenha consistência narrativa.\n\n`
+  }
+
+  if (macroDigestBlock) {
+    prompt += macroDigestBlock
   }
 
   prompt += `Análise de mercado atual:\n\n`
@@ -960,6 +1008,11 @@ function buildPrompt(
       ? ` | IV/HV(30d)=${(ivRank.value / hv30).toFixed(2)}${ivRank.value / hv30 > 1.3 ? ' [VOL CARA]' : ''}`
       : ''
     prompt += `**IV Rank SPY**${ivAge}${confTag(confidence?.ivRank)}: ${ivRank.value?.toFixed(1)}% | Percentil: ${ivRank.percentile?.toFixed(1)}% | Classificação: ${ivRank.label}${ivhvRatio}\n`
+  }
+
+  // --- IV Cone (HV multi-período) ---
+  if (ivConeBlock) {
+    prompt += ivConeBlock
   }
 
   // --- Regime Score (pré-computado — injetar ANTES do veto para que score apareça primeiro) ---
@@ -1609,6 +1662,10 @@ export async function runAnalysisForPayload(
   const cboePCRData = await getLastCBOEPCR()
   const cboePCRBlock = cboePCRData ? buildCBOEPCRBlock(cboePCRData) : null
   const danBlockScheduled = advancedSnapshot?.dan ? buildDANBlock(advancedSnapshot.dan) : null
+  const ivConeSnapshotScheduled = getIVConeSnapshot()
+  const ivConeBlockScheduled = ivConeSnapshotScheduled ? buildIVConeBlock(ivConeSnapshotScheduled) : null
+  const macroDigestData = getLastMacroDigest()
+  const macroDigestBlockScheduled = macroDigestData ? buildMacroDigestBlock(macroDigestData) : null
 
   const userContent = buildPrompt(
     snapshot,
@@ -1631,6 +1688,8 @@ export async function runAnalysisForPayload(
     volAnomalyBlock,
     cboePCRBlock,
     danBlockScheduled,
+    ivConeBlockScheduled,
+    macroDigestBlockScheduled,
   )
 
   const marketStatusNote = isMarketOpen()
@@ -1892,6 +1951,10 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const cboePCRData = await getLastCBOEPCR()
     const cboePCRBlock = cboePCRData ? buildCBOEPCRBlock(cboePCRData) : null
     const danBlockMain = advancedSnapshot?.dan ? buildDANBlock(advancedSnapshot.dan) : null
+    const ivConeSnapshotMain = getIVConeSnapshot()
+    const ivConeBlockMain = ivConeSnapshotMain ? buildIVConeBlock(ivConeSnapshotMain) : null
+    const macroDigestDataMain = getLastMacroDigest()
+    const macroDigestBlockMain = macroDigestDataMain ? buildMacroDigestBlock(macroDigestDataMain) : null
 
     const userContent = buildPrompt(
       snapshot,
@@ -1914,6 +1977,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       volAnomalyBlock,
       cboePCRBlock,
       danBlockMain,
+      ivConeBlockMain,
+      macroDigestBlockMain,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     if (!CONFIG.ANTHROPIC_API_KEY) {

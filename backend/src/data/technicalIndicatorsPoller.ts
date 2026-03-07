@@ -9,6 +9,7 @@
 import { marketState } from './marketState'
 import { publishTechnicalData } from './technicalIndicatorsState'
 import type { TechnicalData } from './technicalIndicatorsState'
+import { buildIVConeSnapshot } from './ivConeService'
 
 // ---------------------------------------------------------------------------
 // Pure calculation helpers
@@ -102,14 +103,25 @@ function tick(): void {
   const macd = calcMACD(prices)
   const bbands = calcBBands(prices)
 
+  // IV Cone snapshot — piggybacking on 5-min tick (uses same priceHistory)
+  const ivCone = buildIVConeSnapshot()
+  if (ivCone) {
+    console.log(
+      `[IVCone] IVx=${ivCone.ivx ?? 'n/a'}% HV30=${ivCone.hv30 ?? 'n/a'}% ` +
+      `vs_HV30=${ivCone.ivVsHv30 ?? 'n/a'}x [${ivCone.coneLabel ?? 'n/a'}]`,
+    )
+  }
+
   const data: TechnicalData = {
     rsi14,
     macd,
     bbands,
     capturedAt: new Date().toISOString(),
+    ivCone: ivCone ?? null,
   }
 
   publishTechnicalData(data)
+
   console.log(
     `[TechIndicators] RSI=${rsi14.toFixed(2)} ` +
       `MACD_hist=${macd.histogram.toFixed(4)} ` +

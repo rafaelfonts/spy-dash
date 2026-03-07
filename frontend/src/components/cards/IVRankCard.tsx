@@ -10,8 +10,21 @@ const LABEL_CONFIG = {
   null:   { text: '—',      color: 'text-text-muted',   bar: 'bg-text-muted' },
 }
 
+const CONE_COLORS: Record<string, string> = {
+  rich:  '#ff4444',
+  fair:  '#00ff88',
+  cheap: '#4488ff',
+}
+
+const CONE_LABELS: Record<string, string> = {
+  rich:  'IV CARA',
+  fair:  'IV JUSTA',
+  cheap: 'IV BARATA',
+}
+
 export const IVRankCard = memo(function IVRankCard() {
   const ivRank = useMarketStore((s) => s.ivRank)
+  const ivCone = useMarketStore((s) => s.technicalIndicators?.ivCone ?? null)
 
   const isLoaded = ivRank.value !== null
   const label = LABEL_CONFIG[ivRank.label ?? 'null']
@@ -81,6 +94,25 @@ export const IVRankCard = memo(function IVRankCard() {
             {isLoaded ? `${ivRank.percentile?.toFixed(0) ?? '—'}%` : '—'}
           </span>
         </div>
+
+        {/* IV Cone badge */}
+        {ivCone?.coneLabel && (() => {
+          const color = CONE_COLORS[ivCone.coneLabel] ?? '#888'
+          const coneText = CONE_LABELS[ivCone.coneLabel] ?? ivCone.coneLabel
+          return (
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] text-text-muted w-16 shrink-0">Cone</span>
+              <div className="flex-1" />
+              <span
+                className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                style={{ color, background: `${color}20`, border: `1px solid ${color}40` }}
+                title={`vs HV30: ${ivCone.ivVsHv30?.toFixed(2) ?? '—'}x`}
+              >
+                {coneText}
+              </span>
+            </div>
+          )
+        })()}
       </div>
 
       {/* Interpretação — empurrada para o rodapé, alinhada com a sparkline dos outros cards */}

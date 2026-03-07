@@ -5,8 +5,8 @@
 
 import OpenAI from 'openai'
 import { CONFIG } from '../config'
-import { marketState, newsSnapshot } from './marketState'
-import { cacheSet, redis } from '../lib/cacheStore'
+import { marketState, newsSnapshot, emitter } from './marketState'
+import { cacheSet, cacheGet, redis } from '../lib/cacheStore'
 import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
 
 const openai = new OpenAI({ apiKey: CONFIG.OPENAI_API_KEY })
@@ -19,6 +19,34 @@ const DIGEST_MINUTE_ET = 0
 const TTL_14H_MS = 14 * 60 * 60 * 1000
 const TTL_14H_S = 14 * 60 * 60
 const TTL_24H_S = 24 * 60 * 60
+
+// ---------------------------------------------------------------------------
+// In-memory state
+// ---------------------------------------------------------------------------
+
+interface MacroDigestEntry {
+  text: string
+  capturedAt: string
+}
+
+let lastDigest: MacroDigestEntry | null = null
+
+export function getLastMacroDigest(): MacroDigestEntry | null {
+  return lastDigest
+}
+
+/** Called on startup to restore last digest from Redis (TTL 14h). */
+export async function restoreMacroDigestFromCache(): Promise<void> {
+  try {
+    const cached = await cacheGet<MacroDigestEntry>(CACHE_KEY_LAST)
+    if (cached) {
+      lastDigest = cached
+      console.log('[MacroDigest] Digest restaurado do cache Redis')
+    }
+  } catch (err) {
+    console.warn('[MacroDigest] Falha ao restaurar cache:', (err as Error).message)
+  }
+}
 
 function getTodayDateET(): string {
   const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
@@ -109,12 +137,13 @@ async function generateAndSendMacroDigest(): Promise<void> {
     const text = response.choices[0]?.message?.content?.trim() ?? ''
     if (!text) return
 
-    await cacheSet(
-      CACHE_KEY_LAST,
-      { text, capturedAt: new Date().toISOString() },
-      TTL_14H_MS,
-      'macro_digest',
-    )
+    const entry: MacroDigestEntry = { text, capturedAt: new Date().toISOString() }
+    lastDigest = entry
+
+    await cacheSet(CACHE_KEY_LAST, entry, TTL_14H_MS, 'macro_digest')
+
+    // Broadcast to SSE clients
+    emitter.emit('macro-digest', entry)
 
     const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
     const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))

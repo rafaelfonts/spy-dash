@@ -279,17 +279,8 @@ export function RegimeDashboard() {
   const noTrade = useMarketStore((s) => s.noTrade)
   const dan = useMarketStore((s) => s.dan)
 
-  if (!output) return null
-
-  const {
-    regime_score,
-    vanna_regime,
-    charm_pressure,
-    price_distribution,
-    gex_vs_yesterday,
-  } = output
-
-  const zone = getScoreZone(regime_score)
+  // Card only hidden when there's nothing at all to show
+  if (!output && !noTrade && !dan) return null
 
   return (
     <div className="bg-card border border-border rounded-xl p-4 space-y-3">
@@ -297,59 +288,70 @@ export function RegimeDashboard() {
         Regime Dashboard
       </div>
 
-      <div className="flex items-start gap-4">
-        {/* Gauge */}
-        <div className="flex flex-col items-center shrink-0">
-          <RegimeGaugeSVG score={regime_score} />
-          <div className="text-xl font-num font-bold -mt-1" style={{ color: zone.color }}>
-            {regime_score}/10
+      {/* Gauge + AI badges — only after first AI analysis */}
+      {output && (() => {
+        const { regime_score, vanna_regime, charm_pressure, gex_vs_yesterday } = output
+        const zone = getScoreZone(regime_score)
+        return (
+          <div className="flex items-start gap-4">
+            {/* Gauge */}
+            <div className="flex flex-col items-center shrink-0">
+              <RegimeGaugeSVG score={regime_score} />
+              <div className="text-xl font-num font-bold -mt-1" style={{ color: zone.color }}>
+                {regime_score}/10
+              </div>
+              <div className="text-[10px]" style={{ color: zone.color }}>
+                {zone.label}
+              </div>
+            </div>
+
+            {/* Badges grid */}
+            <div className="flex-1 min-w-0 space-y-2">
+              <div className="flex flex-wrap gap-1.5">
+                {vanna_regime && (
+                  <Badge
+                    label={`Vanna: ${vanna_regime}`}
+                    color={VANNA_COLORS[vanna_regime] ?? '#888'}
+                  />
+                )}
+                {charm_pressure && (
+                  <Badge
+                    label={`Charm: ${charm_pressure}`}
+                    color={CHARM_COLORS[charm_pressure] ?? '#888'}
+                  />
+                )}
+                {gex_vs_yesterday && (
+                  <Badge
+                    label={GEX_LABELS[gex_vs_yesterday] ?? gex_vs_yesterday}
+                    color={GEX_COLORS[gex_vs_yesterday] ?? '#888'}
+                  />
+                )}
+              </div>
+
+              {/* Score scale legend */}
+              <div className="flex gap-3 text-[9px]">
+                <span style={{ color: '#ff4444' }}>0–4 avoid</span>
+                <span style={{ color: '#ffcc00' }}>5–6 wait</span>
+                <span style={{ color: '#00ff88' }}>7–10 trade</span>
+              </div>
+            </div>
           </div>
-          <div className="text-[10px]" style={{ color: zone.color }}>
-            {zone.label}
-          </div>
+        )
+      })()}
+
+      {/* DAN badge — visible as soon as advanced-metrics SSE arrives */}
+      {dan && (
+        <div className="flex flex-wrap gap-1.5">
+          <DANBadge dan={dan} />
         </div>
-
-        {/* Badges grid */}
-        <div className="flex-1 min-w-0 space-y-2">
-          <div className="flex flex-wrap gap-1.5">
-            {vanna_regime && (
-              <Badge
-                label={`Vanna: ${vanna_regime}`}
-                color={VANNA_COLORS[vanna_regime] ?? '#888'}
-              />
-            )}
-            {charm_pressure && (
-              <Badge
-                label={`Charm: ${charm_pressure}`}
-                color={CHARM_COLORS[charm_pressure] ?? '#888'}
-              />
-            )}
-            {gex_vs_yesterday && (
-              <Badge
-                label={GEX_LABELS[gex_vs_yesterday] ?? gex_vs_yesterday}
-                color={GEX_COLORS[gex_vs_yesterday] ?? '#888'}
-              />
-            )}
-            {dan && <DANBadge dan={dan} />}
-          </div>
-
-          {/* Score scale legend */}
-          <div className="flex gap-3 text-[9px]">
-            <span style={{ color: '#ff4444' }}>0–4 avoid</span>
-            <span style={{ color: '#ffcc00' }}>5–6 wait</span>
-            <span style={{ color: '#00ff88' }}>7–10 trade</span>
-          </div>
-        </div>
-      </div>
-
-      {/* NoTrade semaphore */}
-      {noTrade && (
-        <NoTradeSignal noTrade={noTrade} />
       )}
 
-      {/* Price distribution bar */}
-      {price_distribution && (
-        <PriceDistributionBar dist={price_distribution} spyLast={spyLast} />
+      {/* NoTrade semaphore — visible as soon as advanced-metrics SSE arrives */}
+      {noTrade && <NoTradeSignal noTrade={noTrade} />}
+
+      {/* Price distribution bar — only after AI analysis */}
+      {output?.price_distribution && (
+        <PriceDistributionBar dist={output.price_distribution} spyLast={spyLast} />
       )}
     </div>
   )

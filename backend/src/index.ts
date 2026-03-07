@@ -21,7 +21,7 @@ import { startScheduledSignalScheduler } from './data/scheduledSignalService'
 import { startPortfolioTrackerScheduler, refreshPortfolioSnapshot } from './data/portfolioTrackerService'
 import { startCBOEPCRScheduler } from './data/cboePCRPoller'
 import { startApeWisdomPoller } from './data/apeWisdomPoller'
-import { startMacroDigestScheduler } from './data/macroDigestService'
+import { startMacroDigestScheduler, restoreMacroDigestFromCache } from './data/macroDigestService'
 import { registerSSE } from './api/sse'
 import { registerOpenAI } from './api/openai'
 import { registerRiskReview } from './api/riskReview'
@@ -147,6 +147,8 @@ async function bootstrap(): Promise<void> {
     ),
     // Restore today's pre-market/post-close briefing from Redis if available
     withTimeout(restoreBriefingFromCache(), 5_000, 'restoreBriefingFromCache'),
+    // Restore last macro digest from Redis if available (TTL 14h)
+    withTimeout(restoreMacroDigestFromCache(), 5_000, 'restoreMacroDigestFromCache'),
     // Restore portfolio snapshot so GET /api/portfolio works on cold start
     withTimeout(refreshPortfolioSnapshot(), 10_000, 'refreshPortfolioSnapshot'),
   ]).then(() => {

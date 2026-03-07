@@ -22,6 +22,7 @@ export function useMarketStream(): void {
   const setGEXDynamic = useMarketStore((s) => s.setGEXDynamic)
   const setNoTrade = useMarketStore((s) => s.setNoTrade)
   const setDAN = useMarketStore((s) => s.setDAN)
+  const setSkewByDTE = useMarketStore((s) => s.setSkewByDTE)
   const addAlert = useMarketStore((s) => s.addAlert)
 
   const esRef = useRef<EventSource | null>(null)
@@ -283,6 +284,15 @@ export function useMarketStream(): void {
         try {
           const data = JSON.parse(e.data)
           setTechnicalIndicators(data)
+        } catch {
+          // ignore parse errors
+        }
+      })
+
+      es.addEventListener('skew', (e) => {
+        try {
+          const data = JSON.parse(e.data)
+          setSkewByDTE(data)
         } catch {
           // ignore parse errors
         }
