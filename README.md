@@ -129,8 +129,8 @@ flowchart TB
   - **Multi-DTE:** GEX por bucket de expiração (0DTE, 1D, 7D, 21D, 45D, ALL) — `calculateAllExpirationsGex()` em `gexService.ts`; cache por expiração (`gex:exp:{symbol}:{exp}`, TTL 5min); publicado como `gexByExpiration` no evento SSE `advanced-metrics`
   - Métricas por bucket: `total`, `callWall`, `putWall`, `flipPoint`, `regime`, `maxGexStrike`; formato tabular injetado no prompt IA via `buildGexMultiDTEBlock()` (framework de 4 camadas: regime vol → GEX DTE → strike PoP → técnico)
   - `byStrike`: top 20 strikes por `|netGEX|` enviados via SSE com `{ strike, netGEX, callGEX, putGEX, callOI, putOI }`
-  - **Vanna Exposure (VEX):** `Σ(sign × OI × 100 × S × ∂Δ/∂σ) / 1M` — sensibilidade delta a variações de IV. VEX positivo (IV em queda) = contexto favorável para Put Spread; VEX negativo + VIX > 20 = **VETO** automático no `buildRegimeVetoBlock()`. Calculado por strike via `calcVanna()` em `blackScholes.ts`; campo `totalVannaExposure` no `DailyGexResult`; propagado no payload SSE `advanced-metrics.gex.vannaExposure`
-  - **Charm Exposure (CEX):** `Σ(sign × OI × 100 × S × ∂Δ/∂t / 365) / 1M` — decaimento delta por dia de calendário. |CEX| > $1M/dia indica força mecânica de re-hedge de dealers, especialmente relevante na Power Hour (14:30–16:00 ET). Campo `totalCharmExposure` no `DailyGexResult`; propagado como `advanced-metrics.gex.charmExposure`
+  - **Vanna Exposure (VEX):** `Σ(sign × OI × 100 × S × ∂Δ/∂σ) / 1M` — sensibilidade delta a variações de IV. VEX > 0 (IV em queda) = dealers comprando delta → contexto favorável para Put Spread; VEX < −$5M + VIX > 20 = **VETO VEX+VIX** automático no `buildRegimeVetoBlock()` (dealers com delta negativo crescente + IV escalando = ambiente adverso ao premium selling). Calculado por strike via `calcVanna()` em `blackScholes.ts`; campo `totalVannaExposure` no `DailyGexResult`; propagado no payload SSE `advanced-metrics.gex.vannaExposure`
+  - **Charm Exposure (CEX):** `Σ(sign × OI × 100 × S × ∂Δ/∂t / 365) / 1M` — decaimento delta por dia de calendário. |CEX| > $1M/dia indica força mecânica de re-hedge de dealers (put decay = dealers vendendo delta = pressão compradora no ativo). Especialmente relevante na Power Hour (14:30–16:00 ET). Campo `totalCharmExposure` no `DailyGexResult`; propagado como `advanced-metrics.gex.charmExposure`
   - **Volatility Trigger (VT):** média ponderada por `|netGEX|` dos 3 strikes mais próximos do `flipPoint` — `Σ(strike_i × |netGEX_i|) / Σ|netGEX_i|`. SPY > VT = regime long gamma (favorável a premium selling); SPY < VT = curto gamma (amplificação bearish). Calculado por `calcVolatilityTrigger()` em `gexService.ts`; disponível em todos os buckets DTE e no payload SSE como `gex.volatilityTrigger`
   - **Zero Gamma Level (ZGL):** raiz exata onde o GEX total cruza zero, calculado via bisecção Black-Scholes em `gexCalculator.ts::findZeroGammaLevel()`; distinto do `flipPoint` (mudança discreta de sinal por strike acumulado)
 - **Análise focada em GEX:** `POST /api/analyze/gex-flow` — endpoint SSE em streaming com gpt-4o-mini para análise da estrutura de GEX por DTE (acionado pelo botão "Analisar Fluxo" no GEXPanel)
@@ -142,6 +142,53 @@ flowchart TB
 - Poller independente (`advancedMetricsPoller.ts`) — não depende do token Tastytrade, começa imediatamente no startup
 - Cache SSE: ao conectar, cliente recebe snapshot imediato do estado atual
 - Painel `GEXPanel.tsx` no frontend com gráfico de barras por strike (calls verde, puts vermelho); barra do `maxGammaStrike` destacada em laranja via Recharts `Cell`; linhas de referência verticais: preço atual (branco), Flip Point (amarelo), Put Wall (roxo), Call Wall (azul), Max Gamma (ciano), **ZGL** (laranja pontilhado), **VT** (rosa pontilhado); badges VT (verde se SPY > VT, vermelho se SPY < VT, com % distância) e ZGL (distância % do SPY)
+
+### Regime Score + Distribuição de Preços
+
+- **`regimeScorer.ts`:** computa o `regime_score` (0–10, inteiro) **server-side** a cada tick do `advancedMetricsPoller`, a partir de GEX total, VEX, CEX, P/C ratio, IV Rank e `price_distribution` (percentis p10/p25/p50/p75/p90 calculados via Expected Move ~21D)
+- **`gex_vs_yesterday`:** rastreado por `updateGexHistory()` com 2 entradas em memória rotativa — se GEX hoje > GEX ontem = acúmulo; se menor = desacúmulo
+- **`buildRegimeScoreBlock()`** em `openai.ts` injeta o score pré-computado no prompt com instrução explícita **"NÃO recalcule"** — o agente apenas interpreta, nunca sobrescreve. Safety net pós-extração garante que gpt-4o-mini preserve os valores computados no `STRUCTURED_SCHEMA` (`regime_score: integer`, `vanna_regime`, `charm_pressure`, `gex_vs_yesterday`)
+- **`RegimeDashboard.tsx`:** gauge semicircular 0–10 (adaptado de `FearGreedGauge`), 3 badges (vanna_regime / charm_pressure / gex_vs_yesterday) e barra de distribuição de preços com marcador ao vivo do SPY (p10–p90)
+
+### Put Skew / Risk Reversal 25Δ
+
+- **`skewService.ts`:** calcula o Risk Reversal 25Δ (RR25 = IV(put 25Δ) − IV(call 25Δ)) a partir da option chain Tradier. RR25 positivo = mercado pagando mais por proteção de downside (puts caras); RR25 negativo = skew de ganância (calls caras)
+- **`skewPoller.ts`:** poll a cada 5min (mesma cadência do VIX Term Structure), aguarda 10s no startup para option chain popular; não zera snapshot em falha
+- **`skewState.ts`:** snapshot em memória `{ rr25, atmIV, skewLabel, capturedAt }` consumido pelo prompt IA
+- **`buildSkewBlock()`** em `openai.ts`: injetado quando RR25 for relevante (skew > 2pp ou < −1pp)
+- **Veto RR25** em `buildRegimeVetoBlock()`: RR25 alto = hedge institucional pesado → **AGUARDAR** antes de abrir posição vendida de volatilidade
+
+### Calendário OPEX
+
+- **`opexCalendar.ts`:** calcula a 3ª sexta-feira de cada mês (OPEX mensal SPY/SPX) e deriva flags: `isPostOpex` (D+1 a D+5 após OPEX), `isOpexEve` (D-1), `isOpexWeek` (D-5 a D0), `daysToOpex`
+- **`buildOpexBlock()`** em `openai.ts`: injeta contexto de posicionamento pós-OPEX/véspera/semana de OPEX no prompt quando relevante
+- **Vetos em `buildRegimeVetoBlock()`:** semana pós-OPEX = descompressão de gamma → vol pode expandir → AGUARDAR; véspera de OPEX = rolagem de posições → spread bid/ask pode ampliar → confirmar liquidez; semana de OPEX = pin risk em strikes com alto OI
+
+### GEX Histórico D-1 / 5 Dias
+
+- **`gexHistoryService.ts`:** persiste snapshot diário do GEX em Redis (chave `gex:history:SPY:YYYY-MM-DD`, TTL 7 dias): `netGex` ($B), `callWall`, `putWall`, `flipPoint`, `volatilityTrigger`, `zeroGammaLevel`, `vannaExposure`, `charmExposure`, `capturedAt`
+- **`loadGEXHistory(5)`** + **`computeGEXHistoryContext()`:** calcula `gexTrend` (accelerating_positive / stable_positive / declining / accelerating_negative), `gexChangeD1` ($B vs ontem), `gexChange5d` ($B vs 5 dias atrás), `flipPointTrend`, `vtTrend`, `vtChangeD1` e `historySummary` (texto em PT-BR para o prompt)
+- **`buildGexHistoryBlock()`** como 17º parâmetro de `buildPrompt()`: injeta tendência GEX 5d no prompt base
+- **`advancedMetricsPoller.ts`** salva 1x/dia (verifica `cacheGet` antes de `saveGEXDailySnapshot` — evita duplicar no mesmo ET day)
+
+### Bloco Técnico Condicional
+
+- **`shouldIncludeTechBlock()`** em `openai.ts`: inclui `buildTechBlock()` (RSI/MACD/BBands/VWAP) apenas quando uma das condições for verdadeira:
+  1. VIX > 25 (ambiente de alta vol — técnico relevante para timing)
+  2. `isPostOpex === true` (estrutural com descompressão gamma — técnico auxilia confirmação)
+  3. RSI < 35 ou RSI > 70 (extremo técnico — sinal de reversão ou momentum)
+- **Economia:** ~600 tokens por análise de rotina (mercado tranquilo, VIX baixo, RSI neutro)
+- **`STATIC_SYSTEM_PROMPT`:** nota explícita para não solicitar dados técnicos via `fetch_24h_context` quando o bloco estiver ausente — ausência indica condições normais, sem sinal extremo de RSI/vol
+
+### Sizzle / Volume Anomaly Detector 0DTE
+
+- **`volumeAnomalyService.ts`:** implementa o **Sizzle Index** = (vol puts 0DTE + calls 0DTE hoje) / (média 5d do total 0DTE). Detecta fluxo institucional intraday que o GEX baseado em OI não captura — compras pesadas de puts 0DTE podem preceder queda antes que o OI seja atualizado (60%+ do volume SPX/SPY é 0DTE)
+- **Volume exclusivamente via Tradier** `getOptionChain()` — `OptionLeg.volume` no Tastytrade WebSocket é sempre `null`; mesmo padrão de `putCallRatio.ts`
+- **`fetchTodayVolumeSnapshot(symbol, spyPrice)`:** valida que 0DTE está disponível hoje (`resolveNearestExpiration() === hoje ET`); retorna `null` em fins de semana/feriados silenciosamente; calcula `putVolume`, `callVolume`, `atmPutVolume` (strike mais próximo do `Math.round(spyPrice)`), `atmCallVolume`
+- **Redis key:** `vol:history:SPY:0dte:YYYY-MM-DD`, TTL 7 dias; salvo 1x/dia (check `cacheGet` antes de salvar)
+- **`computeVolumeAnomaly(today, history)`:** retorna `null` se `history.length < 2`; calcula `sizzle0dte`, `sizzleAtmStraddle`, `putCallVolumeRatio0dte`, `anomalyLabel` (extreme_put/high_put/neutral/high_call/extreme_call), `putBuyingPressure`/`callBuyingPressure` (heavy/normal/light)
+- **`buildVolumeAnomalyBlock()`** como 18º parâmetro de `buildPrompt()`: bloco **condicional** (só aparece quando `sizzle0dte > 1.5` ou `sizzle0dte < 0.6` — zero tokens em condições normais)
+- **Vetos inline no bloco:** `sizzle > 2.5 + extreme_put` → **⚠️ VETO FLUXO** (hedge institucional pesado, possível evento não precificado → aguardar); `sizzle < 0.5` → **⚠️ LIQUIDEZ REDUZIDA** (confirmar bid/ask antes de entrar)
 
 ### VIX Term Structure
 - Inferida a partir da option chain SPY (não requer API externa adicional)
@@ -327,6 +374,13 @@ SPY Dash/
 │       │   ├── scheduledSignalService.ts # Scheduler 10:30/15:00 ET + runAnalysisForPayload + Redis + SSE + Discord #sinais
 │       │   ├── portfolioTrackerService.ts # Scheduler 16:00 ET + DTE + Tradier + Claude Gestor Risco + Discord #carteira
 │       │   ├── portfolioLifecycleAgent.ts  # Payload + system prompt + chamada Claude (alerts JSON)
+│       │   ├── regimeScorer.ts          # regime_score 0–10 (pré-computado server-side); price_distribution percentis; gex_vs_yesterday
+│       │   ├── skewService.ts           # Risk Reversal 25Δ (RR25 = IV put25Δ − IV call25Δ) via Tradier chain
+│       │   ├── skewState.ts             # Snapshot RR25/atmIV/skewLabel em memória (prompt IA)
+│       │   ├── skewPoller.ts            # Poll 5min; aguarda 10s no startup; não zera em falha
+│       │   ├── opexCalendar.ts          # 3ª sexta-feira de cada mês; flags isPostOpex/isOpexEve/isOpexWeek/daysToOpex
+│       │   ├── gexHistoryService.ts     # Snapshot GEX diário Redis (gex:history:SPY:YYYY-MM-DD, 7d TTL); loadGEXHistory + computeGEXHistoryContext
+│       │   ├── volumeAnomalyService.ts  # Sizzle Index 0DTE; fetchTodayVolumeSnapshot; saveVolumeSnapshot; computeVolumeAnomaly
 │       │   ├── cboePCRPoller.ts      # CBOE Put/Call Ratio 16:35 ET (dias úteis); Redis 14h; Discord #feed + SSE cboe_pcr
 │       │   ├── apeWisdomPoller.ts    # Reddit WSB SPY sentiment (ApeWisdom, 4h); Discord #feed só em anomalia (rank ≤10 ou |Δrank|≥15)
 │       │   ├── macroDigestService.ts # Digest macro+notícias 10:00 ET Seg/Qua/Sex + aviso D-1 18:00 ET; gpt-4o-mini; Discord #briefings
@@ -360,7 +414,7 @@ SPY Dash/
 │       │   └── usePortfolio.ts     # GET portfolio, refresh, analyze (Carteira Put Spreads)
 │       ├── components/
 │       │   ├── cards/          # SPYCard, VIXCard, IVRankCard
-│       │   ├── ai/             # AIPanel + AnalysisResult + PreMarketBriefing + LastScheduledSignal
+│       │   ├── ai/             # AIPanel + AnalysisResult + PreMarketBriefing + LastScheduledSignal + RegimeDashboard
 │       │   ├── options/
 │       │   │   ├── GEXPanel.tsx        # Painel GEX: gráfico byStrike + callWall/putWall/flipPoint/ZGL/VT; badges VT+ZGL; Cell highlight maxGammaStrike
 │       │   │   └── OptionChainPanel.tsx # Cadeia de opções ATM com greeks Δ γ θ ν
@@ -565,6 +619,9 @@ Novo cliente SSE conectado:
 | `cache:premarket_briefing:YYYY-MM-DD` | Briefing pre-market Claude/GPT-4o (markdown) | 14h | Anthropic/OpenAI | ✓ | ✓ |
 | `cache:postclose_briefing:YYYY-MM-DD` | Resumo pós-fechamento Claude/GPT-4o (markdown) | 14h | Anthropic/OpenAI | ✓ | ✓ |
 | `cache:trade_signal:latest` | Último sinal agendado (10:30/15:00 ET): trade_signal, regime_score, no_trade_reasons, bias, key_levels, timestamp | 14h | runAnalysisForPayload | ✓ | — (enviado no snapshot SSE) |
+| `gex:history:SPY:YYYY-MM-DD` | Snapshot GEX diário: netGex($B), callWall, putWall, flipPoint, VT, ZGL, vannaExposure, charmExposure | 7d | advancedMetricsPoller | ✓ | — |
+| `vol:history:SPY:0dte:YYYY-MM-DD` | Snapshot volume 0DTE diário: putVolume, callVolume, atmPutVolume, atmCallVolume | 7d | advancedMetricsPoller | ✓ | — |
+| `skew:snapshot:SPY` | Risk Reversal 25Δ: rr25, atmIV, skewLabel, capturedAt | 5min | skewPoller | — | — |
 | `auth:tt_refresh_token` | Refresh token TT (AES-256-GCM) | 30d | Tastytrade | — | — |
 
 > Payloads >1KB são automaticamente comprimidos com Brotli por `cacheStore.ts` (prefixo `b:` para retrocompatibilidade). Reduz consumo no Redis Cloud free tier (30MB).
@@ -896,6 +953,11 @@ npm run preview # Preview do build de produção
 - **Expected Move (1σ):** varredura dinâmica 0–60 DTE (straddle ATM via Tradier, `iv_efficiency` por expiração); bloco no prompt IA e regra de alerta quando perna vendida do Put Spread está dentro do cone
 - VIX Term Structure inferida da option chain (normal/inverted/flat, steepness%)
 - Indicadores técnicos RSI(14), MACD, BBANDS calculados localmente de `priceHistory` (sem API externa)
+- **Regime Score + Price Distribution (P3):** `regimeScorer.ts` computa score 0–10 inteiro server-side; percentis p10–p90 de distribuição de preços via Expected Move 21D; `gex_vs_yesterday` em memória rotativa; `RegimeDashboard.tsx` com gauge + badges + barra de distribuição
+- **Put Skew / Risk Reversal 25Δ (P4):** `skewService.ts` calcula RR25; `skewPoller.ts` (5min); veto RR25 alto em `buildRegimeVetoBlock()`
+- **Calendário OPEX (P5):** `opexCalendar.ts` (3ª sexta-feira); flags pós-OPEX/véspera/semana; vetos de regime escalando pós-OPEX
+- **GEX Histórico D-1/5d (P6):** `gexHistoryService.ts`; snapshot diário Redis 7d; `computeGEXHistoryContext()` com gexTrend/gexChangeD1/gexChange5d; `buildGexHistoryBlock()` no prompt (17º param)
+- **Sizzle / Volume Anomaly Detector 0DTE (P8):** `volumeAnomalyService.ts`; Sizzle Index via Tradier chain; snapshot diário Redis 7d; `buildVolumeAnomalyBlock()` condicional no prompt (18º param); veto inline extreme_put + sizzle > 2.5
 
 **Análise IA:**
 - Painel "Análise IA" com Claude Sonnet 4.6 (primary) / GPT-4o (fallback) em streaming
@@ -912,6 +974,7 @@ npm run preview # Preview do build de produção
 - Alertas de preço em tempo real (support/resistance/gex_flip) por usuário
 - Rate limiting: 5 análises/hora por usuário (sliding window)
 - **Follow-up:** `POST /api/chat-followup` (gpt-4o-mini, sem rate limit) para perguntas sobre a análise atual
+- **Bloco Técnico Condicional (P7):** `shouldIncludeTechBlock()` inclui RSI/MACD/BBands/VWAP apenas quando VIX > 25, `isPostOpex === true`, ou RSI < 35 / RSI > 70 — economiza ~600 tokens em análises de rotina; system prompt orienta a não solicitar dados técnicos via tool call quando bloco ausente
 - **Sinais de trade em horários fixos:** scheduler 10:30 e 15:00 ET (dias úteis); uma análise global por horário via `runAnalysisForPayload()`; resultado em Redis e broadcast SSE `trade_signal_update`; envio ao Discord #sinais via `sendSignalToDiscord()` (embed com decisão, regime score, bias, níveis); widget "Último sinal" no dashboard.
 - **Motor de Gestão de Ciclo de Vida:** scheduler 16:00 ET para Put Spreads (posições OPEN em `portfolio_positions`); DTE + lucro % via Tradier; Claude Gestor de Risco (FECHAR_LUCRO / FECHAR_TEMPO / ROLAR / MANTER); alertas Discord com embeds (verde 50%, amarelo 21 DTE). Painel **Carteira** no dashboard com snapshot em memória, Cadastrar (modal com gerador OCC), Excluir por linha, endpoints GET/POST portfolio, POST analyze, POST/DELETE positions.
 - **Análise de Risco/Retorno Assimétrica:** `POST /api/analyze/risk-review` — motor de payoff Put Spread (`putSpreadPayoff.ts`) + eventos macro de alto impacto na janela DTE (`getMacroEventsForWindow`) + contexto GEX; Claude Sonnet 4.6 como CRO retorna decisão (APPROVED/REJECTED/NEEDS_RESTRUCTURE) e justificativa técnica. Decisão enviada ao Discord #sinais via `sendEmbed('sinais', ...)` (fire-and-forget).
