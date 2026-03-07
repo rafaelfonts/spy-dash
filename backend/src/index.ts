@@ -18,7 +18,7 @@ import { startSkewPoller } from './data/skewPoller'
 import { startTechnicalIndicatorsPoller } from './data/technicalIndicatorsPoller'
 import { startPreMarketScheduler, restoreBriefingFromCache } from './data/preMarketBriefing'
 import { startScheduledSignalScheduler } from './data/scheduledSignalService'
-import { startPortfolioTrackerScheduler } from './data/portfolioTrackerService'
+import { startPortfolioTrackerScheduler, refreshPortfolioSnapshot } from './data/portfolioTrackerService'
 import { startCBOEPCRScheduler } from './data/cboePCRPoller'
 import { startApeWisdomPoller } from './data/apeWisdomPoller'
 import { startMacroDigestScheduler } from './data/macroDigestService'
@@ -147,6 +147,8 @@ async function bootstrap(): Promise<void> {
     ),
     // Restore today's pre-market/post-close briefing from Redis if available
     withTimeout(restoreBriefingFromCache(), 5_000, 'restoreBriefingFromCache'),
+    // Restore portfolio snapshot so GET /api/portfolio works on cold start
+    withTimeout(refreshPortfolioSnapshot(), 10_000, 'refreshPortfolioSnapshot'),
   ]).then(() => {
     console.log('[Bootstrap] Market state restore complete — starting pollers and streams.')
     startIntradayCachePersistence()

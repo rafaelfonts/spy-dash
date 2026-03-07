@@ -103,7 +103,7 @@ export function AIPanel() {
                 Análise IA
               </h2>
               <p className="text-[11px] text-text-muted mt-0.5">
-                Powered by GPT-4o — estratégias de opções em tempo real
+                Powered by Claude Sonnet 4.6 — estratégias de opções em tempo real
               </p>
             </div>
             <div className="flex items-center gap-2">

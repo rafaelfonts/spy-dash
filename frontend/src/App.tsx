@@ -42,17 +42,17 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         </div>
         <PreMarketBriefing />
         <LastScheduledSignal />
+        <PortfolioPanel />
         <AIPanel />
         <RegimeDashboard />
         <GEXPanel />
-        <PortfolioPanel />
         <TechnicalIndicatorsCard />
         <OptionChainPanel />
         <NewsFeedPanel />
       </main>
 
       <footer className="text-center py-4 text-[10px] text-text-muted border-t border-border-subtle mt-8">
-        SPY DASH — Dados via Tastytrade DXFeed · IA via GPT-4o
+        SPY DASH — Dados via Tastytrade DXFeed · IA via Claude Sonnet 4.6
       </footer>
 
       <AlertOverlay />

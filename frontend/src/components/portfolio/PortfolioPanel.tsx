@@ -15,6 +15,21 @@ function PositionRow({
 }) {
   const hit50 = p.profit_percentage >= 50
   const hit21dte = p.dte_current <= 21
+  const isProfit = p.profit_percentage >= 0
+  const isNegative = p.profit_percentage < 0
+
+  const profitColor = hit50
+    ? 'text-[#00ff88]'
+    : isNegative
+      ? 'text-red-400'
+      : 'text-yellow-400'
+
+  // Progress bar: 0% → 50% target (clamp 0–100 for display)
+  const barFill = Math.min(100, Math.max(0, (p.profit_percentage / 50) * 100))
+
+  const plDollars = p.profit_loss_dollars
+  const plSign = plDollars != null && plDollars >= 0 ? '+' : ''
+  const plColor = plDollars != null && plDollars >= 0 ? 'text-[#00ff88]' : 'text-red-400'
 
   const handleClickExcluir = useCallback(() => {
     onRequestDelete(p.id)
@@ -22,8 +37,18 @@ function PositionRow({
 
   return (
     <tr className="border-b border-border-subtle last:border-0">
-      <td className="py-2 pr-3 text-text-primary font-medium text-sm">{p.strategy}</td>
-      <td className="py-2 pr-3 text-right">
+      <td className="py-3 pr-3">
+        <p className="text-text-primary font-medium text-sm">{p.strategy}</p>
+        {p.comments && (
+          <p
+            className="text-[10px] text-text-muted mt-0.5 truncate max-w-[180px]"
+            title={p.comments}
+          >
+            {p.comments}
+          </p>
+        )}
+      </td>
+      <td className="py-3 pr-3 text-right">
         <span className={`text-xs font-num ${hit21dte ? 'text-yellow-400' : 'text-text-secondary'}`}>
           {p.dte_current} DTE
         </span>
@@ -33,23 +58,32 @@ function PositionRow({
           </span>
         )}
       </td>
-      <td className="py-2 pr-3 text-right">
-        <span className={`text-sm font-num ${hit50 ? 'text-[#00ff88]' : 'text-text-secondary'}`}>
-          {p.profit_percentage.toFixed(1)}%
-        </span>
-        {hit50 && (
-          <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#00ff88]/20 text-[#00ff88] border border-[#00ff88]/40">
-            50%
+      <td className="py-3 pr-3 text-right min-w-[110px]">
+        <div className="flex flex-col items-end gap-0.5">
+          <span className={`text-base font-bold font-num ${profitColor}`}>
+            {isProfit && !isNegative ? '+' : ''}{p.profit_percentage.toFixed(1)}%
           </span>
-        )}
+          {plDollars != null && (
+            <span className={`text-[11px] font-num ${plColor}`}>
+              {plSign}${Math.abs(plDollars).toFixed(2)}
+            </span>
+          )}
+          <div className="w-24 h-1 rounded-full bg-bg-elevated overflow-hidden mt-0.5">
+            <div
+              className={`h-full rounded-full transition-all ${hit50 ? 'bg-[#00ff88]' : isNegative ? 'bg-red-500' : 'bg-yellow-400'}`}
+              style={{ width: `${barFill}%` }}
+            />
+          </div>
+          <span className="text-[9px] text-text-muted">Alvo: 50%</span>
+        </div>
       </td>
-      <td className="py-2 pr-3 text-right text-xs font-num text-text-muted">
+      <td className="py-3 pr-3 text-right text-xs font-num text-text-muted">
         ${p.credit_received.toFixed(2)}
       </td>
-      <td className="py-2 pr-3 text-right text-xs font-num text-text-muted">
+      <td className="py-3 pr-3 text-right text-xs font-num text-text-muted">
         ${p.current_cost_to_close.toFixed(2)}
       </td>
-      <td className="py-2 text-right">
+      <td className="py-3 text-right">
         <button
           type="button"
           onClick={handleClickExcluir}
@@ -157,7 +191,7 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
         </div>
       ) : isEmpty ? (
         <p className="text-xs text-text-muted py-6 text-center">
-          Nenhuma posição OPEN. Clique em <strong>Cadastrar</strong> para adicionar uma nova posição ou registre em <code className="text-text-secondary">portfolio_positions</code> no Supabase e clique em Atualizar.
+          Nenhuma operação ativa no momento. Clique em <strong>Cadastrar</strong> para registrar uma nova posição.
         </p>
       ) : (
         <>
@@ -165,9 +199,9 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
             <table className="w-full text-left min-w-[360px]">
               <thead>
                 <tr className="text-[10px] text-text-muted uppercase tracking-wider border-b border-border-subtle">
-                  <th className="pb-2 pr-3 font-medium">Estratégia</th>
+                  <th className="pb-2 pr-3 font-medium">Estratégia / Tese</th>
                   <th className="pb-2 pr-3 text-right">DTE</th>
-                  <th className="pb-2 pr-3 text-right">Lucro %</th>
+                  <th className="pb-2 pr-3 text-right">Lucro / P&L $</th>
                   <th className="pb-2 pr-3 text-right">Crédito</th>
                   <th className="pb-2 pr-3 text-right">Custo fechar</th>
                   <th className="pb-2 w-16 text-right">Ações</th>

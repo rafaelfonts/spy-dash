@@ -41,6 +41,7 @@ export function AddPositionModal({ open, onClose, onSubmit, onSuccess }: AddPosi
   const [symbol, setSymbol] = useState('SPY')
   const [openDate, setOpenDate] = useState(today())
   const [expirationDate, setExpirationDate] = useState('')
+  const [comments, setComments] = useState('')
   // 2-leg
   const [shortStrike, setShortStrike] = useState<number | ''>('')
   const [longStrike, setLongStrike] = useState<number | ''>('')
@@ -98,6 +99,7 @@ export function AddPositionModal({ open, onClose, onSubmit, onSuccess }: AddPosi
     setCallShortOptionSymbol('')
     setCallLongOptionSymbol('')
     setCreditReceived('')
+    setComments('')
     setSubmitError(null)
   }, [])
 
@@ -134,6 +136,7 @@ export function AddPositionModal({ open, onClose, onSubmit, onSuccess }: AddPosi
           short_option_symbol: shortOptionSymbol,
           long_option_symbol: longOptionSymbol,
           credit_received: Number(creditReceived),
+          comments: comments.trim() || undefined,
         })
         setSubmitting(false)
         if (result.ok) {
@@ -177,6 +180,7 @@ export function AddPositionModal({ open, onClose, onSubmit, onSuccess }: AddPosi
         call_short_option_symbol: callShortOptionSymbol,
         call_long_option_symbol: callLongOptionSymbol,
         credit_received: Number(creditReceived),
+        comments: comments.trim() || undefined,
       })
       setSubmitting(false)
       if (result.ok) {
@@ -206,6 +210,7 @@ export function AddPositionModal({ open, onClose, onSubmit, onSuccess }: AddPosi
       callShortOptionSymbol,
       callLongOptionSymbol,
       creditReceived,
+      comments,
       onSubmit,
       onSuccess,
       onClose,
@@ -454,6 +459,18 @@ export function AddPositionModal({ open, onClose, onSubmit, onSuccess }: AddPosi
             onChange={(e) => setCreditReceived(e.target.value === '' ? '' : Number(e.target.value))}
             className="w-full rounded border border-border-subtle bg-bg-base px-2.5 py-1.5 text-sm text-text-primary"
             placeholder="250 (ex.: 2.50 por contrato)"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-[10px] font-medium text-text-muted uppercase tracking-wider">
+            Comentários (opcional)
+          </label>
+          <textarea
+            value={comments}
+            onChange={(e) => setComments(e.target.value)}
+            rows={2}
+            className="w-full rounded border border-border-subtle bg-bg-base px-2.5 py-1.5 text-sm text-text-primary resize-none"
+            placeholder="Tese do trade, contexto de entrada..."
           />
         </div>
         {submitError && <p className="text-xs text-red-400">{submitError}</p>}

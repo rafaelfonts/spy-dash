@@ -14,6 +14,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { marketState, newsSnapshot, emitter } from './marketState'
 import { cacheGet, cacheSet, redis } from '../lib/cacheStore'
 import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
+import { getPortfolioSnapshot } from './portfolioTrackerService'
 import { CONFIG } from '../config'
 import type {
   PreMarketBriefing,
@@ -23,6 +24,7 @@ import type {
   MacroDataItem,
   FearGreedData,
 } from '../types/market'
+import type { EnrichedPosition } from '../types/portfolio'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -178,6 +180,7 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
       headlines: newsSnapshot.headlines.slice(0, 5),
       fearGreed: newsSnapshot.fearGreed,
       macro: newsSnapshot.macro,
+      portfolio: getPortfolioSnapshot()?.positions ?? [],
     }
 
     const userPrompt =
@@ -320,6 +323,7 @@ interface BriefingContext {
   headlines: NewsHeadline[]
   fearGreed: FearGreedData | null
   macro: MacroDataItem[]
+  portfolio: EnrichedPosition[]
 }
 
 function buildPreMarketPrompt(ctx: BriefingContext): string {
@@ -493,6 +497,21 @@ function buildPostClosePrompt(ctx: BriefingContext): string {
     }
     lines.push('')
   }
+
+  // Portfolio positions
+  lines.push('### Portfólio Ativo')
+  if (ctx.portfolio.length === 0) {
+    lines.push('- Nenhuma posição aberta (Carteira Zerada)')
+  } else {
+    lines.push(`- ${ctx.portfolio.length} posição(ões) abertas:`)
+    for (const p of ctx.portfolio) {
+      const plSign = p.profit_loss_dollars >= 0 ? '+' : ''
+      lines.push(
+        `  • ${p.strategy} | DTE: ${p.dte_current} | Lucro: ${p.profit_percentage.toFixed(1)}% (${plSign}$${p.profit_loss_dollars.toFixed(2)}) | Custo fechar: $${p.current_cost_to_close.toFixed(2)}`,
+      )
+    }
+  }
+  lines.push('')
 
   lines.push('=== FIM DOS DADOS ===')
   return lines.join('\n')

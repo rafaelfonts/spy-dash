@@ -46,23 +46,13 @@ function getTodayDateET(): string {
 }
 
 /**
- * Count business days (exclude Saturday/Sunday) between from and to in ET.
- * from and to are treated as ET calendar dates; to is exclusive for the count
- * so that "today to expiration" gives DTE as days until expiration.
+ * Count calendar days (not business days) between from and to.
+ * Uses simple millisecond difference — weekend days are included.
+ * to is exclusive so "today to expiration" gives the correct DTE.
  */
-function diasUteisEntre(from: Date, to: Date): number {
-  const fromTime = from.getTime()
-  const toTime = to.getTime()
-  if (toTime <= fromTime) return 0
-  let count = 0
-  const oneDay = 24 * 60 * 60 * 1000
-  let d = new Date(fromTime)
-  while (d.getTime() < toTime) {
-    const dow = d.getDay()
-    if (dow !== 0 && dow !== 6) count++
-    d = new Date(d.getTime() + oneDay)
-  }
-  return count
+function diasCorridosEntre(from: Date, to: Date): number {
+  const diff = to.getTime() - from.getTime()
+  return diff <= 0 ? 0 : Math.ceil(diff / (24 * 60 * 60 * 1000))
 }
 
 /** Parse expiration_date (YYYY-MM-DD) to Date at start of day in ET. */
@@ -108,6 +98,7 @@ export async function insertPortfolioPosition(
     long_option_symbol: payload.long_option_symbol.trim(),
     credit_received: payload.credit_received,
     status: 'OPEN' as const,
+    comments: payload.comments ?? null,
   }
   const { data, error } = await supabase
     .from('portfolio_positions')
@@ -162,7 +153,7 @@ async function enrichPositions(rows: PortfolioPositionRow[]): Promise<EnrichedPo
 
   for (const row of rows) {
     const expDate = parseExpirationET(row.expiration_date)
-    const dteCurrent = diasUteisEntre(todayET, expDate)
+    const dteCurrent = diasCorridosEntre(todayET, expDate)
 
     const short = quotesBySymbol[row.short_option_symbol]
     const long = quotesBySymbol[row.long_option_symbol]
@@ -189,8 +180,10 @@ async function enrichPositions(rows: PortfolioPositionRow[]): Promise<EnrichedPo
       strategy,
       dte_current: dteCurrent,
       profit_percentage: Math.round(profitPct * 10) / 10,
+      profit_loss_dollars: Math.round((creditReceived - currentDebit) * 100 * 100) / 100,
       credit_received: creditReceived,
       current_cost_to_close: Math.round(currentDebit * 100) / 100,
+      comments: row.comments ?? undefined,
     })
   }
 

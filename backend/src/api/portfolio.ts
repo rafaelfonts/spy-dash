@@ -100,6 +100,7 @@ export async function registerPortfolio(app: FastifyInstance): Promise<void> {
       }
 
       const open_date = typeof body.open_date === 'string' ? body.open_date : undefined
+      const comments = typeof body.comments === 'string' ? body.comments : undefined
       const halfCredit = Math.round((credit_received / 2) * 100) / 100
 
       const putPayload: InsertPositionPayload = {
@@ -112,6 +113,7 @@ export async function registerPortfolio(app: FastifyInstance): Promise<void> {
         short_option_symbol: put_short_option_symbol,
         long_option_symbol: put_long_option_symbol,
         credit_received: halfCredit,
+        comments,
       }
       const callPayload: InsertPositionPayload = {
         symbol,
@@ -123,6 +125,7 @@ export async function registerPortfolio(app: FastifyInstance): Promise<void> {
         short_option_symbol: call_short_option_symbol,
         long_option_symbol: call_long_option_symbol,
         credit_received: halfCredit,
+        comments,
       }
 
       const row1 = await insertPortfolioPosition(putPayload)
@@ -177,6 +180,7 @@ export async function registerPortfolio(app: FastifyInstance): Promise<void> {
       short_option_symbol,
       long_option_symbol,
       credit_received,
+      comments: typeof body.comments === 'string' ? body.comments : undefined,
     }
     const position = await insertPortfolioPosition(payload)
     if (!position) {

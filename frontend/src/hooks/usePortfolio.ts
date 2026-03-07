@@ -7,8 +7,10 @@ export interface EnrichedPosition {
   strategy: string
   dte_current: number
   profit_percentage: number
+  profit_loss_dollars?: number
   credit_received: number
   current_cost_to_close: number
+  comments?: string
 }
 
 export interface PortfolioAlert {
@@ -42,6 +44,7 @@ export interface CreatePositionBody {
   call_short_option_symbol?: string
   call_long_option_symbol?: string
   credit_received: number
+  comments?: string
 }
 
 async function authFetch(url: string, options?: RequestInit): Promise<Response> {

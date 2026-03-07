@@ -16,6 +16,7 @@ export interface PortfolioPositionRow {
   long_option_symbol: string
   credit_received: number
   status: PositionStatus
+  comments?: string
   created_at?: string
 }
 
@@ -24,8 +25,10 @@ export interface EnrichedPosition {
   strategy: string
   dte_current: number
   profit_percentage: number
+  profit_loss_dollars: number
   credit_received: number
   current_cost_to_close: number
+  comments?: string
 }
 
 export interface PortfolioPayload {
@@ -53,4 +56,5 @@ export interface InsertPositionPayload {
   short_option_symbol: string
   long_option_symbol: string
   credit_received: number
+  comments?: string
 }
