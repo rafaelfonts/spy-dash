@@ -1353,7 +1353,28 @@ const STATIC_SYSTEM_PROMPT =
   'GEX Histórico (5 dias): GEX crescendo ($B) → dealers acumulando posições estabilizadoras → vol tende a cair (favorável para premium selling). ' +
   'GEX decrescendo → dealers descarregando → vol tende a subir → cautela com Put Spread vendido. ' +
   'Flip Point migrando consistentemente em uma direção por 3+ dias = tendência estrutural de nível de magnetismo. ' +
-  'Use GEX histórico para confirmar ou questionar o sinal do GEX spot atual — divergência entre spot e tendência histórica = sinal de atenção.'
+  'Use GEX histórico para confirmar ou questionar o sinal do GEX spot atual — divergência entre spot e tendência histórica = sinal de atenção. ' +
+  'Bloco Técnico (RSI/MACD/BBands): quando ausente do prompt, a análise é estrutural (GEX + IV + Expected Move + Skew + OPEX). ' +
+  'NÃO solicite dados técnicos via tool call quando o bloco técnico estiver ausente. ' +
+  'RSI e MACD são irrelevantes para Put Spread de 21–45 DTE sem regime de alta vol (VIX>25), RSI extremo (<35 ou >70), ou pós-OPEX.'
+
+/**
+ * Returns true if the tech block (RSI/MACD/BBands) should be included in the prompt.
+ *
+ * Excluded for structural premium-selling analyses (21–45 DTE) where these
+ * short-term indicators add noise rather than signal. Included when:
+ *  - VIX > 25 (high-vol regime: price action matters more)
+ *  - Post-OPEX day (mechanical GEX reset → price action more relevant)
+ *  - RSI extreme (< 35 or > 70): agent needs to know about the extreme
+ */
+function shouldIncludeTechBlock(): boolean {
+  const vix = marketState.vix.last
+  if (vix != null && vix > 25) return true
+  if (getOpexStatus().isPostOpex) return true
+  const rsi = getTechnicalSnapshot()?.rsi14 ?? null
+  if (rsi != null && (rsi < 35 || rsi > 70)) return true
+  return false
+}
 
 function buildSystemPrompt(marketStatusNote: string): string {
   return marketStatusNote + STATIC_SYSTEM_PROMPT
@@ -1442,7 +1463,7 @@ export async function runAnalysisForPayload(
     technicals: calculateConfidence('technicals', techSnapshot?.capturedAt ?? null, breakerStatuses['alphavantage']),
   }
 
-  const techBlock = techSnapshot
+  const techBlock = (techSnapshot && shouldIncludeTechBlock())
     ? buildTechBlock(techSnapshot, snapshot?.spy?.last ?? null, confidence, getLastVwap())
     : null
   const priceHistoryBlock = buildPriceHistoryBlock(marketState.spy.priceHistory)
@@ -1701,7 +1722,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       technicals:   calculateConfidence('technicals',   techSnapshot?.capturedAt ?? null, breakerStatuses['alphavantage']),
     }
 
-    const techBlock = techSnapshot
+    const techBlock = (techSnapshot && shouldIncludeTechBlock())
       ? buildTechBlock(techSnapshot, snapshot?.spy?.last ?? null, confidence, getLastVwap())
       : null
 
