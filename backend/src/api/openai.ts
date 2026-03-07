@@ -24,12 +24,14 @@ import { registerAlertsFromAnalysis } from '../data/alertEngine'
 import { getExpectedMoveSnapshot } from '../data/expectedMoveState'
 import type { ExpectedMoveSnapshot } from '../data/expectedMoveState'
 import { calcProbabilityOTMPut } from '../lib/blackScholes'
-import { computeRegimeScore, getGexVsYesterday } from '../data/regimeScorer'
+import { computeRegimeScore, getGexVsYesterday, getRegimeFlipCount } from '../data/regimeScorer'
 import type { RegimeScorerResult, GexComparison } from '../data/regimeScorer'
 import { getSkewSnapshot } from '../data/skewState'
 import type { SkewByDTE, SkewEntry } from '../data/skewService'
 import { getOpexStatus } from '../data/opexCalendar'
 import { loadGEXHistory, computeGEXHistoryContext } from '../data/gexHistoryService'
+import { getLastCBOEPCR } from '../data/cboePCRPoller'
+import type { CBOEPCRData } from '../data/cboePCRPoller'
 import type { GEXHistoryContext } from '../data/gexHistoryService'
 import { loadVolumeHistory, computeVolumeAnomaly } from '../data/volumeAnomalyService'
 import type { VolumeAnomalyData } from '../data/volumeAnomalyService'
@@ -405,6 +407,12 @@ function buildRegimeVetoBlock(
     lines.push(`[✓] SEMANA DE OPEX (${opex.daysToMonthlyOpex} dias): GEX tende a comprimir vol — condição estruturalmente favorável para premium selling.`)
   }
 
+  // Regime flip count veto (structural indecision — not counted in passCount but hard veto)
+  const flipCount = getRegimeFlipCount()
+  if (flipCount >= 2) {
+    lines.push(`[!] VETO INSTABILIDADE: GEX flipou ${flipCount}x hoje (positive↔negative) — mercado estruturalmente indeciso. VETO de novas posições direcionais.`)
+  }
+
   lines.push(`Score parcial: ${passCount}/${totalChecks} condições favoráveis`)
   lines.push('NOTA: Se score < 4, o campo trade_signal DEVE ser \'wait\' ou \'avoid\'.')
   return lines.join('\n')
@@ -419,7 +427,7 @@ interface RegimeScoreBlockResult {
 /** Pre-computes regime_score and related fields, returning a prompt block + the computed values. */
 function buildRegimeScoreBlock(gexDynamic: GEXDynamic | null): RegimeScoreBlockResult {
   const regimeScorerResult = computeRegimeScore(gexDynamic)
-  const { score, vannaRegime, charmPressure, priceDistribution } = regimeScorerResult
+  const { score, vannaRegime, charmPressure, priceDistribution, regimeFlipCount } = regimeScorerResult
 
   const totalNetGamma = gexDynamic && gexDynamic.length > 0
     ? gexDynamic.reduce((sum, e) => sum + e.gex.totalNetGamma, 0)
@@ -434,10 +442,17 @@ function buildRegimeScoreBlock(gexDynamic: GEXDynamic | null): RegimeScoreBlockR
     distLine = `p10=$${p10} p25=$${p25} p50=$${p50} p75=$${p75} p90=$${p90} | 1σ: ${expected_range_1sigma}`
   }
 
+  const flipLine = regimeFlipCount >= 2
+    ? `⚠️ INSTABILIDADE DE REGIME: GEX flipou ${regimeFlipCount}x hoje — mercado indeciso estruturalmente.`
+    : regimeFlipCount === 1
+    ? `Regime flipou 1x hoje (mudança de direção detectada).`
+    : `Regime estável intraday (0 flips).`
+
   const block = [
     '\n=== REGIME SCORE (pré-computado pelo backend) ===',
     `Score: ${score}/10 — ${scoreLabel}`,
     `Vanna: ${vannaRegime} | Charm: ${charmPressure} | GEX vs Ontem: ${gexVsYesterday ?? 'N/A'}`,
+    `Regime Flips Hoje: ${regimeFlipCount} — ${flipLine}`,
     `Price Distribution (~21D): ${distLine}`,
     `INSTRUÇÃO: NÃO recalcule regime_score — copie o valor ${score} literalmente no campo regime_score.`,
     `Score < 5: trade_signal=avoid | Score 5–6: wait | Score >= 7: analisar e decidir.`,
@@ -556,6 +571,28 @@ function buildVolumeAnomalyBlock(data: VolumeAnomalyData): string {
     block += '⚠️ LIQUIDEZ REDUZIDA: Volume 0DTE anormalmente baixo — spreads mais largos. Confirmar bid/ask antes de recomendar entrada.\n'
   }
 
+  return block
+}
+
+function buildCBOEPCRBlock(data: CBOEPCRData): string {
+  const labelMap: Record<CBOEPCRData['label'], string> = {
+    extreme_fear: 'MEDO EXTREMO — proteção sistêmica ativa',
+    fear: 'MEDO — prêmio de put elevado',
+    neutral: 'NEUTRO',
+    greed: 'GANÂNCIA — prêmio de put baixo',
+    extreme_greed: 'GANÂNCIA EXTREMA — complacência',
+  }
+  const date = new Date(data.capturedAt).toLocaleDateString('pt-BR', { timeZone: 'America/New_York' })
+  let block = `\n=== CBOE PUT/CALL RATIO (pregão anterior — ${date}) ===\n`
+  block += `Total PCR: ${data.totalPCR} | Equity PCR: ${data.equityPCR} | Index PCR: ${data.indexPCR}\n`
+  block += `Sentimento Institucional: ${labelMap[data.label]}\n`
+  block += `Interpretação: Equity PCR > 0.8 = proteção comprada = favorável para Put Spread (prêmio elevado). `
+  block += `Equity PCR < 0.5 = complacência = cautela com sizing (prêmio de put artificialmente baixo).\n`
+  if (data.equityPCR < 0.5) {
+    block += `⚠️ VETO CBOE: Equity PCR=${data.equityPCR} — complacência excessiva no mercado amplo. Puts não pagam prêmio adicional justificável.\n`
+  } else if (data.equityPCR >= 0.8) {
+    block += `✅ CBOE FAVORÁVEL: Equity PCR=${data.equityPCR} — mercado comprando proteção → prêmio de put estruturalmente elevado.\n`
+  }
   return block
 }
 
@@ -846,6 +883,7 @@ function buildPrompt(
   opexBlock?: string | null,
   gexHistoryBlock?: string | null,
   volAnomalyBlock?: string | null,
+  cboePCRBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -914,9 +952,14 @@ function buildPrompt(
     prompt += gexMultiBlock
   }
 
-  // --- Put/Call Ratio ---
+  // --- Put/Call Ratio (intraday Tradier) ---
   if (putCallRatioBlock) {
     prompt += putCallRatioBlock
+  }
+
+  // --- CBOE PCR (pregão anterior — fluxo institucional amplo) ---
+  if (cboePCRBlock) {
+    prompt += cboePCRBlock
   }
 
   // --- Indicadores Técnicos ---
@@ -1513,6 +1556,8 @@ export async function runAnalysisForPayload(
   const volAnomalyBlock = (volAnomalyData && (volAnomalyData.sizzle0dte > 1.5 || volAnomalyData.sizzle0dte < 0.6))
     ? buildVolumeAnomalyBlock(volAnomalyData)
     : null
+  const cboePCRData = await getLastCBOEPCR()
+  const cboePCRBlock = cboePCRData ? buildCBOEPCRBlock(cboePCRData) : null
 
   const userContent = buildPrompt(
     snapshot,
@@ -1533,6 +1578,7 @@ export async function runAnalysisForPayload(
     opexBlock,
     gexHistoryBlock,
     volAnomalyBlock,
+    cboePCRBlock,
   )
 
   const marketStatusNote = isMarketOpen()
@@ -1791,6 +1837,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const volAnomalyBlock = (volAnomalyData && (volAnomalyData.sizzle0dte > 1.5 || volAnomalyData.sizzle0dte < 0.6))
       ? buildVolumeAnomalyBlock(volAnomalyData)
       : null
+    const cboePCRData = await getLastCBOEPCR()
+    const cboePCRBlock = cboePCRData ? buildCBOEPCRBlock(cboePCRData) : null
 
     const userContent = buildPrompt(
       snapshot,
@@ -1811,6 +1859,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       opexBlock,
       gexHistoryBlock,
       volAnomalyBlock,
+      cboePCRBlock,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     if (!CONFIG.ANTHROPIC_API_KEY) {

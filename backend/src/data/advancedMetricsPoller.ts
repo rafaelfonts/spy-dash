@@ -18,7 +18,7 @@ import { calculatePutCallRatio } from './putCallRatio'
 import { publishAdvancedMetrics } from './advancedMetricsState'
 import type { AdvancedMetricsPayload } from './advancedMetricsState'
 import { isMarketOpen } from '../lib/time'
-import { updateGexHistory } from './regimeScorer'
+import { updateGexHistory, updateRegimeHistory, computeNoTradeScore } from './regimeScorer'
 import { saveGEXDailySnapshot } from './gexHistoryService'
 import type { GEXDailySnapshot } from './gexHistoryService'
 import { cacheGet } from '../lib/cacheStore'
@@ -67,6 +67,10 @@ async function tick(): Promise<void> {
     : null
   const currentTotal = dynamicTotal ?? gex?.totalNetGamma ?? null
   if (currentTotal !== null) updateGexHistory(currentTotal)
+
+  // Update intraday regime flip tracking (uses lowest-DTE entry regime)
+  const lowestDTERegime = gexDynamic.length > 0 ? gexDynamic[0].gex.regime : gex?.regime ?? null
+  if (lowestDTERegime) updateRegimeHistory(lowestDTERegime)
 
   // Only publish if at least one service returned data
   if (!gex && !profile && !pc) {
@@ -134,6 +138,7 @@ async function tick(): Promise<void> {
       : null,
     gexDynamic: serializedGexDynamic.length > 0 ? serializedGexDynamic : null,
     timestamp: new Date().toISOString(),
+    noTrade: computeNoTradeScore(serializedGexDynamic.length > 0 ? serializedGexDynamic : null),
   }
 
   publishAdvancedMetrics(payload)

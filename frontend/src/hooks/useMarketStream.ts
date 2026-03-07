@@ -20,6 +20,7 @@ export function useMarketStream(): void {
   const setPreMarketBriefing = useMarketStore((s) => s.setPreMarketBriefing)
   const setLastScheduledSignal = useMarketStore((s) => s.setLastScheduledSignal)
   const setGEXDynamic = useMarketStore((s) => s.setGEXDynamic)
+  const setNoTrade = useMarketStore((s) => s.setNoTrade)
   const addAlert = useMarketStore((s) => s.addAlert)
 
   const esRef = useRef<EventSource | null>(null)
@@ -238,6 +239,14 @@ export function useMarketStream(): void {
                 volatilityTrigger: e.gex.volatilityTrigger,
               },
             })))
+          }
+          if ((data as any).noTrade) {
+            const nt = (data as any).noTrade
+            setNoTrade({
+              noTradeScore: nt.noTradeScore,
+              activeVetos: nt.activeVetos ?? [],
+              noTradeLevel: nt.noTradeLevel,
+            })
           }
         } catch (err) {
           console.warn('[SSE] advanced-metrics parse error:', (err as Error).message)

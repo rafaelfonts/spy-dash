@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { useMarketStore } from '../../store/marketStore'
-import type { AnalysisStructuredOutput } from '../../store/marketStore'
+import type { AnalysisStructuredOutput, NoTradeData } from '../../store/marketStore'
 
 // ---------------------------------------------------------------------------
 // Regime Score Gauge (semicircle SVG, adapted from FearGreedGauge)
@@ -175,12 +176,75 @@ function PriceDistributionBar({
 }
 
 // ---------------------------------------------------------------------------
+// NoTrade Semaphore
+// ---------------------------------------------------------------------------
+
+const NO_TRADE_COLORS: Record<NoTradeData['noTradeLevel'], string> = {
+  clear: '#00ff88',
+  caution: '#ffcc00',
+  avoid: '#ff4444',
+}
+
+const NO_TRADE_LABELS: Record<NoTradeData['noTradeLevel'], string> = {
+  clear: 'Operável',
+  caution: 'Cautela',
+  avoid: 'Não Operar',
+}
+
+function NoTradeSignal({ noTrade }: { noTrade: NoTradeData }) {
+  const [expanded, setExpanded] = useState(false)
+  const color = NO_TRADE_COLORS[noTrade.noTradeLevel]
+  const label = NO_TRADE_LABELS[noTrade.noTradeLevel]
+
+  return (
+    <div
+      className="rounded-lg p-2.5 cursor-pointer select-none"
+      style={{ background: `${color}10`, border: `1px solid ${color}30` }}
+      onClick={() => noTrade.activeVetos.length > 0 && setExpanded((v) => !v)}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {/* Semaphore dot */}
+          <div
+            className="w-2.5 h-2.5 rounded-full shrink-0"
+            style={{ background: color, boxShadow: `0 0 6px ${color}` }}
+          />
+          <span className="text-[11px] font-semibold" style={{ color }}>
+            {label}
+          </span>
+          {noTrade.activeVetos.length > 0 && (
+            <span className="text-[10px] text-text-muted">
+              ({noTrade.activeVetos.length} veto{noTrade.activeVetos.length > 1 ? 's' : ''})
+            </span>
+          )}
+        </div>
+        {noTrade.activeVetos.length > 0 && (
+          <span className="text-[10px] text-text-muted">{expanded ? '▲' : '▼'}</span>
+        )}
+      </div>
+
+      {expanded && noTrade.activeVetos.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {noTrade.activeVetos.map((v, i) => (
+            <li key={i} className="text-[10px] text-text-muted flex gap-1.5">
+              <span style={{ color }}>•</span>
+              <span>{v}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Main card
 // ---------------------------------------------------------------------------
 
 export function RegimeDashboard() {
   const output = useMarketStore((s) => s.lastAnalysisOutput)
   const spyLast = useMarketStore((s) => s.spy.last)
+  const noTrade = useMarketStore((s) => s.noTrade)
 
   if (!output) return null
 
@@ -243,6 +307,11 @@ export function RegimeDashboard() {
           </div>
         </div>
       </div>
+
+      {/* NoTrade semaphore */}
+      {noTrade && (
+        <NoTradeSignal noTrade={noTrade} />
+      )}
 
       {/* Price distribution bar */}
       {price_distribution && (

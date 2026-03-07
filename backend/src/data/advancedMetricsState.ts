@@ -9,8 +9,10 @@
 
 import { emitter } from './marketState'
 import type { GEXDynamic } from './gexService'
+import type { NoTradeResult } from './regimeScorer'
 
 export type { GEXDynamic }
+export type { NoTradeResult }
 
 // ---------------------------------------------------------------------------
 // SSE payload shape (what the frontend receives)
@@ -48,6 +50,8 @@ export interface AdvancedMetricsPayload {
   } | null
   gexDynamic: GEXDynamic | null  // dynamic term structure: array of GEXExpirationEntry sorted by DTE (0–60 DTE)
   timestamp: string         // ISO 8601 of last successful calculation
+  /** Unified operability signal aggregating all structural vetos. */
+  noTrade: NoTradeResult | null
 }
 
 // ---------------------------------------------------------------------------

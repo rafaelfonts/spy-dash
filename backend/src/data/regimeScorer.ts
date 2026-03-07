@@ -9,6 +9,8 @@
 import { marketState, newsSnapshot } from './marketState'
 import { getVIXTermStructureSnapshot } from './vixTermStructureState'
 import { getExpectedMoveSnapshot } from './expectedMoveState'
+import { getOpexStatus } from './opexCalendar'
+import { getSkewSnapshot } from './skewState'
 import type { GEXDynamic } from './gexService'
 
 // ---------------------------------------------------------------------------
@@ -29,6 +31,8 @@ export interface RegimeScorerResult {
   vannaRegime: 'tailwind' | 'neutral' | 'headwind'
   charmPressure: 'significant' | 'moderate' | 'neutral'
   priceDistribution: PriceDistribution | null
+  /** Number of times GEX regime flipped sign today (positive↔negative). ≥2 = structural indecision. */
+  regimeFlipCount: number
 }
 
 export type GexComparison =
@@ -72,6 +76,45 @@ export function getGexVsYesterday(current: number): GexComparison | null {
   if (current >= 0 && prev >= 0) return change > 0 ? 'stronger_positive' : 'weaker_positive'
   if (current < 0 && prev < 0) return change > 0 ? 'weaker_negative' : 'stronger_negative'
   return change > 0 ? 'stronger_positive' : 'stronger_negative'
+}
+
+// ---------------------------------------------------------------------------
+// Intraday regime flip tracking
+// Tracks sign changes in GEX regime (positive→negative or negative→positive)
+// within a single trading day. Resets when ET date changes.
+// ---------------------------------------------------------------------------
+
+interface RegimeSnapshot {
+  time: number              // epoch ms
+  regime: 'positive' | 'negative'
+  date: string              // ET date YYYY-MM-DD
+}
+
+let intradayRegimeHistory: RegimeSnapshot[] = []
+
+/** Called every tick from advancedMetricsPoller to update regime flip tracking. */
+export function updateRegimeHistory(regime: 'positive' | 'negative'): void {
+  const etDate = getETDateString()
+  // Reset history if day changed
+  if (intradayRegimeHistory.length > 0 && intradayRegimeHistory[0].date !== etDate) {
+    intradayRegimeHistory = []
+  }
+  // Only record if regime changed from last snapshot
+  const last = intradayRegimeHistory.at(-1)
+  if (!last || last.regime !== regime) {
+    intradayRegimeHistory.push({ time: Date.now(), regime, date: etDate })
+    // Keep max 100 snapshots to bound memory
+    if (intradayRegimeHistory.length > 100) intradayRegimeHistory.shift()
+  }
+}
+
+/**
+ * Returns the number of regime sign changes today (positive↔negative).
+ * The first entry is not a flip — flips start at the 2nd snapshot.
+ */
+export function getRegimeFlipCount(): number {
+  if (intradayRegimeHistory.length < 2) return 0
+  return intradayRegimeHistory.length - 1
 }
 
 // ---------------------------------------------------------------------------
@@ -197,5 +240,120 @@ export function computeRegimeScore(gexDynamic: GEXDynamic | null): RegimeScorerR
   // --- price_distribution ---
   const priceDistribution = spyLast != null ? computePriceDistribution(spyLast) : null
 
-  return { score, vannaRegime, charmPressure, priceDistribution }
+  // --- regime flip count ---
+  const regimeFlipCount = getRegimeFlipCount()
+
+  return { score, vannaRegime, charmPressure, priceDistribution, regimeFlipCount }
+}
+
+// ---------------------------------------------------------------------------
+// NoTrade Score — aggregates all active vetos into a single operability signal
+// ---------------------------------------------------------------------------
+
+export type NoTradeLevel = 'clear' | 'caution' | 'avoid'
+
+export interface NoTradeResult {
+  /** Sum of veto weights (higher = more reasons NOT to trade). */
+  noTradeScore: number
+  /** Human-readable list of active veto reasons. */
+  activeVetos: string[]
+  /** Operability level derived from noTradeScore: clear(0-1) / caution(2-4) / avoid(5+). */
+  noTradeLevel: NoTradeLevel
+}
+
+/**
+ * Aggregates all structural veto conditions into a single NoTrade signal.
+ * Each veto carries a weight; the sum determines the operability level.
+ *
+ * Weight reference:
+ *  - Post-OPEX day: 3 (GEX resetado, vol pode expandir)
+ *  - VEX negative + VIX >20: 3 (amplificação bearish)
+ *  - Regime flipped ≥2x: 2 (structural indecision)
+ *  - Skew flat/inverted (RR25 > -0.3): 2 (puts não pagam extra)
+ *  - SPY < VT + VIX >18: 2 (short gamma env)
+ *  - OPEX day: 2 (liquidação de posições)
+ *  - Earnings ≤2 dias: 1 (per component)
+ *  - GEX all-negative: 1 (amplificação generalizada)
+ *  - VIX spike >20%: 1
+ */
+export function computeNoTradeScore(gexDynamic: GEXDynamic | null): NoTradeResult {
+  const activeVetos: string[] = []
+  let noTradeScore = 0
+
+  const opex = getOpexStatus()
+  const vixLast = marketState.vix.last ?? null
+  const vixChangePct = marketState.vix.changePct ?? null
+  const spyLast = marketState.spy.last ?? null
+  const flipCount = getRegimeFlipCount()
+
+  // Post-OPEX: heaviest veto (weight 3)
+  if (opex.isPostOpex) {
+    noTradeScore += 3
+    activeVetos.push('Pós-OPEX: GEX resetado — vol pode expandir abruptamente')
+  }
+
+  // VEX negative + VIX >20 compound veto (weight 3)
+  const vexAll = gexDynamic && gexDynamic.length > 0
+    ? gexDynamic.reduce((sum, e) => sum + (e.gex.totalVannaExposure ?? 0), 0)
+    : null
+  if (vexAll !== null && vexAll < -5 && vixLast !== null && vixLast > 20) {
+    noTradeScore += 3
+    activeVetos.push(`VEX=${vexAll.toFixed(1)}M negativo + VIX=${vixLast.toFixed(1)} >20 — amplificação bearish`)
+  }
+
+  // Regime flip ≥2 (weight 2)
+  if (flipCount >= 2) {
+    noTradeScore += 2
+    activeVetos.push(`Regime GEX flipou ${flipCount}x hoje — mercado estruturalmente indeciso`)
+  }
+
+  // Skew flat/inverted (weight 2)
+  const skewSnap = getSkewSnapshot()
+  const relevantSkew = skewSnap?.dte21 ?? skewSnap?.dte7 ?? skewSnap?.dte0
+  if (relevantSkew && relevantSkew.riskReversal25 > -0.3) {
+    noTradeScore += 2
+    activeVetos.push(`Skew flat/invertido: RR25=${relevantSkew.riskReversal25.toFixed(2)}% — puts não pagam prêmio adicional`)
+  }
+
+  // SPY below VT + VIX >18 (weight 2)
+  const vtAll = gexDynamic && gexDynamic.length > 0 ? gexDynamic[0].gex.volatilityTrigger ?? null : null
+  if (vtAll !== null && spyLast !== null && spyLast < vtAll && (vixLast ?? 0) > 18) {
+    noTradeScore += 2
+    activeVetos.push(`SPY $${spyLast.toFixed(2)} < VT $${vtAll.toFixed(2)} com VIX>18 — short gamma environment`)
+  }
+
+  // OPEX day (weight 2)
+  if (opex.isOpexDay) {
+    noTradeScore += 2
+    activeVetos.push('OPEX hoje: liquidação de posições — não abrir novas entradas')
+  }
+
+  // Earnings ≤2 dias (weight 1 each, max 2)
+  const urgentEarnings = (newsSnapshot.earnings ?? []).filter(
+    (e) => e.daysToEarnings != null && e.daysToEarnings >= 0 && e.daysToEarnings <= 2,
+  )
+  if (urgentEarnings.length > 0) {
+    const w = Math.min(urgentEarnings.length, 2)
+    noTradeScore += w
+    activeVetos.push(`Earnings em ≤2 dias: ${urgentEarnings.slice(0, 4).map((e) => e.symbol).join(', ')}`)
+  }
+
+  // All-negative GEX regime (weight 1)
+  if (gexDynamic && gexDynamic.length > 0 && gexDynamic.every((e) => e.gex.regime === 'negative')) {
+    noTradeScore += 1
+    activeVetos.push(`GEX negativo em todos os ${gexDynamic.length} vencimentos — ambiente de amplificação`)
+  }
+
+  // VIX spike >20% (weight 1)
+  if (vixChangePct !== null && Math.abs(vixChangePct) > 20) {
+    noTradeScore += 1
+    activeVetos.push(`VIX spike ${vixChangePct >= 0 ? '+' : ''}${vixChangePct.toFixed(1)}% — aguardar normalização`)
+  }
+
+  const noTradeLevel: NoTradeLevel =
+    noTradeScore >= 5 ? 'avoid' :
+    noTradeScore >= 2 ? 'caution' :
+    'clear'
+
+  return { noTradeScore, activeVetos, noTradeLevel }
 }

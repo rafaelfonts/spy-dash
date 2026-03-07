@@ -201,6 +201,13 @@ export interface OptionExpiry {
   puts: OptionLeg[]
 }
 
+// NoTrade Score (mirrored from backend regimeScorer.NoTradeResult)
+export interface NoTradeData {
+  noTradeScore: number
+  activeVetos: string[]
+  noTradeLevel: 'clear' | 'caution' | 'avoid'
+}
+
 export interface StaleFlags {
   macro?: boolean
   bls?: boolean
@@ -280,6 +287,7 @@ interface MarketStore {
   technicalIndicators: TechnicalIndicatorsData | null
   preMarketBriefing: PreMarketBriefing | null
   lastScheduledSignal: TradeSignalPayload | null
+  noTrade: NoTradeData | null
 
   updateSPY: (data: Partial<SPYData>) => void
   updateVIX: (data: Partial<VIXData>) => void
@@ -297,6 +305,7 @@ interface MarketStore {
   setTechnicalIndicators: (data: TechnicalIndicatorsData | null) => void
   setPreMarketBriefing: (data: PreMarketBriefing | null) => void
   setLastScheduledSignal: (data: TradeSignalPayload | null) => void
+  setNoTrade: (data: NoTradeData | null) => void
   alerts: AlertToast[]
   addAlert: (alert: AlertToast) => void
   dismissAlert: (id: string) => void
@@ -360,6 +369,7 @@ export const useMarketStore = create<MarketStore>()(
     technicalIndicators: null,
     preMarketBriefing: null,
     lastScheduledSignal: null,
+    noTrade: null,
     alerts: [],
 
     updateSPY: (data) =>
@@ -408,6 +418,7 @@ export const useMarketStore = create<MarketStore>()(
     setTechnicalIndicators: (data) => set({ technicalIndicators: data }),
     setPreMarketBriefing: (data) => set({ preMarketBriefing: data }),
     setLastScheduledSignal: (data) => set({ lastScheduledSignal: data }),
+    setNoTrade: (data) => set({ noTrade: data }),
 
     isDataReady: () => {
       return get().spy.last !== null
