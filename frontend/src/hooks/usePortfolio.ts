@@ -64,6 +64,7 @@ export function usePortfolio() {
   const [error, setError] = useState<string | null>(null)
   const [alerts, setAlerts] = useState<PortfolioAlert[]>([])
   const [analyzing, setAnalyzing] = useState(false)
+  const [alertsStale, setAlertsStale] = useState(false)
 
   const fetchSnapshot = useCallback(async () => {
     setError(null)
@@ -88,6 +89,7 @@ export function usePortfolio() {
       if (!res.ok) throw new Error('Falha ao atualizar')
       const data = (await res.json()) as PortfolioSnapshot
       setSnapshot({ positions: data.positions ?? [], capturedAt: data.capturedAt ?? null })
+      setAlertsStale(true)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -142,6 +144,7 @@ export function usePortfolio() {
         throw new Error(data.error ?? 'Falha na análise')
       }
       setAlerts(data.alerts ?? [])
+      setAlertsStale(false)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -164,5 +167,6 @@ export function usePortfolio() {
     analyze,
     alerts,
     analyzing,
+    alertsStale,
   }
 }

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Modal } from '../ui/Modal'
 import type { CreatePositionBody } from '../../hooks/usePortfolio'
 
@@ -63,19 +63,20 @@ export function AddPositionModal({ open, onClose, onSubmit, onSuccess }: AddPosi
   const isTwoLeg = strategyType === 'PUT_SPREAD' || strategyType === 'CALL_SPREAD'
   const putOrCall: 'P' | 'C' = strategyType === 'CALL_SPREAD' ? 'C' : 'P'
 
-  const handleGenerateSymbolsTwoLeg = useCallback(() => {
+  // Auto-generate OCC symbols whenever the relevant fields change
+  useEffect(() => {
     if (!expirationDate || shortStrike === '' || longStrike === '') return
     setShortOptionSymbol(buildOccSymbol(symbol, expirationDate, Number(shortStrike), putOrCall))
     setLongOptionSymbol(buildOccSymbol(symbol, expirationDate, Number(longStrike), putOrCall))
   }, [symbol, expirationDate, shortStrike, longStrike, putOrCall])
 
-  const handleGeneratePutSymbols = useCallback(() => {
+  useEffect(() => {
     if (!expirationDate || putShortStrike === '' || putLongStrike === '') return
     setPutShortOptionSymbol(buildOccSymbol(symbol, expirationDate, Number(putShortStrike), 'P'))
     setPutLongOptionSymbol(buildOccSymbol(symbol, expirationDate, Number(putLongStrike), 'P'))
   }, [symbol, expirationDate, putShortStrike, putLongStrike])
 
-  const handleGenerateCallSymbols = useCallback(() => {
+  useEffect(() => {
     if (!expirationDate || callShortStrike === '' || callLongStrike === '') return
     setCallShortOptionSymbol(buildOccSymbol(symbol, expirationDate, Number(callShortStrike), 'C'))
     setCallLongOptionSymbol(buildOccSymbol(symbol, expirationDate, Number(callLongStrike), 'C'))
@@ -310,13 +311,6 @@ export function AddPositionModal({ open, onClose, onSubmit, onSuccess }: AddPosi
               </div>
             </div>
             <div>
-              <button
-                type="button"
-                onClick={handleGenerateSymbolsTwoLeg}
-                className="mb-2 text-xs font-medium text-[#00ff88] hover:underline"
-              >
-                Gerar símbolos OCC
-              </button>
               <div className="space-y-2">
                 <div>
                   <label className="mb-1 block text-[10px] font-medium text-text-muted uppercase tracking-wider">
@@ -393,9 +387,6 @@ export function AddPositionModal({ open, onClose, onSubmit, onSuccess }: AddPosi
                     className="w-full rounded border border-border-subtle bg-bg-base px-2 py-1 text-xs font-mono text-text-primary"
                   />
                 </div>
-                <button type="button" onClick={handleGeneratePutSymbols} className="mt-1 text-[10px] font-medium text-[#00ff88] hover:underline">
-                  Gerar símbolos Put
-                </button>
               </div>
               <div>
                 <span className="text-[10px] font-semibold text-text-secondary uppercase tracking-wider">Perna Call</span>
@@ -439,9 +430,6 @@ export function AddPositionModal({ open, onClose, onSubmit, onSuccess }: AddPosi
                     className="w-full rounded border border-border-subtle bg-bg-base px-2 py-1 text-xs font-mono text-text-primary"
                   />
                 </div>
-                <button type="button" onClick={handleGenerateCallSymbols} className="mt-1 text-[10px] font-medium text-[#00ff88] hover:underline">
-                  Gerar símbolos Call
-                </button>
               </div>
             </div>
           </>

@@ -11,7 +11,7 @@ function PositionRow({
   onRequestDelete,
 }: {
   p: EnrichedPosition
-  onRequestDelete: (id: string) => void
+  onRequestDelete: (id: string, strategy: string) => void
 }) {
   const hit50 = p.profit_percentage >= 50
   const hit21dte = p.dte_current <= 21
@@ -32,8 +32,8 @@ function PositionRow({
   const plColor = plDollars != null && plDollars >= 0 ? 'text-[#00ff88]' : 'text-red-400'
 
   const handleClickExcluir = useCallback(() => {
-    onRequestDelete(p.id)
-  }, [p.id, onRequestDelete])
+    onRequestDelete(p.id, p.strategy)
+  }, [p.id, p.strategy, onRequestDelete])
 
   return (
     <tr className="border-b border-border-subtle last:border-0">
@@ -108,23 +108,24 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
     analyze,
     alerts,
     analyzing,
+    alertsStale,
   } = usePortfolio()
   const [modalOpen, setModalOpen] = useState(false)
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<{ id: string; strategy: string } | null>(null)
   const [deleting, setDeleting] = useState(false)
 
   const handleCreateSuccess = useCallback(() => {
     refresh()
   }, [refresh])
 
-  const handleRequestDelete = useCallback((id: string) => {
-    setDeleteConfirmId(id)
+  const handleRequestDelete = useCallback((id: string, strategy: string) => {
+    setDeleteConfirmId({ id, strategy })
   }, [])
 
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteConfirmId) return
     setDeleting(true)
-    const result = await deletePosition(deleteConfirmId)
+    const result = await deletePosition(deleteConfirmId.id)
     setDeleting(false)
     if (result.ok) {
       setDeleteConfirmId(null)
@@ -144,11 +145,11 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-sm font-display font-bold text-text-primary tracking-wide">
-            Carteira — Put Spreads
+            Carteira
           </h2>
           {capturedAt && (
             <p className="text-[10px] text-text-muted mt-0.5">
-              Dados: {new Date(capturedAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+              Dados: {new Date(capturedAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/New_York' })} ET
             </p>
           )}
         </div>
@@ -217,7 +218,14 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
 
           {alerts.length > 0 && (
             <div className="mt-4 pt-4 border-t border-border-subtle">
-              <h3 className="text-xs font-semibold text-text-primary mb-2">Recomendações (Gestor de Risco)</h3>
+              <div className="flex items-center gap-2 mb-2">
+                <h3 className="text-xs font-semibold text-text-primary">Recomendações (Gestor de Risco)</h3>
+                {alertsStale && (
+                  <span className="text-[10px] font-semibold text-yellow-400 border border-yellow-400/30 bg-yellow-500/5 px-1.5 py-0.5 rounded">
+                    ⚠ Re-analise para atualizar
+                  </span>
+                )}
+              </div>
               <ul className="space-y-2">
                 {alerts.map((a, i) => (
                   <li
@@ -249,14 +257,16 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
 
       <Modal
         open={!!deleteConfirmId}
-        onClose={() => !deleting && setDeleteConfirmId(null)}
+        onClose={() => { if (!deleting) setDeleteConfirmId(null) }}
         title="Excluir posição"
       >
-        <p className="text-sm text-text-primary mb-4">Confirmar a exclusão.</p>
+        <p className="text-sm text-text-primary mb-4">
+          Confirmar exclusão de <strong>{deleteConfirmId?.strategy}</strong>?
+        </p>
         <div className="flex justify-end gap-2">
           <button
             type="button"
-            onClick={() => setDeleteConfirmId(null)}
+            onClick={() => { if (!deleting) setDeleteConfirmId(null) }}
             disabled={deleting}
             className="px-3 py-1.5 rounded text-xs font-medium bg-bg-elevated border border-border-subtle text-text-secondary hover:bg-border-subtle disabled:opacity-50"
           >
