@@ -345,133 +345,150 @@ export const GEXPanel = memo(function GEXPanel() {
 
       {activeGex && (
         <>
-          {/* Key metrics */}
-          <div className="grid grid-cols-4 gap-3 mb-4 text-center">
-            <div>
-              <div className="text-[10px] text-text-muted uppercase tracking-wider">GEX Total</div>
+          {/* Metrics grid — linha 1: níveis de preço · linha 2: estrutura do regime */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+
+            {/* ── Linha 1: Níveis de preço ── */}
+
+            {/* GEX Total */}
+            <div className="bg-bg-elevated rounded px-3 py-2">
+              <div className="text-[10px] text-text-muted uppercase tracking-wider mb-0.5">GEX Total</div>
               <div className={`text-sm font-bold font-num ${regimeColor}`}>
                 {activeGex.totalGEX >= 0 ? '+' : ''}{fmtM(activeGex.totalGEX)}
               </div>
-            </div>
-            <div>
-              <div className="text-[10px] text-text-muted uppercase tracking-wider">Flip Point</div>
-              <div className="text-sm font-bold font-num text-text-primary">
-                {activeGex.flipPoint ?? '—'}
+              <div className={`text-[9px] font-semibold mt-0.5 ${regimeColor}`}>
+                {isPositive ? 'Long Gamma' : 'Short Gamma'}
               </div>
             </div>
-            <div>
-              <div className="text-[10px] text-text-muted uppercase tracking-wider">Max Gamma</div>
-              <div className="text-sm font-bold font-num text-text-primary">
-                {activeGex.maxGammaStrike}
-              </div>
-            </div>
-            <div>
-              <div className="text-[10px] text-text-muted uppercase tracking-wider">Regime</div>
-              <div className={`text-[10px] font-semibold ${regimeColor}`}>
-                {regimeDesc}
-              </div>
-            </div>
-          </div>
 
-          {/* Volatility Trigger + ZGL badges */}
-          {(activeGex.volatilityTrigger != null || activeGex.zeroGammaLevel != null) && (
-            <div className="flex gap-4 mb-3 text-center">
-              {activeGex.volatilityTrigger != null && (() => {
-                const vt = activeGex.volatilityTrigger!
-                const above = spyLast != null && spyLast > vt
-                const distPct = spyLast != null ? Math.abs((spyLast - vt) / vt * 100).toFixed(2) : null
-                return (
-                  <div>
-                    <div className="text-[10px] text-text-muted uppercase tracking-wider">Volatility Trigger</div>
-                    <div className={`text-sm font-bold font-num ${above ? 'text-[#00ff88]' : 'text-red-400'}`}>
-                      ${vt.toFixed(2)}
-                    </div>
-                    {distPct != null && (
-                      <div className={`text-[9px] font-semibold ${above ? 'text-[#00ff88]/70' : 'text-red-400/70'}`}>
-                        {above ? '▲' : '▼'} {distPct}% {above ? 'ACIMA' : 'ABAIXO'}
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
-              {activeGex.zeroGammaLevel != null && spyLast != null && (() => {
-                const zgl = activeGex.zeroGammaLevel!
-                const distPct = ((spyLast - zgl) / zgl * 100)
-                return (
-                  <div>
-                    <div className="text-[10px] text-text-muted uppercase tracking-wider">Zero Gamma</div>
-                    <div className="text-sm font-bold font-num text-[#ff8800]">
-                      ${zgl.toFixed(2)}
-                    </div>
-                    <div className="text-[9px] text-[#ff8800]/70 font-semibold">
-                      {distPct >= 0 ? '+' : ''}{distPct.toFixed(2)}% do SPY
-                    </div>
-                  </div>
-                )
-              })()}
+            {/* Flip Point */}
+            <div className="bg-bg-elevated rounded px-3 py-2">
+              <div className="text-[10px] text-text-muted uppercase tracking-wider mb-0.5">Flip Point</div>
+              <div className="text-sm font-bold font-num text-[#ffcc00]">
+                {activeGex.flipPoint != null ? `$${activeGex.flipPoint}` : '—'}
+              </div>
+              {activeGex.flipPoint != null && spyLast != null && (
+                <div className={`text-[9px] font-semibold mt-0.5 ${spyLast > activeGex.flipPoint ? 'text-[#00ff88]/70' : 'text-red-400/70'}`}>
+                  {spyLast > activeGex.flipPoint ? '▲ ACIMA' : '▼ ABAIXO'}
+                </div>
+              )}
             </div>
-          )}
 
-          {/* Max Pain badge */}
-          {activeGex.maxPain && (() => {
-            const mp = activeGex.maxPain!
-            const abovePain = mp.distanceFromSpot < 0  // spot above max pain
-            const pinColor =
-              mp.pinRisk === 'high' ? '#ff4444' :
-              mp.pinRisk === 'moderate' ? '#ffcc00' :
-              '#888888'
-            return (
-              <div className="flex items-center gap-3 mb-3 px-2 py-1.5 rounded" style={{ background: `${pinColor}10`, border: `1px solid ${pinColor}30` }}>
-                <div className="shrink-0">
-                  <div className="text-[10px] text-text-muted uppercase tracking-wider">Max Pain</div>
-                  <div className="text-sm font-bold font-num" style={{ color: pinColor }}>
-                    ${mp.maxPainStrike}
+            {/* Volatility Trigger */}
+            {activeGex.volatilityTrigger != null ? (() => {
+              const vt = activeGex.volatilityTrigger!
+              const above = spyLast != null && spyLast > vt
+              const distPct = spyLast != null ? Math.abs((spyLast - vt) / vt * 100).toFixed(2) : null
+              return (
+                <div className="bg-bg-elevated rounded px-3 py-2">
+                  <div className="text-[10px] text-text-muted uppercase tracking-wider mb-0.5">Vol. Trigger</div>
+                  <div className={`text-sm font-bold font-num ${above ? 'text-[#00ff88]' : 'text-red-400'}`}>
+                    ${vt.toFixed(2)}
+                  </div>
+                  {distPct != null && (
+                    <div className={`text-[9px] font-semibold mt-0.5 ${above ? 'text-[#00ff88]/70' : 'text-red-400/70'}`}>
+                      {above ? '▲' : '▼'} {distPct}% {above ? 'ACIMA' : 'ABAIXO'}
+                    </div>
+                  )}
+                </div>
+              )
+            })() : (
+              <div className="bg-bg-elevated rounded px-3 py-2 opacity-40">
+                <div className="text-[10px] text-text-muted uppercase tracking-wider mb-0.5">Vol. Trigger</div>
+                <div className="text-sm text-text-muted">—</div>
+              </div>
+            )}
+
+            {/* Zero Gamma Level */}
+            {activeGex.zeroGammaLevel != null && spyLast != null ? (() => {
+              const zgl = activeGex.zeroGammaLevel!
+              const distPct = ((spyLast - zgl) / zgl * 100)
+              return (
+                <div className="bg-bg-elevated rounded px-3 py-2">
+                  <div className="text-[10px] text-text-muted uppercase tracking-wider mb-0.5">Zero Gamma</div>
+                  <div className="text-sm font-bold font-num text-[#ff8800]">${zgl.toFixed(2)}</div>
+                  <div className="text-[9px] text-[#ff8800]/70 font-semibold mt-0.5">
+                    {distPct >= 0 ? '+' : ''}{distPct.toFixed(2)}% do SPY
                   </div>
                 </div>
-                <div className="shrink-0">
-                  <div className="text-[10px] text-text-muted uppercase tracking-wider">Distância</div>
-                  <div className="text-sm font-bold font-num" style={{ color: pinColor }}>
-                    {abovePain ? '▼' : '▲'} {Math.abs(mp.distancePct).toFixed(2)}%
-                  </div>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[10px] text-text-muted uppercase tracking-wider">Pin Risk</div>
-                  <div className="text-[11px] font-semibold" style={{ color: pinColor }}>
-                    {mp.pinRisk === 'high' ? 'Alto' : mp.pinRisk === 'moderate' ? 'Moderado' : 'Baixo'}
-                  </div>
-                </div>
+              )
+            })() : (
+              <div className="bg-bg-elevated rounded px-3 py-2 opacity-40">
+                <div className="text-[10px] text-text-muted uppercase tracking-wider mb-0.5">Zero Gamma</div>
+                <div className="text-sm text-text-muted">—</div>
               </div>
-            )
-          })()}
+            )}
 
-          {/* Vanna + Charm Exposure */}
-          <div className="flex gap-6 mb-3">
-            <div>
-              <div className="text-[10px] text-text-muted uppercase tracking-wider">Vanna (VEX)</div>
+            {/* ── Linha 2: Estrutura do regime ── */}
+
+            {/* Max Gamma */}
+            <div className="bg-bg-elevated rounded px-3 py-2">
+              <div className="text-[10px] text-text-muted uppercase tracking-wider mb-0.5">Max Gamma</div>
+              <div className="text-sm font-bold font-num text-[#00ffcc]">${activeGex.maxGammaStrike}</div>
+              <div className="text-[9px] text-text-muted mt-0.5">Strike</div>
+            </div>
+
+            {/* Max Pain */}
+            {activeGex.maxPain ? (() => {
+              const mp = activeGex.maxPain!
+              const pinColor = mp.pinRisk === 'high' ? '#ff4444' : mp.pinRisk === 'moderate' ? '#ffcc00' : '#888888'
+              const abovePain = mp.distanceFromSpot < 0
+              return (
+                <div className="bg-bg-elevated rounded px-3 py-2">
+                  <div className="text-[10px] text-text-muted uppercase tracking-wider mb-0.5">Max Pain</div>
+                  <div className="text-sm font-bold font-num" style={{ color: pinColor }}>${mp.maxPainStrike}</div>
+                  <div className="text-[9px] font-semibold mt-0.5" style={{ color: pinColor }}>
+                    {abovePain ? '▼' : '▲'} {Math.abs(mp.distancePct).toFixed(2)}% · {mp.pinRisk === 'high' ? 'ALTO' : mp.pinRisk === 'moderate' ? 'MOD' : 'BAIXO'}
+                  </div>
+                </div>
+              )
+            })() : (
+              <div className="bg-bg-elevated rounded px-3 py-2 opacity-40">
+                <div className="text-[10px] text-text-muted uppercase tracking-wider mb-0.5">Max Pain</div>
+                <div className="text-sm text-text-muted">—</div>
+              </div>
+            )}
+
+            {/* Vanna (VEX) */}
+            <div className="bg-bg-elevated rounded px-3 py-2">
+              <div className="text-[10px] text-text-muted uppercase tracking-wider mb-0.5">Vanna (VEX)</div>
               {activeGex.totalVannaExposure != null ? (
-                <div className={`text-sm font-bold font-num ${
-                  activeGex.totalVannaExposure < -5_000_000 ? 'text-red-400'
-                  : activeGex.totalVannaExposure > 2_000_000 ? 'text-[#00ff88]'
-                  : 'text-text-primary'
-                }`}>
-                  {activeGex.totalVannaExposure >= 0 ? '+' : ''}${(activeGex.totalVannaExposure / 1_000_000).toFixed(1)}M
-                </div>
+                <>
+                  <div className={`text-sm font-bold font-num ${
+                    activeGex.totalVannaExposure < -5_000_000 ? 'text-red-400'
+                    : activeGex.totalVannaExposure > 2_000_000 ? 'text-[#00ff88]'
+                    : 'text-text-primary'
+                  }`}>
+                    {activeGex.totalVannaExposure >= 0 ? '+' : ''}${(activeGex.totalVannaExposure / 1_000_000).toFixed(1)}M
+                  </div>
+                  <div className="text-[9px] text-text-muted mt-0.5">
+                    {activeGex.totalVannaExposure < -5_000_000 ? 'Bearish' : activeGex.totalVannaExposure > 2_000_000 ? 'Bullish' : 'Neutro'}
+                  </div>
+                </>
               ) : (
-                <div className="text-xs text-text-muted italic">Aguardando dados...</div>
+                <div className="text-xs text-text-muted italic mt-0.5">Aguardando...</div>
               )}
             </div>
-            <div>
-              <div className="text-[10px] text-text-muted uppercase tracking-wider">Charm (CEX)</div>
+
+            {/* Charm (CEX) */}
+            <div className="bg-bg-elevated rounded px-3 py-2">
+              <div className="text-[10px] text-text-muted uppercase tracking-wider mb-0.5">Charm (CEX)</div>
               {activeGex.totalCharmExposure != null ? (
-                <div className={`text-sm font-bold font-num ${
-                  activeGex.totalCharmExposure > 1_000_000 ? 'text-[#00ff88]' : 'text-text-primary'
-                }`}>
-                  ${(activeGex.totalCharmExposure / 1_000_000).toFixed(1)}M/dia
-                </div>
+                <>
+                  <div className={`text-sm font-bold font-num ${
+                    activeGex.totalCharmExposure > 1_000_000 ? 'text-[#00ff88]' : 'text-text-primary'
+                  }`}>
+                    ${(activeGex.totalCharmExposure / 1_000_000).toFixed(1)}M/dia
+                  </div>
+                  <div className="text-[9px] text-text-muted mt-0.5">
+                    {activeGex.totalCharmExposure > 1_000_000 ? 'Pressão' : 'Neutro'}
+                  </div>
+                </>
               ) : (
-                <div className="text-xs text-text-muted italic">Aguardando dados...</div>
+                <div className="text-xs text-text-muted italic mt-0.5">Aguardando...</div>
               )}
             </div>
+
           </div>
 
           {/* Recharts bar chart */}
