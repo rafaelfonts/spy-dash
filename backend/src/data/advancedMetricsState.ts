@@ -9,7 +9,7 @@
 
 import { emitter } from './marketState'
 import type { GEXDynamic } from './gexService'
-import type { NoTradeResult } from './regimeScorer'
+import type { NoTradeResult, GexComparison, PriceDistribution } from './regimeScorer'
 import type { DANResult } from '../lib/danCalculator'
 
 export type { GEXDynamic }
@@ -56,6 +56,16 @@ export interface AdvancedMetricsPayload {
   noTrade: NoTradeResult | null
   /** Delta-Adjusted Notional — directional hedge pressure from market makers ($M). */
   dan: DANResult | null
+  /** Live regime snapshot computed every tick — available before first AI analysis. */
+  regimePreview: {
+    score: number
+    vannaRegime: 'tailwind' | 'neutral' | 'headwind'
+    charmPressure: 'significant' | 'moderate' | 'neutral'
+    gexVsYesterday: GexComparison | null
+    priceDistribution: PriceDistribution | null
+  } | null
+  /** Whether US equity markets are currently open (09:30–16:00 ET, Mon–Fri). */
+  marketOpen: boolean
 }
 
 // ---------------------------------------------------------------------------

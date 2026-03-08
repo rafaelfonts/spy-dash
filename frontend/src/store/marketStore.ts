@@ -243,6 +243,18 @@ export interface DANData {
   callDominancePct: number
 }
 
+// Live regime preview — computed every SSE tick, available before first AI analysis
+export interface RegimePreviewData {
+  score: number
+  vannaRegime: 'tailwind' | 'neutral' | 'headwind'
+  charmPressure: 'significant' | 'moderate' | 'neutral'
+  gexVsYesterday: 'stronger_positive' | 'weaker_positive' | 'unchanged' | 'weaker_negative' | 'stronger_negative' | null
+  priceDistribution: {
+    p10: number; p25: number; p50: number; p75: number; p90: number
+    expected_range_1sigma: string
+  } | null
+}
+
 // Vol Skew types (mirrored from backend skewService.ts)
 export interface SkewEntry {
   expiration: string
@@ -344,6 +356,8 @@ interface MarketStore {
   noTrade: NoTradeData | null
   dan: DANData | null
   skewByDTE: SkewByDTE | null
+  regimePreview: RegimePreviewData | null
+  marketOpen: boolean | null  // null = SSE snapshot ainda não recebido
 
   updateSPY: (data: Partial<SPYData>) => void
   updateVIX: (data: Partial<VIXData>) => void
@@ -364,6 +378,8 @@ interface MarketStore {
   setNoTrade: (data: NoTradeData | null) => void
   setDAN: (data: DANData | null) => void
   setSkewByDTE: (data: SkewByDTE | null) => void
+  setRegimePreview: (data: RegimePreviewData | null) => void
+  setMarketOpen: (open: boolean) => void
   alerts: AlertToast[]
   addAlert: (alert: AlertToast) => void
   dismissAlert: (id: string) => void
@@ -430,6 +446,8 @@ export const useMarketStore = create<MarketStore>()(
     noTrade: null,
     dan: null,
     skewByDTE: null,
+    regimePreview: null,
+    marketOpen: null,
     alerts: [],
 
     updateSPY: (data) =>
@@ -481,6 +499,8 @@ export const useMarketStore = create<MarketStore>()(
     setNoTrade: (data) => set({ noTrade: data }),
     setDAN: (data) => set({ dan: data }),
     setSkewByDTE: (data) => set({ skewByDTE: data }),
+    setRegimePreview: (data) => set({ regimePreview: data }),
+    setMarketOpen: (open) => set({ marketOpen: open }),
 
     isDataReady: () => {
       return get().spy.last !== null

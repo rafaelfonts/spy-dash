@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMarketStore } from '../../store/marketStore'
-import type { AnalysisStructuredOutput, NoTradeData, DANData } from '../../store/marketStore'
+import type { AnalysisStructuredOutput, NoTradeData, DANData, RegimePreviewData } from '../../store/marketStore'
 
 // ---------------------------------------------------------------------------
 // Regime Score Gauge (semicircle SVG, adapted from FearGreedGauge)
@@ -104,11 +104,13 @@ function Badge({ label, color }: { label: string; color: string }) {
 // Price Distribution Bar
 // ---------------------------------------------------------------------------
 
+type PriceDistShape = NonNullable<AnalysisStructuredOutput['price_distribution']>
+
 function PriceDistributionBar({
   dist,
   spyLast,
 }: {
-  dist: NonNullable<AnalysisStructuredOutput['price_distribution']>
+  dist: PriceDistShape
   spyLast: number | null
 }) {
   const { p10, p25, p50, p75, p90, expected_range_1sigma } = dist
@@ -223,39 +225,41 @@ const NO_TRADE_LABELS: Record<NoTradeData['noTradeLevel'], string> = {
   avoid: 'Não Operar',
 }
 
-function NoTradeSignal({ noTrade }: { noTrade: NoTradeData }) {
+function NoTradeSignal({ noTrade, marketClosed }: { noTrade: NoTradeData; marketClosed: boolean }) {
   const [expanded, setExpanded] = useState(false)
-  const color = NO_TRADE_COLORS[noTrade.noTradeLevel]
-  const label = NO_TRADE_LABELS[noTrade.noTradeLevel]
+
+  // When market is closed, show neutral grey regardless of computed level
+  const color = marketClosed ? '#666666' : NO_TRADE_COLORS[noTrade.noTradeLevel]
+  const label = marketClosed ? 'Fora do horário' : NO_TRADE_LABELS[noTrade.noTradeLevel]
 
   return (
     <div
       className="rounded-lg p-2.5 cursor-pointer select-none"
       style={{ background: `${color}10`, border: `1px solid ${color}30` }}
-      onClick={() => noTrade.activeVetos.length > 0 && setExpanded((v) => !v)}
+      onClick={() => !marketClosed && noTrade.activeVetos.length > 0 && setExpanded((v) => !v)}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           {/* Semaphore dot */}
           <div
             className="w-2.5 h-2.5 rounded-full shrink-0"
-            style={{ background: color, boxShadow: `0 0 6px ${color}` }}
+            style={{ background: color, boxShadow: marketClosed ? 'none' : `0 0 6px ${color}` }}
           />
           <span className="text-[11px] font-semibold" style={{ color }}>
             {label}
           </span>
-          {noTrade.activeVetos.length > 0 && (
+          {!marketClosed && noTrade.activeVetos.length > 0 && (
             <span className="text-[10px] text-text-muted">
               ({noTrade.activeVetos.length} veto{noTrade.activeVetos.length > 1 ? 's' : ''})
             </span>
           )}
         </div>
-        {noTrade.activeVetos.length > 0 && (
+        {!marketClosed && noTrade.activeVetos.length > 0 && (
           <span className="text-[10px] text-text-muted">{expanded ? '▲' : '▼'}</span>
         )}
       </div>
 
-      {expanded && noTrade.activeVetos.length > 0 && (
+      {!marketClosed && expanded && noTrade.activeVetos.length > 0 && (
         <ul className="mt-2 space-y-1">
           {noTrade.activeVetos.map((v, i) => (
             <li key={i} className="text-[10px] text-text-muted flex gap-1.5">
@@ -270,6 +274,86 @@ function NoTradeSignal({ noTrade }: { noTrade: NoTradeData }) {
 }
 
 // ---------------------------------------------------------------------------
+// Regime Gauge Block — shared between AI-analysis data and live preview
+// ---------------------------------------------------------------------------
+
+interface RegimeGaugeBlockProps {
+  score: number
+  vannaRegime: 'tailwind' | 'neutral' | 'headwind'
+  charmPressure: 'significant' | 'moderate' | 'neutral'
+  gexVsYesterday: string | null
+  sourceLabel: string   // "Ao Vivo" or "Última análise"
+  sourceDim?: boolean   // slightly muted when showing preview data
+}
+
+function RegimeGaugeBlock({
+  score,
+  vannaRegime,
+  charmPressure,
+  gexVsYesterday,
+  sourceLabel,
+  sourceDim = false,
+}: RegimeGaugeBlockProps) {
+  const zone = getScoreZone(score)
+
+  return (
+    <div className="flex items-start gap-4">
+      {/* Gauge */}
+      <div className="flex flex-col items-center shrink-0">
+        <RegimeGaugeSVG score={score} />
+        <div className="text-xl font-num font-bold -mt-1" style={{ color: zone.color }}>
+          {score}/10
+        </div>
+        <div className="text-[10px]" style={{ color: zone.color }}>
+          {zone.label}
+        </div>
+      </div>
+
+      {/* Badges grid */}
+      <div className="flex-1 min-w-0 space-y-2">
+        <div className="flex flex-wrap gap-1.5">
+          {vannaRegime && (
+            <Badge
+              label={`Vanna: ${vannaRegime}`}
+              color={VANNA_COLORS[vannaRegime] ?? '#888'}
+            />
+          )}
+          {charmPressure && (
+            <Badge
+              label={`Charm: ${charmPressure}`}
+              color={CHARM_COLORS[charmPressure] ?? '#888'}
+            />
+          )}
+          {gexVsYesterday && (
+            <Badge
+              label={GEX_LABELS[gexVsYesterday] ?? gexVsYesterday}
+              color={GEX_COLORS[gexVsYesterday] ?? '#888'}
+            />
+          )}
+        </div>
+
+        {/* Score scale legend + source label */}
+        <div className="flex items-center gap-3 text-[9px] flex-wrap">
+          <span style={{ color: '#ff4444' }}>0–4 avoid</span>
+          <span style={{ color: '#ffcc00' }}>5–6 wait</span>
+          <span style={{ color: '#00ff88' }}>7–10 trade</span>
+          <span
+            className="ml-auto text-[9px] font-mono px-1.5 py-0.5 rounded"
+            style={{
+              color: sourceDim ? '#555' : '#888',
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}
+          >
+            {sourceLabel}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Main card
 // ---------------------------------------------------------------------------
 
@@ -278,66 +362,57 @@ export function RegimeDashboard() {
   const spyLast = useMarketStore((s) => s.spy.last)
   const noTrade = useMarketStore((s) => s.noTrade)
   const dan = useMarketStore((s) => s.dan)
+  const regimePreview = useMarketStore((s) => s.regimePreview)
+  const marketOpen = useMarketStore((s) => s.marketOpen)
 
   // Card only hidden when there's nothing at all to show
-  if (!output && !noTrade && !dan) return null
+  if (!output && !noTrade && !dan && !regimePreview) return null
+
+  // Determine which data source to use for the gauge
+  // AI analysis takes priority when available (consistent with what the model saw)
+  const gaugeSource: 'analysis' | 'preview' | null =
+    output ? 'analysis' : regimePreview ? 'preview' : null
+
+  const marketClosed = marketOpen === false
 
   return (
     <div className="bg-card border border-border rounded-xl p-4 space-y-3">
-      <div className="text-[11px] font-semibold text-text-muted uppercase tracking-wide">
-        Regime Dashboard
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] font-semibold text-text-muted uppercase tracking-wide">
+          Regime Dashboard
+        </div>
+        {/* Market closed banner */}
+        {marketClosed && (
+          <div className="flex items-center gap-1.5 text-[10px] text-text-muted px-2 py-0.5 rounded bg-white/5 border border-border-subtle">
+            <span className="w-1.5 h-1.5 rounded-full bg-gray-500 shrink-0" />
+            Mercado fechado
+          </div>
+        )}
       </div>
 
-      {/* Gauge + AI badges — only after first AI analysis */}
-      {output && (() => {
-        const { regime_score, vanna_regime, charm_pressure, gex_vs_yesterday } = output
-        const zone = getScoreZone(regime_score)
-        return (
-          <div className="flex items-start gap-4">
-            {/* Gauge */}
-            <div className="flex flex-col items-center shrink-0">
-              <RegimeGaugeSVG score={regime_score} />
-              <div className="text-xl font-num font-bold -mt-1" style={{ color: zone.color }}>
-                {regime_score}/10
-              </div>
-              <div className="text-[10px]" style={{ color: zone.color }}>
-                {zone.label}
-              </div>
-            </div>
+      {/* Gauge — AI analysis data */}
+      {gaugeSource === 'analysis' && output && (
+        <RegimeGaugeBlock
+          score={output.regime_score}
+          vannaRegime={output.vanna_regime}
+          charmPressure={output.charm_pressure}
+          gexVsYesterday={output.gex_vs_yesterday ?? null}
+          sourceLabel="Última análise"
+          sourceDim={false}
+        />
+      )}
 
-            {/* Badges grid */}
-            <div className="flex-1 min-w-0 space-y-2">
-              <div className="flex flex-wrap gap-1.5">
-                {vanna_regime && (
-                  <Badge
-                    label={`Vanna: ${vanna_regime}`}
-                    color={VANNA_COLORS[vanna_regime] ?? '#888'}
-                  />
-                )}
-                {charm_pressure && (
-                  <Badge
-                    label={`Charm: ${charm_pressure}`}
-                    color={CHARM_COLORS[charm_pressure] ?? '#888'}
-                  />
-                )}
-                {gex_vs_yesterday && (
-                  <Badge
-                    label={GEX_LABELS[gex_vs_yesterday] ?? gex_vs_yesterday}
-                    color={GEX_COLORS[gex_vs_yesterday] ?? '#888'}
-                  />
-                )}
-              </div>
-
-              {/* Score scale legend */}
-              <div className="flex gap-3 text-[9px]">
-                <span style={{ color: '#ff4444' }}>0–4 avoid</span>
-                <span style={{ color: '#ffcc00' }}>5–6 wait</span>
-                <span style={{ color: '#00ff88' }}>7–10 trade</span>
-              </div>
-            </div>
-          </div>
-        )
-      })()}
+      {/* Gauge — live SSE preview (shown only before first AI analysis) */}
+      {gaugeSource === 'preview' && regimePreview && (
+        <RegimeGaugeBlock
+          score={regimePreview.score}
+          vannaRegime={regimePreview.vannaRegime}
+          charmPressure={regimePreview.charmPressure}
+          gexVsYesterday={regimePreview.gexVsYesterday ?? null}
+          sourceLabel="Ao Vivo"
+          sourceDim={true}
+        />
+      )}
 
       {/* DAN badge — visible as soon as advanced-metrics SSE arrives */}
       {dan && (
@@ -347,12 +422,14 @@ export function RegimeDashboard() {
       )}
 
       {/* NoTrade semaphore — visible as soon as advanced-metrics SSE arrives */}
-      {noTrade && <NoTradeSignal noTrade={noTrade} />}
+      {noTrade && <NoTradeSignal noTrade={noTrade} marketClosed={marketClosed} />}
 
-      {/* Price distribution bar — only after AI analysis */}
-      {output?.price_distribution && (
-        <PriceDistributionBar dist={output.price_distribution} spyLast={spyLast} />
-      )}
+      {/* Price distribution bar — AI analysis takes priority; fall back to live preview */}
+      {(() => {
+        const dist = output?.price_distribution ?? regimePreview?.priceDistribution ?? null
+        if (!dist) return null
+        return <PriceDistributionBar dist={dist} spyLast={spyLast} />
+      })()}
     </div>
   )
 }

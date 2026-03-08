@@ -18,7 +18,7 @@ import { calculatePutCallRatio } from './putCallRatio'
 import { publishAdvancedMetrics } from './advancedMetricsState'
 import type { AdvancedMetricsPayload } from './advancedMetricsState'
 import { isMarketOpen } from '../lib/time'
-import { updateGexHistory, updateRegimeHistory, computeNoTradeScore } from './regimeScorer'
+import { updateGexHistory, updateRegimeHistory, computeNoTradeScore, computeRegimeScore, getGexVsYesterday } from './regimeScorer'
 import { saveGEXDailySnapshot } from './gexHistoryService'
 import type { GEXDailySnapshot } from './gexHistoryService'
 import { cacheGet } from '../lib/cacheStore'
@@ -142,6 +142,10 @@ async function tick(): Promise<void> {
     }
   }
 
+  // Regime preview — computed every tick so the frontend can show the gauge before first AI analysis
+  const regimeLive = computeRegimeScore(serializedGexDynamic.length > 0 ? serializedGexDynamic : null)
+  const gexVsYesterday = currentTotal !== null ? getGexVsYesterday(currentTotal) : null
+
   const payload: AdvancedMetricsPayload = {
     gex: serializeGexBucket(gex),
     profile: profile
@@ -166,6 +170,14 @@ async function tick(): Promise<void> {
     timestamp: new Date().toISOString(),
     noTrade: computeNoTradeScore(serializedGexDynamic.length > 0 ? serializedGexDynamic : null),
     dan,
+    regimePreview: {
+      score: regimeLive.score,
+      vannaRegime: regimeLive.vannaRegime,
+      charmPressure: regimeLive.charmPressure,
+      gexVsYesterday,
+      priceDistribution: regimeLive.priceDistribution,
+    },
+    marketOpen: isMarketOpen(),
   }
 
   publishAdvancedMetrics(payload)
