@@ -55,16 +55,28 @@ const BB_POS_PCT: Record<string, number> = {
   above_upper: 95, near_upper: 75, middle: 50, near_lower: 25, below_lower: 5,
 }
 
+// ── Staleness helper ─────────────────────────────────────────────────────────
+
+function isDataStale(capturedAt: string, maxAgeMs = 10 * 60 * 1000): boolean {
+  return Date.now() - new Date(capturedAt).getTime() > maxAgeMs
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
   const ti = useMarketStore((s) => s.technicalIndicators)
 
   const isLoaded = ti !== null
-  const rsi = isLoaded ? rsiConfig(ti.rsi14) : null
-  const crossover = isLoaded ? CROSSOVER_CONFIG[ti.macd.crossover] : null
-  const bbPos = isLoaded ? (BB_CONFIG[ti.bbands.position] ?? BB_CONFIG.middle) : null
-  const bbPct = isLoaded ? (BB_POS_PCT[ti.bbands.position] ?? 50) : 50
+  const dataStatus = ti?.dataStatus ?? 'ok'
+  const isWaiting = dataStatus === 'waiting'
+  const isOk = isLoaded && !isWaiting
+  const stale = isOk && isDataStale(ti!.capturedAt)
+
+  // Só usar valores calculados quando dataStatus === 'ok'
+  const rsi = isOk ? rsiConfig(ti!.rsi14) : null
+  const crossover = isOk ? CROSSOVER_CONFIG[ti!.macd.crossover] : null
+  const bbPos = isOk ? (BB_CONFIG[ti!.bbands.position] ?? BB_CONFIG.middle) : null
+  const bbPct = isOk ? (BB_POS_PCT[ti!.bbands.position] ?? 50) : 50
 
   return (
     <motion.section
@@ -78,11 +90,25 @@ export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
         <span className="text-sm font-display font-bold text-text-primary tracking-wide">
           Indicadores Técnicos
         </span>
-        <span className="text-[10px] text-text-muted">
-          {isLoaded
-            ? new Date(ti.capturedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-            : '—'}
-        </span>
+        <div className="flex items-center gap-2">
+          {/* Stale indicator */}
+          {stale && (
+            <span className="text-[10px] font-semibold text-orange-400 border border-orange-400/30 bg-orange-500/5 px-1.5 py-0.5 rounded">
+              ⚠ dados &gt;10min
+            </span>
+          )}
+          {/* Waiting indicator */}
+          {isWaiting && isLoaded && (
+            <span className="text-[10px] font-semibold text-yellow-400 border border-yellow-400/30 bg-yellow-500/5 px-1.5 py-0.5 rounded">
+              ⚠ Aguardando {ti!.barsAvailable ?? 0}/35 barras
+            </span>
+          )}
+          <span className="text-[10px] text-text-muted">
+            {isLoaded
+              ? new Date(ti!.capturedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' }) + ' ET'
+              : '—'}
+          </span>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -91,15 +117,15 @@ export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
         <div>
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider">RSI (14)</span>
-            {isLoaded
+            {isOk
               ? <span className={`text-[10px] font-bold tracking-wider ${rsi!.color}`}>{rsi!.label}</span>
               : <Skeleton className="w-20" height="0.7rem" />}
           </div>
           {/* Gauge semicircular */}
-          {isLoaded ? (
+          {isOk ? (
             <div className="flex flex-col items-center mb-1">
-              <RSIGaugeSVG rsi={ti.rsi14} hex={rsi!.hex} />
-              <span className="text-2xl font-bold font-num text-text-primary -mt-1">{ti.rsi14.toFixed(1)}</span>
+              <RSIGaugeSVG rsi={ti!.rsi14} hex={rsi!.hex} />
+              <span className="text-2xl font-bold font-num text-text-primary -mt-1">{ti!.rsi14.toFixed(1)}</span>
             </div>
           ) : (
             <Skeleton className="w-24 h-16 mx-auto" />
@@ -117,7 +143,7 @@ export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
         <div className="sm:border-l sm:border-border-subtle sm:pl-4 border-t border-border-subtle pt-4 sm:border-t-0 sm:pt-0">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider">MACD</span>
-            {isLoaded && crossover
+            {isOk && crossover
               ? (
                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border tracking-wider ${crossover.color}`}>
                   {crossover.icon} {crossover.label}
@@ -127,10 +153,10 @@ export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
           </div>
           {/* Histogram value */}
           <div className="mb-2">
-            {isLoaded
+            {isOk
               ? (
-                <span className={`text-2xl font-bold font-num ${ti.macd.histogram >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
-                  {ti.macd.histogram >= 0 ? '+' : ''}{ti.macd.histogram.toFixed(3)}
+                <span className={`text-2xl font-bold font-num ${ti!.macd.histogram >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
+                  {ti!.macd.histogram >= 0 ? '+' : ''}{ti!.macd.histogram.toFixed(3)}
                 </span>
               )
               : <Skeleton className="w-24 h-8" />}
@@ -139,14 +165,14 @@ export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
           <div className="space-y-1 text-[10px]">
             <div className="flex justify-between">
               <span className="text-text-muted">MACD</span>
-              {isLoaded
-                ? <span className="font-num text-text-secondary">{ti.macd.macd.toFixed(3)}</span>
+              {isOk
+                ? <span className="font-num text-text-secondary">{ti!.macd.macd.toFixed(3)}</span>
                 : <Skeleton className="w-12" height="0.7rem" />}
             </div>
             <div className="flex justify-between">
               <span className="text-text-muted">Signal</span>
-              {isLoaded
-                ? <span className="font-num text-text-secondary">{ti.macd.signal.toFixed(3)}</span>
+              {isOk
+                ? <span className="font-num text-text-secondary">{ti!.macd.signal.toFixed(3)}</span>
                 : <Skeleton className="w-12" height="0.7rem" />}
             </div>
           </div>
@@ -156,7 +182,7 @@ export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
         <div className="sm:border-l sm:border-border-subtle sm:pl-4 border-t border-border-subtle pt-4 sm:border-t-0 sm:pt-0">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider">BB (20, 2σ)</span>
-            {isLoaded && bbPos
+            {isOk && bbPos
               ? (
                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border tracking-wider ${bbPos.color}`}>
                   {bbPos.label}
@@ -166,27 +192,27 @@ export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
           </div>
           {/* Mid value */}
           <div className="mb-2">
-            {isLoaded
-              ? <span className="text-2xl font-bold font-num text-text-primary">${ti.bbands.middle.toFixed(2)}</span>
+            {isOk
+              ? <span className="text-2xl font-bold font-num text-text-primary">${ti!.bbands.middle.toFixed(2)}</span>
               : <Skeleton className="w-24 h-8" />}
           </div>
           {/* Upper / Lower */}
           <div className="space-y-1 text-[10px]">
             <div className="flex justify-between">
               <span className="text-text-muted">Superior</span>
-              {isLoaded
-                ? <span className="font-num text-text-secondary">${ti.bbands.upper.toFixed(2)}</span>
+              {isOk
+                ? <span className="font-num text-text-secondary">${ti!.bbands.upper.toFixed(2)}</span>
                 : <Skeleton className="w-14" height="0.7rem" />}
             </div>
             <div className="flex justify-between">
               <span className="text-text-muted">Inferior</span>
-              {isLoaded
-                ? <span className="font-num text-text-secondary">${ti.bbands.lower.toFixed(2)}</span>
+              {isOk
+                ? <span className="font-num text-text-secondary">${ti!.bbands.lower.toFixed(2)}</span>
                 : <Skeleton className="w-14" height="0.7rem" />}
             </div>
           </div>
           {/* Barra de posição visual */}
-          {isLoaded && (
+          {isOk && (
             <div className="mt-2">
               <div className="h-1.5 rounded-full overflow-hidden bg-bg-elevated">
                 <motion.div

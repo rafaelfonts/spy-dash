@@ -284,8 +284,8 @@ export function useMarketStream(): void {
         try {
           const data = JSON.parse(e.data)
           setTechnicalIndicators(data)
-        } catch {
-          // ignore parse errors
+        } catch (err) {
+          console.warn('[TechIndicators] SSE parse error:', err)
         }
       })
 

@@ -15,7 +15,6 @@ import type { DailyGexResult, GEXDynamic } from '../data/gexService'
 import { getAdvancedMetricsSnapshot } from '../data/advancedMetricsState'
 import { getVIXTermStructureSnapshot } from '../data/vixTermStructureState'
 import { getTechnicalSnapshot } from '../data/technicalIndicatorsState'
-import { deriveBBPosition } from '../data/technicalIndicatorsPoller'
 import type { TechnicalData } from '../data/technicalIndicatorsState'
 import { calculateConfidence } from '../lib/confidenceScorer'
 import type { ConfidenceResult } from '../lib/confidenceScorer'
@@ -726,13 +725,10 @@ function buildVIXTermStructureBlock(ts: {
 
 function buildTechBlock(
   tech: TechnicalData,
-  spyPrice: number | null,
   confidence?: Record<string, ConfidenceResult>,
   vwap?: number | null,
 ): string {
-  const bbands = spyPrice != null
-    ? { ...tech.bbands, position: deriveBBPosition(spyPrice, tech.bbands) }
-    : tech.bbands
+  const bbands = tech.bbands
 
   const rsiLabel = tech.rsi14 > 70 ? ' [SOBRECOMPRADO]' : tech.rsi14 < 30 ? ' [SOBREVENDIDO]' : ''
   const histSign = tech.macd.histogram >= 0 ? '+' : ''
@@ -743,8 +739,9 @@ function buildTechBlock(
   block += `MACD: hist=${histSign}${tech.macd.histogram.toFixed(4)} macd=${tech.macd.macd.toFixed(4)} signal=${tech.macd.signal.toFixed(4)}${crossLabel}\n`
   block += `Bollinger(20): upper=${bbands.upper.toFixed(2)} mid=${bbands.middle.toFixed(2)} lower=${bbands.lower.toFixed(2)}\n`
   block += `  → SPY em posição: ${bbands.position.replace(/_/g, ' ').toUpperCase()}\n`
-  if (vwap != null && spyPrice != null) {
-    const vwapDev = ((spyPrice - vwap) / vwap * 100)
+  const spyLast = marketState.spy.last
+  if (vwap != null && spyLast != null) {
+    const vwapDev = ((spyLast - vwap) / vwap * 100)
     const vwapDir = vwapDev >= 0 ? 'ACIMA' : 'ABAIXO'
     block += `VWAP: $${vwap.toFixed(2)} | SPY ${vwapDir} do VWAP em ${Math.abs(vwapDev).toFixed(2)}%\n`
   }
@@ -1636,7 +1633,7 @@ export async function runAnalysisForPayload(
   }
 
   const techBlock = (techSnapshot && shouldIncludeTechBlock())
-    ? buildTechBlock(techSnapshot, snapshot?.spy?.last ?? null, confidence, getLastVwap())
+    ? buildTechBlock(techSnapshot, confidence, getLastVwap())
     : null
   const priceHistoryBlock = buildPriceHistoryBlock(marketState.spy.priceHistory)
   const expectedMoveSnapshot = getExpectedMoveSnapshot()
@@ -1921,7 +1918,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     }
 
     const techBlock = (techSnapshot && shouldIncludeTechBlock())
-      ? buildTechBlock(techSnapshot, snapshot?.spy?.last ?? null, confidence, getLastVwap())
+      ? buildTechBlock(techSnapshot, confidence, getLastVwap())
       : null
 
     const priceHistoryBlock = buildPriceHistoryBlock(marketState.spy.priceHistory)

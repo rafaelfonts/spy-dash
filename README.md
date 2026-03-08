@@ -246,11 +246,12 @@ flowchart TB
 
 ### Indicadores Técnicos (locais)
 - RSI(14), MACD (12,26,9) e Bollinger Bands (20 períodos, 2σ) calculados diretamente de `marketState.spy.priceHistory` — **sem dependência de API externa**
-- `technicalIndicatorsPoller.ts` re-escrito para cálculo local: usa os 390 bars 1min do histórico intraday em memória (mapeados de `PricePoint[]` para `number[]` internamente)
-- `deriveBBPosition(spyPrice, bbands)`: classifica posição do preço relativa às bandas (`above_upper | near_upper | middle | near_lower | below_lower`)
-- Poll reduzido de 60s para **5min** — retry automático em 60s enquanto aguarda ≥35 bars; sem spam de log quando mercado está fechado
-- Publicado via SSE e injetado no prompt IA (bloco base — sempre presente)
-- `TechnicalIndicatorsCard.tsx` exibe RSI gauge, MACD histogram + crossover badge e BB position badge no dashboard
+- `technicalIndicatorsPoller.ts` cálculo local: usa os 390 bars 1min do histórico intraday em memória (mapeados de `PricePoint[]` para `number[]` internamente); cadência de **2min**
+- `deriveBBPosition(spyPrice, bbands)`: classifica posição do preço relativa às bandas (`above_upper | near_upper | middle | near_lower | below_lower`) — **pré-computado no poller** com o preço live (`marketState.spy.last`) antes de publicar; campo `bbands.position` já vem correto no snapshot SSE
+- Indica `dataStatus: 'ok' | 'waiting'` e `barsAvailable: number` no payload SSE — quando `priceHistory < 35 bars`, publica status `'waiting'` com contagem real em vez de retornar silenciosamente com valores falsos (RSI=50, MACD=0)
+- Retry automático em 60s enquanto aguarda ≥35 bars; `setInterval` principal roda a cada 2min independentemente
+- Publicado via SSE (`technical-indicators`) com snapshot imediato na conexão; injetado no prompt IA condicionalmente (`shouldIncludeTechBlock()`)
+- `TechnicalIndicatorsCard.tsx` exibe RSI gauge, MACD histogram + crossover badge e BB position badge; mostra badge amarelo "⚠ Aguardando X/35 barras" quando `dataStatus='waiting'` e badge laranja "⚠ dados >10min" se `capturedAt` estiver estale; timestamp em ET
 
 ### Sinais de Trade em Horários Fixos (10:30 e 15:00 ET)
 
@@ -562,12 +563,14 @@ optionChain.ts (snapshot em memória, cache 5min)
 
 ```
 marketState.spy.priceHistory (390 bars 1min — em memória)
-  → technicalIndicatorsPoller.ts (cálculo local)
-  → RSI(14) + MACD(12,26,9) + BBands(20,2σ) calculados via séries de closes
-  → publishTechnicalData() quando todos 3 calculados
+  → technicalIndicatorsPoller.ts (cálculo local, 2min)
+  │   ├─ se < 35 bars: publishTechnicalData({ dataStatus:'waiting', barsAvailable:N })
+  │   └─ se ≥ 35 bars: calcRSI + calcMACD + calcBBands
+  │       → deriveBBPosition(marketState.spy.last, bbands)  ← pré-computado aqui
+  │       → publishTechnicalData({ dataStatus:'ok', barsAvailable:N, ... })
   → technicalIndicatorsState.ts (snapshot em memória)
-  → openai.ts buildTechBlock() (injeta no prompt base ao clicar em Analisar)
-     + deriveBBPosition(spyPrice, bbands) → posição relativa às bandas
+  → SSE 'technical-indicators' → TechnicalIndicatorsCard (badge waiting/stale, timestamp ET)
+  → openai.ts buildTechBlock() condicionalmente via shouldIncludeTechBlock()
 ```
 
 ### Fluxo de Dados — Análise IA (Tool Calling)
@@ -1058,7 +1061,7 @@ npm run preview # Preview do build de produção
 
 **UI & Autenticação:**
 - Dashboard React com 3 cards de métricas (SPY, VIX, IV Rank)
-- **TechnicalIndicatorsCard** (`TechnicalIndicatorsCard.tsx`): RSI(14) gauge, MACD histogram + crossover badge, BB position badge
+- **TechnicalIndicatorsCard** (`TechnicalIndicatorsCard.tsx`): RSI(14) gauge, MACD histogram + crossover badge, BB position badge; badge "⚠ Aguardando X/35 barras" quando dados insuficientes, badge "⚠ dados >10min" quando snapshot estale; timestamp em ET
 - Painel GEX com gráfico de barras por strike (calls/puts)
 - Cadeia de Opções com greeks Δ γ θ ν por strike
 - Alert Overlay com animação slide-in/out (Framer Motion, auto-dismiss 8s)

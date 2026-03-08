@@ -127,6 +127,8 @@ export interface TechnicalIndicatorsData {
   }
   capturedAt: string
   ivCone?: IVConeData | null
+  dataStatus?: 'ok' | 'waiting'
+  barsAvailable?: number
 }
 
 // VIX Term Structure type (mirrored from backend vixTermStructure)

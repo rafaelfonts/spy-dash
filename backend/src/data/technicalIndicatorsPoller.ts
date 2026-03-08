@@ -2,8 +2,10 @@
  * technicalIndicatorsPoller — calculates RSI, MACD and Bollinger Bands locally
  * from marketState.spy.priceHistory (390 1-minute bars from Tradier).
  *
- * No external API dependency. Runs every 60s, aligned with the 1-min bar cadence.
- * Requires at least 35 prices for MACD to be reliable — waits silently if not enough data.
+ * No external API dependency. Runs every 2 minutes.
+ * Requires at least 35 prices for MACD to be reliable. Publishes dataStatus='waiting'
+ * with barsAvailable count when priceHistory is insufficient, so the frontend can show
+ * an inactivity indicator instead of stale or false-default values.
  */
 
 import { marketState } from './marketState'
@@ -97,11 +99,28 @@ export function deriveBBPosition(
 
 function tick(): void {
   const prices = marketState.spy.priceHistory.map((pt) => pt.p)
-  if (prices.length < 35) return
+  if (prices.length < 35) {
+    publishTechnicalData({
+      dataStatus: 'waiting',
+      barsAvailable: prices.length,
+      rsi14: 50,
+      macd: { macd: 0, signal: 0, histogram: 0, crossover: 'none' },
+      bbands: { upper: 0, middle: 0, lower: 0, position: 'middle' },
+      capturedAt: new Date().toISOString(),
+      ivCone: null,
+    })
+    return
+  }
 
   const rsi14 = calcRSI(prices)
   const macd = calcMACD(prices)
   const bbands = calcBBands(prices)
+
+  // Pre-compute BB position using current live price
+  const currentPrice = marketState.spy.last
+  if (currentPrice != null) {
+    bbands.position = deriveBBPosition(currentPrice, bbands)
+  }
 
   // IV Cone snapshot — piggybacking on 5-min tick (uses same priceHistory)
   const ivCone = buildIVConeSnapshot()
@@ -118,6 +137,8 @@ function tick(): void {
     bbands,
     capturedAt: new Date().toISOString(),
     ivCone: ivCone ?? null,
+    dataStatus: 'ok',
+    barsAvailable: prices.length,
   }
 
   publishTechnicalData(data)
@@ -134,7 +155,7 @@ function tick(): void {
 // ---------------------------------------------------------------------------
 
 export function startTechnicalIndicatorsPoller(): void {
-  console.log('[TechIndicators] Starting local poller (RSI/MACD/BBands from priceHistory, 5min)')
+  console.log('[TechIndicators] Starting local poller (RSI/MACD/BBands from priceHistory, 2min)')
 
   // Try immediately; if not enough bars yet (e.g. Tradier restore still pending),
   // retry every 60s until we have ≥35 bars, then hand off to the 5-min interval.
@@ -160,5 +181,5 @@ export function startTechnicalIndicatorsPoller(): void {
   }
 
   tryTick()
-  setInterval(tick, 300_000)
+  setInterval(tick, 120_000)
 }

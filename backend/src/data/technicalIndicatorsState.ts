@@ -17,6 +17,8 @@ export interface TechnicalData {
   }
   capturedAt: string     // ISO 8601
   ivCone?: IVConeSnapshot | null
+  dataStatus: 'ok' | 'waiting'   // 'waiting' when priceHistory < 35 bars
+  barsAvailable: number           // actual count of priceHistory bars
 }
 
 let snapshot: TechnicalData | null = null
