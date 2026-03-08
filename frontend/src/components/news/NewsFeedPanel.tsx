@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { useMarketStore } from '../../store/marketStore'
 import { MacroData } from './MacroData'
@@ -5,6 +6,15 @@ import { MacroCalendar } from './MacroCalendar'
 import { NewsHeadlines } from './NewsHeadlines'
 import { FearGreedGauge } from './FearGreedGauge'
 import { PutCallRatioCard } from './PutCallRatioCard'
+
+type MobileTab = 'macro' | 'sentimento' | 'eventos' | 'headlines'
+
+const MOBILE_TABS: { id: MobileTab; label: string }[] = [
+  { id: 'macro', label: 'Macro' },
+  { id: 'sentimento', label: 'Sentimento' },
+  { id: 'eventos', label: 'Eventos' },
+  { id: 'headlines', label: 'Headlines' },
+]
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -19,6 +29,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 export function NewsFeedPanel() {
   const newsFeed = useMarketStore((s) => s.newsFeed)
   const putCallRatio = useMarketStore((s) => s.putCallRatio)
+  const [activeTab, setActiveTab] = useState<MobileTab>('macro')
 
   const hasMacro = newsFeed.macro.length > 0
   const hasBls = newsFeed.bls.length > 0
@@ -36,13 +47,13 @@ export function NewsFeedPanel() {
 
   return (
     <motion.section
-      className="card mt-4"
+      className="card"
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: 'easeOut', delay: 0.35 }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-sm font-display font-bold text-text-primary tracking-wide">
             Feed de Mercado
@@ -67,46 +78,109 @@ export function NewsFeedPanel() {
         </div>
       )}
 
-      {/* Row 1: Macro FRED/BLS + Sentimento + P/C Ratio */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
-        <div>
-          <SectionTitle>Dados Macro — FRED / BLS</SectionTitle>
-          <MacroData
-            macro={newsFeed.macro}
-            bls={newsFeed.bls}
-            loading={isLoading && !hasMacro && !hasBls}
-          />
+      {/* ── MOBILE: tabs de navegação ── */}
+      <div className="md:hidden">
+        {/* Tab bar */}
+        <div className="flex border-b border-border-subtle mb-4 -mx-4 px-4 overflow-x-auto">
+          {MOBILE_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-3 py-2 text-[11px] font-semibold uppercase tracking-wider whitespace-nowrap transition-colors shrink-0 ${
+                activeTab === tab.id
+                  ? 'text-[#00ff88] border-b-2 border-[#00ff88] -mb-px'
+                  : 'text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
 
-        <div className="md:border-l md:border-border-subtle md:pl-4">
-          <SectionTitle>Sentimento do Mercado</SectionTitle>
-          <FearGreedGauge fearGreed={newsFeed.fearGreed} />
-        </div>
-
-        <div className="md:border-l md:border-border-subtle md:pl-4">
-          <SectionTitle>Put/Call Ratio</SectionTitle>
-          <PutCallRatioCard data={putCallRatio} />
-        </div>
+        {/* Tab content */}
+        {activeTab === 'macro' && (
+          <div>
+            <SectionTitle>Dados Macro — FRED / BLS</SectionTitle>
+            <MacroData
+              macro={newsFeed.macro}
+              bls={newsFeed.bls}
+              loading={isLoading && !hasMacro && !hasBls}
+            />
+          </div>
+        )}
+        {activeTab === 'sentimento' && (
+          <div>
+            <SectionTitle>Sentimento do Mercado</SectionTitle>
+            <FearGreedGauge fearGreed={newsFeed.fearGreed} />
+            <div className="mt-5 border-t border-border-subtle pt-4">
+              <SectionTitle>Put/Call Ratio</SectionTitle>
+              <PutCallRatioCard data={putCallRatio} />
+            </div>
+          </div>
+        )}
+        {activeTab === 'eventos' && (
+          <div>
+            <SectionTitle>Eventos Macro — Próximas 48h</SectionTitle>
+            <MacroCalendar
+              events={newsFeed.macroEvents}
+              loading={isLoading && !hasMacroEvents}
+            />
+          </div>
+        )}
+        {activeTab === 'headlines' && (
+          <div>
+            <SectionTitle>Headlines</SectionTitle>
+            <NewsHeadlines
+              headlines={newsFeed.headlines}
+              loading={isLoading && !hasHeadlines}
+            />
+          </div>
+        )}
       </div>
 
-      <div className="border-t border-border-subtle mb-5" />
+      {/* ── DESKTOP: grid layout completo ── */}
+      <div className="hidden md:block">
+        {/* Row 1: Macro FRED/BLS + Sentimento + P/C Ratio */}
+        <div className="grid grid-cols-3 gap-4 mb-5">
+          <div>
+            <SectionTitle>Dados Macro — FRED / BLS</SectionTitle>
+            <MacroData
+              macro={newsFeed.macro}
+              bls={newsFeed.bls}
+              loading={isLoading && !hasMacro && !hasBls}
+            />
+          </div>
 
-      {/* Row 2: Macro Events (1 col) + Headlines (2 cols) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div>
-          <SectionTitle>Eventos Macro — Próximas 48h</SectionTitle>
-          <MacroCalendar
-            events={newsFeed.macroEvents}
-            loading={isLoading && !hasMacroEvents}
-          />
+          <div className="border-l border-border-subtle pl-4">
+            <SectionTitle>Sentimento do Mercado</SectionTitle>
+            <FearGreedGauge fearGreed={newsFeed.fearGreed} />
+          </div>
+
+          <div className="border-l border-border-subtle pl-4">
+            <SectionTitle>Put/Call Ratio</SectionTitle>
+            <PutCallRatioCard data={putCallRatio} />
+          </div>
         </div>
 
-        <div className="md:border-l md:border-border-subtle md:pl-4 md:col-span-2">
-          <SectionTitle>Headlines</SectionTitle>
-          <NewsHeadlines
-            headlines={newsFeed.headlines}
-            loading={isLoading && !hasHeadlines}
-          />
+        <div className="border-t border-border-subtle mb-5" />
+
+        {/* Row 2: Macro Events (1 col) + Headlines (2 cols) */}
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <SectionTitle>Eventos Macro — Próximas 48h</SectionTitle>
+            <MacroCalendar
+              events={newsFeed.macroEvents}
+              loading={isLoading && !hasMacroEvents}
+            />
+          </div>
+
+          <div className="border-l border-border-subtle pl-4 col-span-2">
+            <SectionTitle>Headlines</SectionTitle>
+            <NewsHeadlines
+              headlines={newsFeed.headlines}
+              loading={isLoading && !hasHeadlines}
+            />
+          </div>
         </div>
       </div>
     </motion.section>

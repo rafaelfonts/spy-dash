@@ -71,7 +71,7 @@ export const OptionChainPanel = memo(function OptionChainPanel() {
 
   return (
     <motion.section
-      className="card mt-4"
+      className="card"
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: 'easeOut', delay: 0.15 }}

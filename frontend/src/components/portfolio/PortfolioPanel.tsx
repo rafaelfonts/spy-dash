@@ -41,7 +41,7 @@ function PositionRow({
         <p className="text-text-primary font-medium text-sm">{p.strategy}</p>
         {p.comments && (
           <p
-            className="text-[10px] text-text-muted mt-0.5 truncate max-w-[180px]"
+            className="text-[10px] text-text-muted mt-0.5 line-clamp-2"
             title={p.comments}
           >
             {p.comments}
@@ -136,7 +136,7 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
 
   return (
     <motion.section
-      className="card mt-4"
+      className="card"
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, ease: 'easeOut' }}

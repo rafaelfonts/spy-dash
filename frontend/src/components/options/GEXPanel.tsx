@@ -188,7 +188,7 @@ export const GEXPanel = memo(function GEXPanel() {
   if (!gexProfile) {
     return (
       <motion.section
-        className="card mt-4 opacity-50"
+        className="card opacity-50"
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 0.5, y: 0 }}
         transition={{ duration: 0.4, ease: 'easeOut' }}
@@ -222,7 +222,7 @@ export const GEXPanel = memo(function GEXPanel() {
 
   return (
     <motion.section
-      className="card mt-4"
+      className="card"
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: 'easeOut' }}
@@ -248,17 +248,18 @@ export const GEXPanel = memo(function GEXPanel() {
 
       {/* Mini Term Structure Curve */}
       {gexDynamic && gexDynamic.length > 0 && (
-        <div className="mb-3" style={{ height: 72 }}>
+        <div className="mb-3" style={{ height: 90 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={gexDynamic.map((e) => ({
                 label: e.label,
+                shortLabel: e.label.slice(0, 6),
                 expiration: e.expiration,
                 totalGEX: e.gex.totalGEX,
                 regime: e.gex.regime,
                 gammaAnomaly: e.gammaAnomaly,
               }))}
-              margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
+              margin={{ top: 4, right: 4, left: 0, bottom: 16 }}
               barCategoryGap="15%"
               onClick={(d) => {
                 if (d?.activePayload?.[0]?.payload?.expiration) {
@@ -268,6 +269,7 @@ export const GEXPanel = memo(function GEXPanel() {
                 }
               }}
             >
+              <XAxis dataKey="shortLabel" tick={{ fill: '#8888aa', fontSize: 7 }} axisLine={false} tickLine={false} />
               <YAxis hide domain={['auto', 'auto']} />
               <Tooltip content={<TermStructureTooltip />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
               <Bar dataKey="totalGEX" maxBarSize={32} isAnimationActive={false} radius={[2, 2, 0, 0]}>
@@ -297,7 +299,7 @@ export const GEXPanel = memo(function GEXPanel() {
             >
               {gexDynamic.map((entry) => (
                 <option key={entry.expiration} value={entry.expiration}>
-                  {entry.label}{entry.gammaAnomaly > 0.7 ? ' ⚡' : ''}{entry.isMonthlyOPEX ? ' OPEX' : ''}
+                  {entry.label}{entry.gammaAnomaly > 0.7 ? ' ⚡' : ''}
                 </option>
               ))}
             </select>
@@ -441,6 +443,36 @@ export const GEXPanel = memo(function GEXPanel() {
               </div>
             )
           })()}
+
+          {/* Vanna + Charm Exposure */}
+          <div className="flex gap-6 mb-3">
+            <div>
+              <div className="text-[10px] text-text-muted uppercase tracking-wider">Vanna (VEX)</div>
+              {activeGex.totalVannaExposure != null ? (
+                <div className={`text-sm font-bold font-num ${
+                  activeGex.totalVannaExposure < -5_000_000 ? 'text-red-400'
+                  : activeGex.totalVannaExposure > 2_000_000 ? 'text-[#00ff88]'
+                  : 'text-text-primary'
+                }`}>
+                  {activeGex.totalVannaExposure >= 0 ? '+' : ''}${(activeGex.totalVannaExposure / 1_000_000).toFixed(1)}M
+                </div>
+              ) : (
+                <div className="text-xs text-text-muted italic">Aguardando dados...</div>
+              )}
+            </div>
+            <div>
+              <div className="text-[10px] text-text-muted uppercase tracking-wider">Charm (CEX)</div>
+              {activeGex.totalCharmExposure != null ? (
+                <div className={`text-sm font-bold font-num ${
+                  activeGex.totalCharmExposure > 1_000_000 ? 'text-[#00ff88]' : 'text-text-primary'
+                }`}>
+                  ${(activeGex.totalCharmExposure / 1_000_000).toFixed(1)}M/dia
+                </div>
+              ) : (
+                <div className="text-xs text-text-muted italic">Aguardando dados...</div>
+              )}
+            </div>
+          </div>
 
           {/* Recharts bar chart */}
           {chartData.length > 0 ? (

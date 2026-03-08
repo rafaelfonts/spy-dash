@@ -5,10 +5,31 @@ import { Skeleton } from '../ui/Skeleton'
 
 // ── RSI ─────────────────────────────────────────────────────────────────────
 
-function rsiConfig(rsi: number): { label: string; color: string; bar: string } {
-  if (rsi < 30) return { label: 'SOBREVENDIDO', color: 'text-[#00ff88]', bar: 'bg-[#00ff88]' }
-  if (rsi > 70) return { label: 'SOBRECOMPRADO', color: 'text-red-400', bar: 'bg-red-400' }
-  return { label: 'NEUTRO', color: 'text-yellow-400', bar: 'bg-yellow-400' }
+function rsiConfig(rsi: number): { label: string; color: string; bar: string; hex: string } {
+  if (rsi < 30) return { label: 'SOBREVENDIDO', color: 'text-[#00ff88]', bar: 'bg-[#00ff88]', hex: '#00ff88' }
+  if (rsi > 70) return { label: 'SOBRECOMPRADO', color: 'text-red-400', bar: 'bg-red-400', hex: '#f87171' }
+  return { label: 'NEUTRO', color: 'text-yellow-400', bar: 'bg-yellow-400', hex: '#facc15' }
+}
+
+function RSIGaugeSVG({ rsi, hex }: { rsi: number; hex: string }) {
+  const r = 40, cx = 50, cy = 50
+  const circ = Math.PI * r
+  const fill = (Math.min(rsi, 100) / 100) * circ
+  const path = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`
+  return (
+    <svg width="100" height="56" viewBox="0 0 100 56" className="overflow-visible">
+      <path d={path} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={9} strokeLinecap="round" />
+      <path
+        d={path}
+        fill="none"
+        stroke={hex}
+        strokeWidth={9}
+        strokeLinecap="round"
+        strokeDasharray={`${fill} ${circ}`}
+        style={{ filter: `drop-shadow(0 0 3px ${hex}60)` }}
+      />
+    </svg>
+  )
 }
 
 // ── MACD crossover ───────────────────────────────────────────────────────────
@@ -29,6 +50,11 @@ const BB_CONFIG: Record<string, { label: string; color: string }> = {
   below_lower: { label: 'ABAIXO INFERIOR', color: 'text-[#00ff88] border-[#00ff88]/30 bg-[#00ff88]/5' },
 }
 
+// posição aproximada (%) da banda para barra visual
+const BB_POS_PCT: Record<string, number> = {
+  above_upper: 95, near_upper: 75, middle: 50, near_lower: 25, below_lower: 5,
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
@@ -38,10 +64,11 @@ export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
   const rsi = isLoaded ? rsiConfig(ti.rsi14) : null
   const crossover = isLoaded ? CROSSOVER_CONFIG[ti.macd.crossover] : null
   const bbPos = isLoaded ? (BB_CONFIG[ti.bbands.position] ?? BB_CONFIG.middle) : null
+  const bbPct = isLoaded ? (BB_POS_PCT[ti.bbands.position] ?? 50) : 50
 
   return (
     <motion.section
-      className="card mt-4"
+      className="card"
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: 'easeOut' }}
@@ -68,25 +95,15 @@ export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
               ? <span className={`text-[10px] font-bold tracking-wider ${rsi!.color}`}>{rsi!.label}</span>
               : <Skeleton className="w-20" height="0.7rem" />}
           </div>
-          {/* Value */}
-          <div className="mb-2">
-            {isLoaded
-              ? <span className="text-2xl font-bold font-num text-text-primary">{ti.rsi14.toFixed(1)}</span>
-              : <Skeleton className="w-16 h-8" />}
-          </div>
-          {/* Gauge bar */}
-          <div className="relative h-1.5 bg-bg-elevated rounded-full overflow-hidden border border-border-subtle">
-            {isLoaded
-              ? (
-                <motion.div
-                  className={`absolute left-0 top-0 h-full rounded-full ${rsi!.bar}`}
-                  initial={{ width: 0 }}
-                  animate={{ width: `${Math.min(ti.rsi14, 100)}%` }}
-                  transition={{ duration: 0.8, ease: 'easeOut' }}
-                />
-              )
-              : <div className="skeleton w-full h-full" />}
-          </div>
+          {/* Gauge semicircular */}
+          {isLoaded ? (
+            <div className="flex flex-col items-center mb-1">
+              <RSIGaugeSVG rsi={ti.rsi14} hex={rsi!.hex} />
+              <span className="text-2xl font-bold font-num text-text-primary -mt-1">{ti.rsi14.toFixed(1)}</span>
+            </div>
+          ) : (
+            <Skeleton className="w-24 h-16 mx-auto" />
+          )}
           {/* Zone labels */}
           <div className="flex justify-between mt-0.5 text-[9px] text-text-muted">
             <span>0</span>
@@ -96,8 +113,8 @@ export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
           </div>
         </div>
 
-        {/* MACD */}
-        <div>
+        {/* MACD — separador em mobile */}
+        <div className="sm:border-l sm:border-border-subtle sm:pl-4 border-t border-border-subtle pt-4 sm:border-t-0 sm:pt-0">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider">MACD</span>
             {isLoaded && crossover
@@ -135,8 +152,8 @@ export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
           </div>
         </div>
 
-        {/* Bollinger Bands */}
-        <div>
+        {/* Bollinger Bands — separador em mobile */}
+        <div className="sm:border-l sm:border-border-subtle sm:pl-4 border-t border-border-subtle pt-4 sm:border-t-0 sm:pt-0">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider">BB (20, 2σ)</span>
             {isLoaded && bbPos
@@ -168,6 +185,23 @@ export const TechnicalIndicatorsCard = memo(function TechnicalIndicatorsCard() {
                 : <Skeleton className="w-14" height="0.7rem" />}
             </div>
           </div>
+          {/* Barra de posição visual */}
+          {isLoaded && (
+            <div className="mt-2">
+              <div className="h-1.5 rounded-full overflow-hidden bg-bg-elevated">
+                <motion.div
+                  className="h-full rounded-full bg-gradient-to-r from-[#00ff88] via-yellow-400 to-red-400"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${bbPct}%` }}
+                  transition={{ duration: 0.8, ease: 'easeOut' }}
+                />
+              </div>
+              <div className="flex justify-between mt-0.5 text-[9px] text-text-muted">
+                <span>Inf</span>
+                <span>Sup</span>
+              </div>
+            </div>
+          )}
         </div>
 
       </div>

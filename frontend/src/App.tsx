@@ -35,8 +35,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       <Header onLogout={onLogout} />
       <StatusBar />
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-2">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <SPYCard />
           <IVRankCard />
           <VIXCard />
