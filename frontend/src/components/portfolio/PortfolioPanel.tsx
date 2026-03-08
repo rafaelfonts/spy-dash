@@ -77,10 +77,10 @@ function PositionRow({
           <span className="text-[9px] text-text-muted">Alvo: 50%</span>
         </div>
       </td>
-      <td className="py-3 pr-3 text-right text-xs font-num text-text-muted">
+      <td className="py-3 pr-3 text-right text-xs font-num text-text-muted hidden sm:table-cell">
         ${p.credit_received.toFixed(2)}
       </td>
-      <td className="py-3 pr-3 text-right text-xs font-num text-text-muted">
+      <td className="py-3 pr-3 text-right text-xs font-num text-text-muted hidden sm:table-cell">
         ${p.current_cost_to_close.toFixed(2)}
       </td>
       <td className="py-3 text-right">
@@ -153,7 +153,7 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center flex-wrap gap-2">
           <button
             type="button"
             onClick={() => setModalOpen(true)}
@@ -175,7 +175,12 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
             disabled={analyzing || positions.length === 0}
             className="px-3 py-1.5 rounded text-xs font-medium bg-[#00ff88]/10 border border-[#00ff88]/30 text-[#00ff88] hover:bg-[#00ff88]/20 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {analyzing ? 'Analisando…' : 'Analisar carteira'}
+            {analyzing ? 'Analisando…' : (
+              <>
+                <span className="hidden sm:inline">Analisar carteira</span>
+                <span className="sm:hidden">Analisar</span>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -203,8 +208,8 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
                   <th className="pb-2 pr-3 font-medium">Estratégia / Tese</th>
                   <th className="pb-2 pr-3 text-right">DTE</th>
                   <th className="pb-2 pr-3 text-right">Lucro / P&L $</th>
-                  <th className="pb-2 pr-3 text-right">Crédito</th>
-                  <th className="pb-2 pr-3 text-right">Custo fechar</th>
+                  <th className="pb-2 pr-3 text-right hidden sm:table-cell">Crédito</th>
+                  <th className="pb-2 pr-3 text-right hidden sm:table-cell">Custo fechar</th>
                   <th className="pb-2 w-16 text-right">Ações</th>
                 </tr>
               </thead>

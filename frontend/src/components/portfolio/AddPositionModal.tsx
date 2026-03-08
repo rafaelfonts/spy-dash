@@ -260,7 +260,7 @@ export function AddPositionModal({ open, onClose, onSubmit, onSuccess }: AddPosi
               type="date"
               value={openDate}
               onChange={(e) => setOpenDate(e.target.value)}
-              className="w-full rounded border border-border-subtle bg-bg-base px-2.5 py-1.5 text-sm text-text-primary"
+              className="w-full rounded border border-border-subtle bg-bg-base px-2.5 py-1.5 text-sm text-text-primary [color-scheme:dark]"
             />
           </div>
           <div>
@@ -271,7 +271,7 @@ export function AddPositionModal({ open, onClose, onSubmit, onSuccess }: AddPosi
               type="date"
               value={expirationDate}
               onChange={(e) => setExpirationDate(e.target.value)}
-              className="w-full rounded border border-border-subtle bg-bg-base px-2.5 py-1.5 text-sm text-text-primary"
+              className="w-full rounded border border-border-subtle bg-bg-base px-2.5 py-1.5 text-sm text-text-primary [color-scheme:dark]"
               required
             />
           </div>
