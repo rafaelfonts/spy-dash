@@ -33,16 +33,6 @@ export function Header({ onLogout }: HeaderProps) {
             <span className="font-extrabold text-text-primary">SPY </span>
             <span className="font-extrabold text-[#00ff88]">DASH</span>
           </span>
-          {spy.last !== null && (
-            <span className="hidden sm:inline text-xs font-num text-text-secondary">
-              ${fmtPrice(spy.last)}
-              <span
-                className={`ml-1 ${spy.changePct !== null && spy.changePct >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}
-              >
-                ({fmtPct(spy.changePct)})
-              </span>
-            </span>
-          )}
         </div>
 
         {/* Right side */}

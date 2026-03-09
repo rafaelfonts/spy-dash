@@ -4,7 +4,6 @@ import { useMarketStream } from './hooks/useMarketStream'
 import { useOptionChain } from './hooks/useOptionChain'
 import { LoginPage } from './components/auth/LoginPage'
 import { Header } from './components/layout/Header'
-import { StatusBar } from './components/layout/StatusBar'
 import { SPYCard } from './components/cards/SPYCard'
 import { IVRankCard } from './components/cards/IVRankCard'
 import { VIXCard } from './components/cards/VIXCard'
@@ -33,7 +32,6 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   return (
     <div className="min-h-screen bg-bg-base">
       <Header onLogout={onLogout} />
-      <StatusBar />
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

@@ -157,7 +157,7 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
           <button
             type="button"
             onClick={() => setModalOpen(true)}
-            className="px-3 py-1.5 rounded text-xs font-medium bg-bg-elevated border border-border-subtle text-text-secondary hover:bg-border-subtle hover:text-text-primary"
+            className="px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 bg-bg-elevated border border-border-subtle text-text-secondary hover:bg-border-subtle hover:text-text-primary"
           >
             Cadastrar
           </button>
@@ -165,7 +165,7 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
             type="button"
             onClick={refresh}
             disabled={loading}
-            className="px-3 py-1.5 rounded text-xs font-medium bg-bg-elevated border border-border-subtle text-text-secondary hover:bg-border-subtle hover:text-text-primary disabled:opacity-50"
+            className="px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 bg-bg-elevated border border-border-subtle text-text-secondary hover:bg-border-subtle hover:text-text-primary disabled:opacity-50"
           >
             Atualizar
           </button>
@@ -173,7 +173,7 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
             type="button"
             onClick={analyze}
             disabled={analyzing || positions.length === 0}
-            className="px-3 py-1.5 rounded text-xs font-medium bg-[#00ff88]/10 border border-[#00ff88]/30 text-[#00ff88] hover:bg-[#00ff88]/20 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 bg-[#00ff88]/10 border border-[#00ff88]/30 text-[#00ff88] hover:bg-[#00ff88]/20 hover:border-[#00ff88]/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {analyzing ? 'Analisando…' : (
               <>
