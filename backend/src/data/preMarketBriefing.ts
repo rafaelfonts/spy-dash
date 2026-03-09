@@ -15,6 +15,8 @@ import { marketState, newsSnapshot, emitter } from './marketState'
 import { cacheGet, cacheSet, redis } from '../lib/cacheStore'
 import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
 import { getPortfolioSnapshot } from './portfolioTrackerService'
+import { getAdvancedMetricsSnapshot } from './advancedMetricsState'
+import type { GEXDynamic } from './gexService'
 import { CONFIG } from '../config'
 import type {
   PreMarketBriefing,
@@ -153,6 +155,13 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
   try {
     const spyPreMarket = await getSpyPreMarketPrice()
 
+    const advancedSnapshot = getAdvancedMetricsSnapshot()
+    const gexDynamic = advancedSnapshot?.gexDynamic
+    const gexBlock =
+      gexDynamic && gexDynamic.length > 0
+        ? buildBriefingGexBlock(gexDynamic)
+        : '### GEX Structure\n- Dados indisponíveis (mercado fechado ou servidor em inicialização)'
+
     const context: BriefingContext = {
       spy: {
         last: marketState.spy.last,
@@ -181,6 +190,7 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
       fearGreed: newsSnapshot.fearGreed,
       macro: newsSnapshot.macro,
       portfolio: getPortfolioSnapshot()?.positions ?? [],
+      gexBlock,
     }
 
     const userPrompt =
@@ -324,10 +334,58 @@ interface BriefingContext {
   fearGreed: FearGreedData | null
   macro: MacroDataItem[]
   portfolio: EnrichedPosition[]
+  gexBlock: string  // pre-formatted GEX section (or unavailability notice)
+}
+
+// ---------------------------------------------------------------------------
+// GEX block builder — compact summary for briefing prompts
+// ---------------------------------------------------------------------------
+
+function buildBriefingGexBlock(gexDynamic: GEXDynamic): string {
+  const lines: string[] = ['### GEX Structure (Term Structure Dinâmica)']
+
+  // Dominant regime (majority vote across DTE buckets)
+  const positiveCount = gexDynamic.filter((e) => e.gex.regime === 'positive').length
+  const dominantRegime = positiveCount >= gexDynamic.length / 2 ? 'POSITIVO' : 'NEGATIVO'
+  const regimeNote =
+    dominantRegime === 'POSITIVO'
+      ? 'market makers net long gamma — SPY tende a ser ancorado'
+      : 'market makers net short gamma — movimentos amplificados'
+  lines.push(`- Regime Dominante: ${dominantRegime} (${regimeNote})`)
+
+  // For each DTE bucket: key levels
+  for (const entry of gexDynamic) {
+    const g = entry.gex
+    const dteParts: string[] = []
+    if (g.flipPoint != null) dteParts.push(`Flip: $${g.flipPoint.toFixed(2)}`)
+    if (g.callWall) dteParts.push(`CallWall: $${g.callWall.toFixed(2)}`)
+    if (g.putWall) dteParts.push(`PutWall: $${g.putWall.toFixed(2)}`)
+    if (g.volatilityTrigger) dteParts.push(`VT: $${g.volatilityTrigger.toFixed(2)}`)
+    if (g.zeroGammaLevel != null) dteParts.push(`ZGL: $${g.zeroGammaLevel.toFixed(2)}`)
+    if (g.totalNetGamma != null) {
+      const sign = g.totalNetGamma >= 0 ? '+' : ''
+      dteParts.push(`GEX: ${sign}$${g.totalNetGamma.toFixed(1)}M`)
+    }
+    if (dteParts.length > 0) {
+      lines.push(`- ${entry.label}: ${dteParts.join(' | ')}`)
+    }
+
+    // Max pain if available
+    if (g.maxPain) {
+      const pinNote = g.maxPain.pinRisk === 'high' ? ' ⚠️ PIN RISK ALTO' : g.maxPain.pinRisk === 'moderate' ? ' (pin risk moderado)' : ''
+      lines.push(`  Max Pain: $${g.maxPain.maxPainStrike.toFixed(2)} (${g.maxPain.distancePct.toFixed(1)}% do spot)${pinNote}`)
+    }
+  }
+
+  return lines.join('\n')
 }
 
 function buildPreMarketPrompt(ctx: BriefingContext): string {
   const lines: string[] = ['=== PRE-MARKET DATA ===', '']
+
+  // GEX — injected first so the model has structural context before price/vol
+  lines.push(ctx.gexBlock)
+  lines.push('')
 
   // SPY
   lines.push('### SPY')
@@ -434,6 +492,10 @@ function buildPreMarketPrompt(ctx: BriefingContext): string {
 
 function buildPostClosePrompt(ctx: BriefingContext): string {
   const lines: string[] = ['=== POST-CLOSE DATA ===', '']
+
+  // GEX — injected first so the model has structural context for post-close analysis
+  lines.push(ctx.gexBlock)
+  lines.push('')
 
   // SPY session summary
   lines.push('### SPY — Sessão de Hoje')
