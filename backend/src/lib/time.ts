@@ -1,3 +1,33 @@
+function getETOffsetHours(now: Date): number {
+  const jan = new Date(now.getFullYear(), 0, 1).getTimezoneOffset()
+  const jul = new Date(now.getFullYear(), 6, 1).getTimezoneOffset()
+  const isDst = now.getTimezoneOffset() < Math.max(jan, jul)
+  return isDst ? -4 : -5
+}
+
+/**
+ * Returns minutes since midnight ET (0–1439). DST-aware.
+ */
+export function getETMinutes(now: Date = new Date()): number {
+  const etOffset = getETOffsetHours(now)
+  let etMinutes = (now.getUTCHours() + etOffset) * 60 + now.getUTCMinutes()
+  if (etMinutes < 0) etMinutes += 24 * 60
+  if (etMinutes >= 24 * 60) etMinutes -= 24 * 60
+  return etMinutes
+}
+
+/**
+ * Returns current date in America/New_York as YYYY-MM-DD.
+ */
+export function getDateET(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now)
+}
+
 /**
  * Returns true if US equity markets are currently open (09:30–16:00 ET, Mon–Fri).
  * DST-aware: detects EDT (UTC-4) vs EST (UTC-5) using January/July offset comparison.
@@ -6,11 +36,7 @@ export function isMarketOpen(): boolean {
   const now = new Date()
   const day = now.getUTCDay()
   if (day === 0 || day === 6) return false
-  const jan = new Date(now.getFullYear(), 0, 1).getTimezoneOffset()
-  const jul = new Date(now.getFullYear(), 6, 1).getTimezoneOffset()
-  const isDst = now.getTimezoneOffset() < Math.max(jan, jul)
-  const etOffset = isDst ? -4 : -5
-  const etMinutes = (now.getUTCHours() + etOffset) * 60 + now.getUTCMinutes()
+  const etMinutes = getETMinutes(now)
   return etMinutes >= 570 && etMinutes < 960 // 09:30–16:00 ET
 }
 
