@@ -82,8 +82,9 @@ const FETCH_CONTEXT_TOOL = {
       'Retrieve 24h macro context: FRED economic data, BLS employment data, Fear & Greed index, ' +
       'VIX term structure, upcoming SPY component earnings (≤7 days), and high-impact macro events (≤48h). ' +
       'Call this tool ONLY when you detect: VIX above 20 or spiking (>15% change), unusual P/C ratio ' +
-      '(>1.3 or <0.6), RSI in extreme zone (<30 or >70) combined with MACD crossover, or when the ' +
-      'user explicitly asks about macro drivers, earnings, or economic events.',
+      '(>1.3 or <0.6), RSI in extreme zone (<30 or >70) combined with MACD crossover, ' +
+      'when the user explicitly asks about macro drivers, earnings, or economic events, ' +
+      'or when a high-impact macro event (FOMC, CPI, NFP, PPI) is scheduled within 48 hours.',
     parameters: { type: 'object', properties: {}, required: [] },
   },
 }
@@ -95,8 +96,9 @@ const ANTHROPIC_FETCH_CONTEXT_TOOL = {
     'Retrieve 24h macro context: FRED economic data, BLS employment data, Fear & Greed index, ' +
     'VIX term structure, upcoming SPY component earnings (≤7 days), and high-impact macro events (≤48h). ' +
     'Call this tool ONLY when you detect: VIX above 20 or spiking (>15% change), unusual P/C ratio ' +
-    '(>1.3 or <0.6), RSI in extreme zone (<30 or >70) combined with MACD crossover, or when the ' +
-    'user explicitly asks about macro drivers, earnings, or economic events.',
+    '(>1.3 or <0.6), RSI in extreme zone (<30 or >70) combined with MACD crossover, ' +
+    'when the user explicitly asks about macro drivers, earnings, or economic events, ' +
+    'or when a high-impact macro event (FOMC, CPI, NFP, PPI) is scheduled within 48 hours.',
   input_schema: { type: 'object' as const, properties: {}, required: [] },
 }
 
@@ -435,7 +437,8 @@ function buildRegimeVetoBlock(
   }
 
   lines.push(`Score parcial: ${passCount}/${totalChecks} condições favoráveis`)
-  lines.push('NOTA: Se score < 4, o campo trade_signal DEVE ser \'wait\' ou \'avoid\'.')
+  lines.push('NOTA: Se score < 4, trade_signal DEVE ser \'wait\' ou \'avoid\'.')
+  lines.push('CRÍTICO: Se QUALQUER linha marcada com [!] estiver ativa acima (VETO COMPOSTO, VETO VT, VETO SKEW, VETO PÓS-OPEX, VETO INSTABILIDADE, ou Earnings próximos), o campo trade_signal DEVE ser \'avoid\' independente do score parcial. Liste o veto em no_trade_reasons.')
   return lines.join('\n')
 }
 
@@ -1072,6 +1075,24 @@ function buildPrompt(
     prompt += priceHistoryBlock
   }
 
+  // --- Volume Profile (POC/VAH/VAL) — âncoras de preço por volume real negociado ---
+  const volProfile = getAdvancedMetricsSnapshot()?.profile ?? null
+  if (volProfile) {
+    const spyRef = spy?.last ?? marketState.spy.last ?? null
+    const posLabel = spyRef !== null
+      ? spyRef > volProfile.vah ? 'acima da VAH (sobrecomprado estrutural)'
+        : spyRef < volProfile.val ? 'abaixo da VAL (sobrevendido estrutural)'
+        : Math.abs(spyRef - volProfile.poc) / volProfile.poc < 0.002 ? 'no POC (equilíbrio)'
+        : spyRef > volProfile.poc ? 'entre POC e VAH'
+        : 'entre VAL e POC'
+      : null
+    prompt += `\n**Volume Profile Intraday** (baseado em volume negociado real):\n`
+    prompt += `POC=$${volProfile.poc.toFixed(2)} | VAH=$${volProfile.vah.toFixed(2)} | VAL=$${volProfile.val.toFixed(2)}`
+    if (posLabel) prompt += ` | SPY ${posLabel}`
+    prompt += `\nINTERPRETAÇÃO: POC=preço de maior aceitação (suporte/resistência mais confiável que GEX walls). `
+    prompt += `VAH/VAL=limites do value area (70% do volume). Breakeven da estratégia vendida deve estar fora do value area.\n`
+  }
+
   // --- Cadeia de opções: ATM ±5 strikes para as 3 expirações mais próximas ---
   const chainAge = freshness?.optionChain ? ` ${humanizeAge(freshness.optionChain)}` : ''
   if (chain && chain.length > 0) {
@@ -1109,6 +1130,25 @@ function buildPrompt(
         }
 
         prompt += `${callStr} | ${putStr}\n`
+      }
+    }
+    // Liquidity analysis — ATM bid-ask spread for first expiration
+    const firstExp = chain[0]
+    const spyRef2 = spy?.last ?? 0
+    const atmStrikes = firstExp.calls
+      .filter((c) => c.bid !== null && c.ask !== null)
+      .sort((a, b) => Math.abs(a.strike - spyRef2) - Math.abs(b.strike - spyRef2))
+      .slice(0, 3)
+    if (atmStrikes.length > 0) {
+      const avgSpread = atmStrikes.reduce((s, c) => s + ((c.ask ?? 0) - (c.bid ?? 0)), 0) / atmStrikes.length
+      const spreadLabel = avgSpread <= 0.05 ? 'TIGHT (execução favorável)'
+        : avgSpread <= 0.15 ? 'NORMAL'
+        : avgSpread <= 0.30 ? 'WIDE — considere limit orders'
+        : 'MUITO WIDE — risco de execução alto'
+      prompt += `\nLiquidez ATM (${firstExp.expirationDate}): spread médio=$${avgSpread.toFixed(2)} — ${spreadLabel}`
+      prompt += ` | Slippage estimado=$${(avgSpread / 2).toFixed(2)} por leg\n`
+      if (avgSpread > 0.20) {
+        prompt += `ALERTA: Spread largo pode eliminar edge da estratégia — calcule crédito líquido após slippage antes de operar.\n`
       }
     }
   }
@@ -1462,7 +1502,7 @@ const STATIC_SYSTEM_PROMPT =
   'RSI sobrecomprado (>70) + resistência GEX = setup de venda forte. RSI sobrevendido (<30) + suporte GEX = setup de compra forte. ' +
   'MACD crossover bullish + GEX positivo = momentum sustentável. Use indicadores técnicos como confirmação, não como sinal primário. ' +
   'Tens à disposição a ferramenta fetch_24h_context para contexto macro (FRED, BLS, Fear & Greed, eventos, earnings). ' +
-  'Invoca-a quando: VIX acima de 20 ou spike (>15%), P/C acima de 1.3 ou abaixo de 0.6, RSI extremo com MACD crossover, ou quando o utilizador pedir macro/earnings. ' +
+  'Invoca-a quando: VIX acima de 20 ou spike (>15%), P/C acima de 1.3 ou abaixo de 0.6, RSI extremo com MACD crossover, evento macro de alto impacto (FOMC, CPI, NFP, PPI) nas próximas 48h, ou quando o utilizador pedir macro/earnings. ' +
   'TERMO CRÍTICO — TERM STRUCTURE DINÂMICA: Você recebe o espectro completo da cadeia de opções (0 a 60 DTE) via expirations dinâmicas reais — NÃO buckets fixos. ' +
   'É estritamente proibido limitar sua análise a DTEs tradicionais pré-definidos. ' +
   'Varra a term structure completa e identifique o DTE exato com maior distorção de prêmio, melhor Risco/Retorno ou proteção via Gamma. ' +
