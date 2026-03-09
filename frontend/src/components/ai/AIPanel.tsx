@@ -102,7 +102,7 @@ export function AIPanel() {
               <h2 className="text-sm font-display font-bold text-text-primary tracking-wide">
                 Análise IA
               </h2>
-              <p className="text-[11px] text-text-muted mt-0.5">
+              <p className="hidden sm:block text-[11px] text-text-muted mt-0.5">
                 Powered by Claude Sonnet 4.6 — estratégias de opções em tempo real
               </p>
             </div>

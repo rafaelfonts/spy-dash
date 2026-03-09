@@ -289,7 +289,7 @@ export const GEXPanel = memo(function GEXPanel() {
       )}
 
       {/* Expiration dropdown + anomaly badge + Analisar Fluxo button */}
-      <div className="flex items-center justify-between mb-3 gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
         <div className="flex items-center gap-2 min-w-0">
           {gexDynamic && gexDynamic.length > 0 ? (
             <select
@@ -321,7 +321,7 @@ export const GEXPanel = memo(function GEXPanel() {
         <button
           onClick={analyzeFlow}
           disabled={flowState === 'streaming' || !activeGex}
-          className={`shrink-0 px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 whitespace-nowrap ${
+          className={`self-start sm:self-auto shrink-0 px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 whitespace-nowrap ${
             flowState === 'streaming' || !activeGex
               ? 'bg-bg-elevated text-text-muted cursor-not-allowed border border-border-subtle'
               : 'bg-[#00ff88]/10 text-[#00ff88] border border-[#00ff88]/30 hover:bg-[#00ff88]/20 hover:border-[#00ff88]/50 active:scale-95'

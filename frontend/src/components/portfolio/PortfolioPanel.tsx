@@ -142,18 +142,23 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, ease: 'easeOut' }}
     >
-      <div className="flex items-center justify-between mb-4">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+        <div className="flex items-baseline gap-2">
           <h2 className="text-sm font-display font-bold text-text-primary tracking-wide">
             Carteira
           </h2>
           {capturedAt && (
-            <p className="text-[10px] text-text-muted mt-0.5">
-              Dados: {new Date(capturedAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/New_York' })} ET
-            </p>
+            <span className="text-[10px] text-text-muted">
+              <span className="sm:hidden">
+                {new Date(capturedAt).toLocaleString('pt-BR', { timeStyle: 'short', timeZone: 'America/New_York' })} ET
+              </span>
+              <span className="hidden sm:inline">
+                {new Date(capturedAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/New_York' })} ET
+              </span>
+            </span>
           )}
         </div>
-        <div className="flex items-center flex-wrap gap-2">
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setModalOpen(true)}
@@ -175,12 +180,7 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
             disabled={analyzing || positions.length === 0}
             className="px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 bg-[#00ff88]/10 border border-[#00ff88]/30 text-[#00ff88] hover:bg-[#00ff88]/20 hover:border-[#00ff88]/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {analyzing ? 'Analisando…' : (
-              <>
-                <span className="hidden sm:inline">Analisar carteira</span>
-                <span className="sm:hidden">Analisar</span>
-              </>
-            )}
+            {analyzing ? 'Analisando…' : 'Analisar'}
           </button>
         </div>
       </div>
