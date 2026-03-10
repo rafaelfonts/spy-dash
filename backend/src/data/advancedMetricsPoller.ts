@@ -101,6 +101,7 @@ async function tick(): Promise<void> {
       vannaExposure: bucket.totalVannaExposure,
       charmExposure: bucket.totalCharmExposure,
       volatilityTrigger: bucket.volatilityTrigger,
+      maxPain: bucket.maxPain ?? null,
     }
   }
 

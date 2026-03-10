@@ -455,14 +455,14 @@ export const GEXPanel = memo(function GEXPanel() {
               {activeGex.totalVannaExposure != null ? (
                 <>
                   <div className={`text-sm font-bold font-num ${
-                    activeGex.totalVannaExposure < -5_000_000 ? 'text-red-400'
-                    : activeGex.totalVannaExposure > 2_000_000 ? 'text-[#00ff88]'
+                    activeGex.totalVannaExposure < -5 ? 'text-red-400'
+                    : activeGex.totalVannaExposure > 2 ? 'text-[#00ff88]'
                     : 'text-text-primary'
                   }`}>
-                    {activeGex.totalVannaExposure >= 0 ? '+' : ''}${(activeGex.totalVannaExposure / 1_000_000).toFixed(1)}M
+                    {activeGex.totalVannaExposure >= 0 ? '+' : ''}${activeGex.totalVannaExposure.toFixed(1)}M
                   </div>
                   <div className="text-[9px] text-text-muted mt-0.5">
-                    {activeGex.totalVannaExposure < -5_000_000 ? 'Bearish' : activeGex.totalVannaExposure > 2_000_000 ? 'Bullish' : 'Neutro'}
+                    {activeGex.totalVannaExposure < -5 ? 'Bearish' : activeGex.totalVannaExposure > 2 ? 'Bullish' : 'Neutro'}
                   </div>
                 </>
               ) : (
@@ -476,12 +476,12 @@ export const GEXPanel = memo(function GEXPanel() {
               {activeGex.totalCharmExposure != null ? (
                 <>
                   <div className={`text-sm font-bold font-num ${
-                    activeGex.totalCharmExposure > 1_000_000 ? 'text-[#00ff88]' : 'text-text-primary'
+                    Math.abs(activeGex.totalCharmExposure) > 1 ? 'text-[#00ff88]' : 'text-text-primary'
                   }`}>
-                    ${(activeGex.totalCharmExposure / 1_000_000).toFixed(1)}M/dia
+                    {activeGex.totalCharmExposure >= 0 ? '+' : ''}${activeGex.totalCharmExposure.toFixed(1)}M/dia
                   </div>
                   <div className="text-[9px] text-text-muted mt-0.5">
-                    {activeGex.totalCharmExposure > 1_000_000 ? 'Pressão' : 'Neutro'}
+                    {Math.abs(activeGex.totalCharmExposure) > 1 ? 'Pressão' : Math.abs(activeGex.totalCharmExposure) > 0.5 ? 'Moderada' : 'Neutro'}
                   </div>
                 </>
               ) : (

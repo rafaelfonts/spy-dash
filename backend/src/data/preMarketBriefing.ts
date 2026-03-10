@@ -282,7 +282,7 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
         title: '🌅 Pre-Market Briefing — SPY Dash',
         description: markdown,
         color: DISCORD_COLORS.preMarket,
-        footer: { text: `Gerado às ${new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/New_York' })} ET` },
+        footer: { text: `Gerado às ${new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })}` },
         timestamp: new Date().toISOString(),
       })
     } else {
@@ -290,7 +290,7 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
         title: '🌆 Resumo Pós-Fechamento — SPY Dash',
         description: markdown,
         color: DISCORD_COLORS.postClose,
-        footer: { text: `Fechamento ${new Date().toLocaleDateString('pt-BR', { timeZone: 'America/New_York' })} ET` },
+        footer: { text: `Fechamento ${new Date().toLocaleDateString('pt-BR', { timeZone: 'America/New_York' })} | ${new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })}` },
         timestamp: new Date().toISOString(),
       })
     }

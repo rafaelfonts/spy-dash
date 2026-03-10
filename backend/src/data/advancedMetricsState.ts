@@ -35,6 +35,7 @@ export interface AdvancedMetricsPayload {
     vannaExposure: number   // VEX total $M (dealers' delta sensitivity to IV)
     charmExposure: number   // CEX total $M/day (dealers' delta decay per day)
     volatilityTrigger: number  // VT: GEX-weighted avg of 3 strikes nearest flipPoint
+    maxPain: { maxPainStrike: number; distanceFromSpot: number; distancePct: number; pinRisk: 'high' | 'moderate' | 'low' } | null
   } | null
   profile: {
     poc: number             // Point of Control

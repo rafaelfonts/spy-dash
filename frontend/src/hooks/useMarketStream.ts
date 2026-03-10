@@ -241,6 +241,7 @@ export function useMarketStream(): void {
                 totalVannaExposure: e.gex.totalVannaExposure,
                 totalCharmExposure: e.gex.totalCharmExposure,
                 volatilityTrigger: e.gex.volatilityTrigger,
+                maxPain: e.gex.maxPain ?? null,
               },
             })))
           }
