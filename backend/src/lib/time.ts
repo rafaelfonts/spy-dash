@@ -1,19 +1,17 @@
-function getETOffsetHours(now: Date): number {
-  const jan = new Date(now.getFullYear(), 0, 1).getTimezoneOffset()
-  const jul = new Date(now.getFullYear(), 6, 1).getTimezoneOffset()
-  const isDst = now.getTimezoneOffset() < Math.max(jan, jul)
-  return isDst ? -4 : -5
-}
-
 /**
  * Returns minutes since midnight ET (0–1439). DST-aware.
+ * Uses Intl.DateTimeFormat with America/New_York — correct on any server timezone (including UTC).
  */
 export function getETMinutes(now: Date = new Date()): number {
-  const etOffset = getETOffsetHours(now)
-  let etMinutes = (now.getUTCHours() + etOffset) * 60 + now.getUTCMinutes()
-  if (etMinutes < 0) etMinutes += 24 * 60
-  if (etMinutes >= 24 * 60) etMinutes -= 24 * 60
-  return etMinutes
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  }).formatToParts(now)
+  const h = parseInt(parts.find(p => p.type === 'hour')!.value, 10)
+  const m = parseInt(parts.find(p => p.type === 'minute')!.value, 10)
+  return h * 60 + m
 }
 
 /**
