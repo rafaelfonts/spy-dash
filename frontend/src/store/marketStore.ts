@@ -125,6 +125,8 @@ export interface TechnicalIndicatorsData {
     lower: number
     position: 'above_upper' | 'near_upper' | 'middle' | 'near_lower' | 'below_lower'
   }
+  bbPercentB?: number | null
+  bbBandwidth?: number | null
   capturedAt: string
   ivCone?: IVConeData | null
   dataStatus?: 'ok' | 'waiting'

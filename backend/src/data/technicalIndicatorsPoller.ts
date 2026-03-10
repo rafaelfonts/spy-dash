@@ -28,6 +28,7 @@ function calcRSI(prices: number[], period = 14): number {
   }
   const avgGain = gains / period
   const avgLoss = losses / period
+  if (avgGain === 0 && avgLoss === 0) return 50  // flat market (e.g. closed) → neutral
   if (avgLoss === 0) return 100
   const rs = avgGain / avgLoss
   return 100 - 100 / (1 + rs)
@@ -122,6 +123,14 @@ function tick(): void {
     bbands.position = deriveBBPosition(currentPrice, bbands)
   }
 
+  // BB %B and Bandwidth — requires non-flat bands (stdDev > 0)
+  const bbFlat = bbands.upper === bbands.lower
+  const bbPercentB =
+    bbFlat || currentPrice == null
+      ? null
+      : (currentPrice - bbands.lower) / (bbands.upper - bbands.lower)
+  const bbBandwidth = bbFlat ? null : (bbands.upper - bbands.lower) / bbands.middle * 100
+
   // IV Cone snapshot — piggybacking on 5-min tick (uses same priceHistory)
   const ivCone = buildIVConeSnapshot()
   if (ivCone) {
@@ -135,6 +144,8 @@ function tick(): void {
     rsi14,
     macd,
     bbands,
+    bbPercentB,
+    bbBandwidth,
     capturedAt: new Date().toISOString(),
     ivCone: ivCone ?? null,
     dataStatus: 'ok',
