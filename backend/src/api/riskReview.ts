@@ -169,7 +169,7 @@ export async function registerRiskReview(fastify: FastifyInstance): Promise<void
 
         const msg = await anthropic.messages.create({
           model: CONFIG.ANTHROPIC_MODEL,
-          max_tokens: 1024,
+          max_tokens: 2000,
           system: CRO_SYSTEM_PROMPT,
           messages: [{ role: 'user', content: userContent }],
         })

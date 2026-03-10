@@ -1209,7 +1209,7 @@ async function extractStructuredOutput(
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
-        max_tokens: 700,
+        max_tokens: 1000,
         response_format: { type: 'json_schema', json_schema: STRUCTURED_SCHEMA },
         messages: [
           {
@@ -1344,6 +1344,11 @@ async function streamTokens(
           fullResponse += content
           sendEvent('token', { text: content })
         }
+
+        // Warn if OpenAI stopped due to token limit
+        if (choice.finish_reason === 'length') {
+          console.warn('[AI] finish_reason=length — resposta truncada pelo limite de tokens')
+        }
       } catch {
         // skip malformed lines
       }
@@ -1357,7 +1362,7 @@ async function streamTokens(
 // Claude 3.5 Sonnet streaming — same contract as OpenAI path (fullResponse + toolCallName)
 // ---------------------------------------------------------------------------
 
-const CLAUDE_MAX_TOKENS = 1200
+const CLAUDE_MAX_TOKENS = 2500
 
 type SendEventFn = (event: string, data: unknown) => void
 
@@ -1767,7 +1772,7 @@ export async function runAnalysisForPayload(
       body: JSON.stringify({
         model: 'gpt-4o',
         stream: true,
-        max_tokens: 1200,
+        max_tokens: 2500,
         tools: [FETCH_CONTEXT_TOOL],
         tool_choice: 'auto',
         messages: [
@@ -1827,7 +1832,7 @@ export async function runAnalysisForPayload(
         body: JSON.stringify({
           model: 'gpt-4o',
           stream: true,
-          max_tokens: 1200,
+          max_tokens: 2500,
           messages: followUpMessages,
         }),
       })
@@ -2069,7 +2074,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
           body: JSON.stringify({
             model: 'gpt-4o',
             stream: true,
-            max_tokens: 1200,
+            max_tokens: 2500,
             tools: [FETCH_CONTEXT_TOOL],
             tool_choice: 'auto',
             messages: baseMessages,
@@ -2131,7 +2136,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
             body: JSON.stringify({
               model: 'gpt-4o',
               stream: true,
-              max_tokens: 1200,
+              max_tokens: 2500,
               messages: followUpMessages,
             }),
           })
@@ -2366,7 +2371,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           stream: true,
-          max_tokens: 400,
+          max_tokens: 800,
           messages: [
             {
               role: 'system',
