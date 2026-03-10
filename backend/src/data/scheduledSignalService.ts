@@ -23,6 +23,16 @@ const SCHEDULED_SLOTS: Array<{ h: number; m: number; label: string }> = [
   { h: 15, m: 0, label: '15:00' },
 ]
 
+/** Redis key for per-slot signal (so 15:00 can compare vs 10:30) */
+function slotCacheKey(today: string, slot: string): string {
+  return `cache:trade_signal_slot:${today}:${slot}`
+}
+
+/** Redis key for today's briefing setup thesis (written by preMarketBriefing.ts) */
+function setupThesisKey(today: string): string {
+  return `briefing_setup_thesis:${today}`
+}
+
 // ---------------------------------------------------------------------------
 // ET time helpers (same logic as preMarketBriefing)
 // ---------------------------------------------------------------------------
@@ -50,10 +60,11 @@ export interface TradeSignalPayload {
   bias: AnalysisStructuredOutput['bias']
   key_levels: AnalysisStructuredOutput['key_levels']
   timestamp: number
+  slot?: string
   summary?: string
 }
 
-function structuredToPayload(structured: AnalysisStructuredOutput): TradeSignalPayload {
+function structuredToPayload(structured: AnalysisStructuredOutput, slot: string): TradeSignalPayload {
   return {
     trade_signal: structured.trade_signal,
     regime_score: structured.regime_score,
@@ -61,6 +72,7 @@ function structuredToPayload(structured: AnalysisStructuredOutput): TradeSignalP
     bias: structured.bias,
     key_levels: structured.key_levels,
     timestamp: Date.now(),
+    slot,
   }
 }
 
@@ -71,6 +83,8 @@ function structuredToPayload(structured: AnalysisStructuredOutput): TradeSignalP
 async function sendSignalToDiscord(
   result: TradeSignalPayload,
   slot: '10:30' | '15:00',
+  briefingThesis: string | null,
+  previousSignal: TradeSignalPayload | null,
 ): Promise<void> {
   const colorMap = {
     trade: DISCORD_COLORS.signalProceed,
@@ -105,6 +119,32 @@ async function sendSignalToDiscord(
     if (kvParts) lines.push(`**Níveis:** ${kvParts}`)
   }
 
+  // Reference briefing setup and show alignment/contradiction explicitly
+  if (briefingThesis) {
+    const alignmentMap = {
+      trade: '✅ Pré-condições atendidas — setup confirmado',
+      wait: '⏳ Setup válido — aguardando confirmação',
+      avoid: '❌ Pré-condições não atendidas — setup não executável agora',
+    }
+    lines.push('')
+    lines.push(`**📌 Setup Briefing 9h:** ${briefingThesis}`)
+    lines.push(`**Status:** ${alignmentMap[signal]}`)
+  }
+
+  // For 15:00 slot, show change vs 10:30 signal
+  if (slot === '15:00' && previousSignal) {
+    const prevSignal = previousSignal.trade_signal ?? 'wait'
+    const prevLabel = labelMap[prevSignal]
+    const prevScore = previousSignal.regime_score
+    if (prevSignal !== signal || prevScore !== result.regime_score) {
+      const scoreChange = (result.regime_score ?? 0) - (prevScore ?? 0)
+      const scoreNote = scoreChange > 0 ? `+${scoreChange}` : `${scoreChange}`
+      lines.push(`**📈 vs. Sinal 10:30:** era ${iconMap[prevSignal]} ${prevLabel} (Regime ${prevScore}/10, ${scoreNote})`)
+    } else {
+      lines.push(`**📈 vs. Sinal 10:30:** mantido — ${icon} ${label} (Regime ${result.regime_score}/10 estável)`)
+    }
+  }
+
   await sendEmbed('sinais', {
     title: `🎯 Sinal ${slot} ET — ${new Date().toLocaleDateString('pt-BR', { timeZone: 'America/New_York' })}`,
     description: lines.join('\n'),
@@ -131,6 +171,12 @@ export async function runScheduledSignalAnalysis(slotLabel: string): Promise<voi
   console.log(`[ScheduledSignal] Iniciando análise agendada (${slotLabel} ET)...`)
 
   try {
+    // Fetch context data in parallel before running analysis
+    const [briefingThesis, previousSlotSignal] = await Promise.all([
+      cacheGet<string>(setupThesisKey(today)),
+      slotLabel === '15:00' ? cacheGet<TradeSignalPayload>(slotCacheKey(today, '10:30')) : Promise.resolve(null),
+    ])
+
     const { fullText, structured } = await runAnalysisForPayload({})
 
     if (!structured) {
@@ -138,11 +184,15 @@ export async function runScheduledSignalAnalysis(slotLabel: string): Promise<voi
       return
     }
 
-    const payload: TradeSignalPayload = structuredToPayload(structured)
+    const payload: TradeSignalPayload = structuredToPayload(structured, slotLabel)
 
-    await cacheSet(TRADE_SIGNAL_CACHE_KEY, payload, TRADE_SIGNAL_TTL_MS, 'scheduled_signal')
+    // Save slot-specific key (for 15:00 to compare vs 10:30) and the generic latest key
+    await Promise.all([
+      cacheSet(TRADE_SIGNAL_CACHE_KEY, payload, TRADE_SIGNAL_TTL_MS, 'scheduled_signal'),
+      cacheSet(slotCacheKey(today, slotLabel), payload, TRADE_SIGNAL_TTL_MS, 'scheduled_signal'),
+    ])
     emitter.emit('trade_signal_update', payload)
-    await sendSignalToDiscord(payload, slotLabel as '10:30' | '15:00')
+    await sendSignalToDiscord(payload, slotLabel as '10:30' | '15:00', briefingThesis ?? null, previousSlotSignal ?? null)
     console.log(`[ScheduledSignal] ${slotLabel} ET concluído: trade_signal=${payload.trade_signal} regime_score=${payload.regime_score}`)
   } catch (err) {
     console.error('[ScheduledSignal] Erro na análise agendada:', (err as Error).message)

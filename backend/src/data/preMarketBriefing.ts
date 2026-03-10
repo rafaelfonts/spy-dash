@@ -34,17 +34,20 @@ import type { EnrichedPosition } from '../types/portfolio'
 
 const BRIEFING_TTL_MS = 14 * 60 * 60 * 1000  // 14h — survives overnight in Redis
 
-const PRE_MARKET_PROMPT = `Você é o Estrategista Quantitativo Chefe do SPY Dash. Sua tarefa é analisar os dados pré-mercado fornecidos (Preço SPY, GEX, IV Rank, VIX, Macro Events) e entregar o briefing de abertura. Identifique o DTE com maior oportunidade matemática hoje (0 DTE em diante).
+const PRE_MARKET_PROMPT = `Você é o Estrategista Quantitativo Chefe do SPY Dash. Sua tarefa é analisar os dados pré-mercado fornecidos e entregar o briefing de abertura. Identifique o setup matemático com maior oportunidade estrutural hoje — sem emitir veredicto de execução (isso é função do Sinal das 10:30).
 REGRAS DE FORMATAÇÃO E ESTILO (INEGOCIÁVEIS):
 1. ZERO RUÍDO: Não use saudações, introduções ou fechamentos. Comece imediatamente com os dados.
 2. CONCISÃO EXTREMA: O texto final DEVE ter menos de 2.500 caracteres. Use bullet points curtos e diretos.
-3. ESTRUTURA OBRIGATÓRIA:
+3. ESTRUTURA OBRIGATÓRIA (use exatamente estas seções na ordem abaixo):
 - 🧱 **Estrutura GEX & Preço**: SPY atual vs. Maior Gamma Negativo (Suporte) e Positivo (Resistência).
 - 🌪️ **Volatilidade**: Status do VIX e IV Rank. Indique se o IV Rank favorece venda de prêmio (> 30%) ou exige cautela.
 - 📅 **Risco Macro**: Liste apenas os eventos binários de ALTO IMPACTO do dia. Se não houver, diga 'Sessão Livre de Eventos Macro'.
-- 🎯 **Veredito Sniper**: Com base nos dados, há configuração matemática para buscar entradas de Put Spread hoje? Se sim, indique o DTE com maior oportunidade clara. (Sim/Não e justificativa em 1 linha).
+- 📊 **Setup Matemático do Dia**: Descreva a oportunidade estrutural identificada (GEX + Max Pain + IV Rank + candidato de estratégia e DTE). FORMATO OBRIGATÓRIO: comece com "Candidato: [estratégia] [strikes/exp]." seguido de 1–2 frases de justificativa matemática. NÃO emita veredicto SIM/NÃO nem instrução de execução — o sinal das 10:30 fará essa avaliação.
+- 🎯 **Pré-condições para Execução** (avaliadas no Sinal 10:30): Liste em bullets o que precisa ser verdadeiro para confirmar execução. Exemplos: Regime Score ≥ 5/10 · VIX confiança ALTA · HV30 válida (> 10%) · GEX do DTE alvo negativo confirmado · dados de vol sem corrupção. Seja específico com os valores de referência para estes dados.
+- ⚡ **Nível de Vigilância**: O que monitorar no pre-market antes das 9:30 (catalisadores, futuros SPY, direção VIX/VVIX, gap de abertura).
 INTERPRETAÇÃO MACRO: T5Y2Y negativo (curva 5Y-2Y invertida) por mais de 30 dias = sinal histórico de recessão em 12 meses. Quando presente nos dados, mencionar no briefing e elevar cautela em posições de longo prazo (45 DTE).
 Não explique o que é GEX ou IV Rank. Entregue apenas o sinal.
+PROIBIÇÃO: Não emita "SIM" ou "NÃO OPERAR" no briefing — isso é exclusivo do Sinal Agendado (10:30/15:00).
 PROIBIÇÃO DE TERMOS TÉCNICOS DE BACKEND: Nunca instrua o usuário a 'ir ao banco de dados' ou 'abrir o Supabase'. Se recomendar a abertura de uma posição, use o jargão correto: 'Execute a ordem na sua corretora e registre o trade no módulo de Portfólio do dashboard'.`
 
 const POST_MARKET_PROMPT = `Você é o Gestor de Risco Quantitativo do SPY Dash. O mercado acaba de fechar. Sua tarefa é ler os dados de fechamento (Preço SPY, GEX atualizado, VIX) e o status do portfólio de opções ativas.
@@ -273,6 +276,14 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
     await cacheSet(cacheKey, briefing, BRIEFING_TTL_MS, 'premarket')
     todaysBriefing = briefing
 
+    // Save setup thesis for scheduled signal to reference in Discord
+    if (type === 'pre-market') {
+      const thesis = extractSetupThesis(markdown)
+      if (thesis) {
+        await cacheSet(`briefing_setup_thesis:${today}`, thesis, BRIEFING_TTL_MS, 'premarket-briefing').catch(() => {})
+      }
+    }
+
     // Broadcast to all connected SSE clients
     emitter.emit('briefing', briefing)
 
@@ -300,6 +311,29 @@ async function generateBriefing(type: 'pre-market' | 'post-close'): Promise<void
     console.error(`[PreMarket] Erro ao gerar briefing '${type}':`, err)
     // Do not rethrow — scheduler must not break the process
   }
+}
+
+// ---------------------------------------------------------------------------
+// Setup thesis extractor — for scheduled signal cross-reference
+// ---------------------------------------------------------------------------
+
+/**
+ * Extracts the "Candidato: ..." line from the pre-market briefing markdown.
+ * This short string is saved to Redis so the 10:30/15:00 signals can reference it in Discord.
+ */
+export function extractSetupThesis(markdown: string): string {
+  // Try to match "Candidato: ..." line explicitly
+  const candidatoMatch = markdown.match(/Candidato:\s*([^\n]+)/i)
+  if (candidatoMatch?.[1]) return `Candidato: ${candidatoMatch[1].trim()}`.slice(0, 220)
+
+  // Fallback: first non-empty line under the "Setup Matemático" section
+  const setupMatch = markdown.match(/Setup Matemático[^\n]*\n+([\s\S]*?)(?:\n\s*[-*•]|\n\n|$)/)
+  if (setupMatch?.[1]) {
+    const firstLine = setupMatch[1].trim().split('\n')[0]?.trim()
+    if (firstLine) return firstLine.slice(0, 220)
+  }
+
+  return ''
 }
 
 // ---------------------------------------------------------------------------
