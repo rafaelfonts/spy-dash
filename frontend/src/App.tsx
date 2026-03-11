@@ -11,6 +11,7 @@ import { AIPanel } from './components/ai/AIPanel'
 import { RegimeDashboard } from './components/ai/RegimeDashboard'
 import { PreMarketBriefing } from './components/ai/PreMarketBriefing'
 import { LastScheduledSignal } from './components/ai/LastScheduledSignal'
+import { SignalPerformanceCard } from './components/ai/SignalPerformanceCard'
 import { OptionChainPanel } from './components/options/OptionChainPanel'
 import { GEXPanel } from './components/options/GEXPanel'
 import { PortfolioPanel } from './components/portfolio/PortfolioPanel'
@@ -41,6 +42,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         </div>
         <PreMarketBriefing />
         <LastScheduledSignal />
+        <SignalPerformanceCard />
         <PortfolioPanel />
         <RegimeDashboard />
         <AIPanel />

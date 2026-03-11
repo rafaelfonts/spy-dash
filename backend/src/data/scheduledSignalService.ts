@@ -7,6 +7,8 @@ import { emitter } from './marketState'
 import { cacheGet, cacheSet, redis } from '../lib/cacheStore'
 import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
 import { runAnalysisForPayload } from '../api/openai'
+import { saveSignal } from './signalLogger'
+import { getAdvancedMetricsSnapshot } from './advancedMetricsState'
 import type { AnalysisStructuredOutput } from '../types/market'
 
 // ---------------------------------------------------------------------------
@@ -185,6 +187,16 @@ export async function runScheduledSignalAnalysis(slotLabel: string): Promise<voi
     }
 
     const payload: TradeSignalPayload = structuredToPayload(structured, slotLabel)
+
+    // Persist to Supabase for backtesting (fire-and-forget; does not affect broadcast)
+    const advSnap = getAdvancedMetricsSnapshot()
+    const noTradeScore = advSnap?.noTrade?.noTradeScore ?? null
+    const gexTotal = advSnap?.gexDynamic
+      ? advSnap.gexDynamic.reduce((s, e) => s + e.gex.totalNetGamma, 0)
+      : null
+    saveSignal(structured, slotLabel, noTradeScore, gexTotal).catch((err) =>
+      console.error('[ScheduledSignal] saveSignal error:', (err as Error).message),
+    )
 
     // Save slot-specific key (for 15:00 to compare vs 10:30) and the generic latest key
     await Promise.all([

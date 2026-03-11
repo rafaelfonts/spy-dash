@@ -22,6 +22,7 @@ import { startPortfolioTrackerScheduler, refreshPortfolioSnapshot } from './data
 import { startCBOEPCRScheduler } from './data/cboePCRPoller'
 import { startApeWisdomPoller } from './data/apeWisdomPoller'
 import { startMacroDigestScheduler, restoreMacroDigestFromCache } from './data/macroDigestService'
+import { startOutcomeFiller } from './data/signalLogger'
 import { registerSSE } from './api/sse'
 import { registerOpenAI } from './api/openai'
 import { registerRiskReview } from './api/riskReview'
@@ -31,6 +32,7 @@ import { registerGex } from './api/gex'
 import { registerVolumeProfile } from './api/volumeProfile'
 import { registerAnalysisSearch } from './api/analysisSearch'
 import { registerPortfolio } from './api/portfolio'
+import { registerSignalMetrics } from './api/signalMetrics'
 import { getOptionChain } from './data/optionChain'
 import { requireAuth } from './middleware/authMiddleware'
 import { restoreSnapshotsFromCache } from './lib/restoreCache'
@@ -96,6 +98,7 @@ async function bootstrap(): Promise<void> {
     await registerVolumeProfile(app)
     await registerAnalysisSearch(app)
     await registerPortfolio(app)
+    await registerSignalMetrics(app)
     app.get('/api/option-chain', async () => {
       return await getOptionChain()
     })
@@ -187,6 +190,7 @@ async function bootstrap(): Promise<void> {
     startCBOEPCRScheduler()
     startApeWisdomPoller()
     startMacroDigestScheduler()
+    startOutcomeFiller()
   }).catch(console.error)
 }
 
