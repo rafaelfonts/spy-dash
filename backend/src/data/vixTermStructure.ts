@@ -6,6 +6,16 @@ export interface VIXTermStructureResult {
   structure: 'contango' | 'backwardation' | 'flat'
   steepness: number                              // (longTermIV - shortTermIV) / shortTermIV * 100
   capturedAt: string                             // ISO 8601
+  /**
+   * IV do vencimento mais próximo (VIX-like%, ×100), proxy do VIX1D da CBOE.
+   * null quando a curva tem menos de 1 ponto válido.
+   */
+  vix1dProxy: number | null
+  /**
+   * vix1dProxy / spot. Ratio > 1.15 = backwardation de curtíssimo prazo:
+   * mercado pagando mais pelo vencimento imediato do que pelo VIX spot — stress iminente.
+   */
+  vix1dRatio: number | null
 }
 
 /**
@@ -14,6 +24,8 @@ export interface VIXTermStructureResult {
  * as a proxy for forward implied volatility at each tenor.
  *
  * Steepness thresholds: >2% = contango, <-2% = backwardation, else flat.
+ * vix1dProxy: IV (%) do menor DTE — proxy do VIX1D CBOE.
+ * vix1dRatio: vix1dProxy / vixSpot — >1.15 = stress intraday iminente.
  */
 export function inferTermStructure(
   optionChain: OptionExpiry[],
@@ -50,11 +62,17 @@ export function inferTermStructure(
   const structure =
     steepness > 2 ? 'contango' : steepness < -2 ? 'backwardation' : 'flat'
 
+  // VIX1D proxy: IV do menor DTE da curva (já em VIX-like %, ×100)
+  const vix1dProxy = curve[0].iv
+  const vix1dRatio = vixSpot > 0 ? Math.round((vix1dProxy / vixSpot) * 1000) / 1000 : null
+
   return {
     spot: vixSpot,
     curve,
     structure,
     steepness,
     capturedAt: new Date().toISOString(),
+    vix1dProxy,
+    vix1dRatio,
   }
 }

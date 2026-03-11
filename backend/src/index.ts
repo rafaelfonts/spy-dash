@@ -37,6 +37,7 @@ import { restoreSnapshotsFromCache } from './lib/restoreCache'
 import { restorePriceHistory, restoreFromTradier, restoreSPYQuoteFromTradier, restoreSPYQuoteFromCache, restoreIntradayFromRedis, startIntradayCachePersistence } from './data/priceHistory'
 import { cleanupExpiredCache } from './lib/cacheStore'
 import { getBreakerStatuses, resetBreaker, listBreakers } from './lib/circuitBreaker'
+import { seedGexHistoryFromRedis } from './data/regimeScorer'
 
 const fastify = Fastify({
   logger: {
@@ -154,6 +155,9 @@ async function bootstrap(): Promise<void> {
   ]).then(() => {
     console.log('[Bootstrap] Market state restore complete — starting pollers and streams.')
     startIntradayCachePersistence()
+
+    // Pré-popular histórico GEX 5 dias (Redis → memória) para regime scorer ter contexto imediato
+    withTimeout(seedGexHistoryFromRedis(), 5_000, 'seedGexHistoryFromRedis').catch(console.error)
 
     // Tradier-based pollers are independent of Tastytrade — start unconditionally
     startAdvancedMetricsPoller()

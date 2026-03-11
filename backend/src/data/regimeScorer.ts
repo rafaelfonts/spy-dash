@@ -11,6 +11,7 @@ import { getVIXTermStructureSnapshot } from './vixTermStructureState'
 import { getExpectedMoveSnapshot } from './expectedMoveState'
 import { getOpexStatus } from './opexCalendar'
 import { getSkewSnapshot } from './skewState'
+import { getTechnicalSnapshot } from './technicalIndicatorsState'
 import type { GEXDynamic } from './gexService'
 import { GEX_THRESHOLDS } from '../lib/gexThresholds'
 
@@ -44,7 +45,7 @@ export type GexComparison =
   | 'stronger_negative'
 
 // ---------------------------------------------------------------------------
-// GEX history for gex_vs_yesterday (in-memory, resets on server restart)
+// GEX history for gex_vs_yesterday e gex_trend_5d (in-memory, max 5 entries)
 // ---------------------------------------------------------------------------
 
 let gexDailyHistory: Array<{ date: string; total: number }> = []
@@ -62,7 +63,7 @@ export function updateGexHistory(total: number): void {
   const etDate = getETDateString()
   if (!gexDailyHistory.length || gexDailyHistory.at(-1)!.date !== etDate) {
     gexDailyHistory.push({ date: etDate, total })
-    if (gexDailyHistory.length > 2) gexDailyHistory.shift()
+    if (gexDailyHistory.length > 5) gexDailyHistory.shift()  // max 5 dias
   } else {
     gexDailyHistory.at(-1)!.total = total
   }
@@ -70,13 +71,67 @@ export function updateGexHistory(total: number): void {
 
 export function getGexVsYesterday(current: number): GexComparison | null {
   if (gexDailyHistory.length < 2) return null
-  const prev = gexDailyHistory[0].total
+  const prev = gexDailyHistory[gexDailyHistory.length - 2].total
   const change = current - prev
   const threshold = Math.max(Math.abs(prev) * 0.05, 0.5)
   if (Math.abs(change) < threshold) return 'unchanged'
   if (current >= 0 && prev >= 0) return change > 0 ? 'stronger_positive' : 'weaker_positive'
   if (current < 0 && prev < 0) return change > 0 ? 'weaker_negative' : 'stronger_negative'
   return change > 0 ? 'stronger_positive' : 'stronger_negative'
+}
+
+/**
+ * Tendência de 5 dias do GEX total ($M).
+ * Retorna null quando há menos de 3 entradas (sem tendência confiável).
+ * Threshold de 10% relativo ou 0.5$M absoluto para classificar como rising/falling.
+ */
+export function getGexTrend5d(): 'rising' | 'flat' | 'falling' | null {
+  if (gexDailyHistory.length < 3) return null
+  const oldest = gexDailyHistory[0].total
+  const newest = gexDailyHistory.at(-1)!.total
+  const threshold = Math.max(Math.abs(oldest) * 0.10, 0.5)
+  const change = newest - oldest
+  if (change > threshold) return 'rising'
+  if (change < -threshold) return 'falling'
+  return 'flat'
+}
+
+/**
+ * Pré-popula gexDailyHistory com até 5 dias de história do Redis.
+ * Chamado no startup do servidor via index.ts.
+ * GEXDailySnapshot.netGex está em $B — convertemos para $M (×1000) para alinhar
+ * com o updateGexHistory que recebe valores em $M do advancedMetricsPoller.
+ */
+export async function seedGexHistoryFromRedis(): Promise<void> {
+  try {
+    // Import dinâmico para evitar dependência circular em tempo de inicialização
+    const { loadGEXHistory } = await import('./gexHistoryService')
+    const history = await loadGEXHistory(5)
+    if (history.length === 0) {
+      console.log('[RegimeScorer] Seed GEX history: sem dados Redis para pré-popular')
+      return
+    }
+    // Pré-popular sem sobrescrever entradas do dia atual (se já existirem)
+    const today = getETDateString()
+    for (const snap of history) {
+      if (!gexDailyHistory.some((h) => h.date === snap.capturedAt)) {
+        gexDailyHistory.push({
+          date: snap.capturedAt,
+          total: snap.netGex * 1000,  // $B → $M
+        })
+      }
+    }
+    // Garantir ordem cronológica e limite de 5
+    gexDailyHistory.sort((a, b) => a.date.localeCompare(b.date))
+    if (gexDailyHistory.length > 5) gexDailyHistory = gexDailyHistory.slice(-5)
+    console.log(
+      `[RegimeScorer] Seed GEX history: ${gexDailyHistory.length} dias carregados ` +
+      `[${gexDailyHistory.map((h) => `${h.date}:${h.total >= 0 ? '+' : ''}${h.total.toFixed(1)}M`).join(', ')}] ` +
+      `(hoje=${today})`,
+    )
+  } catch (err) {
+    console.warn('[RegimeScorer] Seed GEX history falhou — inicia sem histórico:', (err as Error).message)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -213,6 +268,27 @@ export function computeRegimeScore(gexDynamic: GEXDynamic | null): RegimeScorerR
   if (earningsCritical) raw -= 2
   if (spyLast != null && zgl != null && spyLast < zgl) raw -= 1
 
+  // --- Momentum técnico (RSI + MACD crossover) — máx ±2 pontos ---
+  // Lido do snapshot mais recente do technicalIndicatorsPoller (Wilder EMA RSI).
+  // Só aplica quando há dados suficientes (dataStatus='ok').
+  const tech = getTechnicalSnapshot()
+  if (tech?.dataStatus === 'ok') {
+    const rsi14 = tech.rsi14
+    const crossover = tech.macd.crossover
+
+    // RSI em zona bullish (55–70): momentum confirma long gamma — +1
+    // RSI sobrecomprado (>72): risco aumentado para short put — -1
+    // RSI em zona bearish (20–35): pressão downside — -1
+    if (rsi14 > 55 && rsi14 <= 70) raw += 1
+    else if (rsi14 > 72) raw -= 1
+    else if (rsi14 >= 20 && rsi14 < 35) raw -= 1
+
+    // MACD crossover: confirmação direcional (+1 / -1)
+    if (crossover === 'bullish') raw += 1
+    else if (crossover === 'bearish') raw -= 1
+  }
+
+  // Clampar em 0–10 (max interno pode chegar a 12 com momentum confirmando tudo)
   const score = Math.max(0, Math.min(10, raw))
 
   // --- vanna_regime ---
@@ -286,6 +362,7 @@ export function computeNoTradeScore(gexDynamic: GEXDynamic | null): NoTradeResul
   const vixChangePct = marketState.vix.changePct ?? null
   const spyLast = marketState.spy.last ?? null
   const flipCount = getRegimeFlipCount()
+  const termStructure = getVIXTermStructureSnapshot()
 
   // Post-OPEX: heaviest veto (weight 3)
   if (opex.isPostOpex) {
@@ -306,6 +383,14 @@ export function computeNoTradeScore(gexDynamic: GEXDynamic | null): NoTradeResul
   if (flipCount >= 2) {
     noTradeScore += 2
     activeVetos.push(`Regime GEX flipou ${flipCount}x hoje — mercado estruturalmente indeciso`)
+  }
+
+  // GEX caindo 5d + regime negativo (weight 2): dealers em modo de venda estrutural
+  const gexTrend5d = getGexTrend5d()
+  const allNegative = gexDynamic && gexDynamic.length > 0 && gexDynamic.every((e) => e.gex.regime === 'negative')
+  if (gexTrend5d === 'falling' && allNegative) {
+    noTradeScore += 2
+    activeVetos.push('GEX queda 5d + regime negativo — dealers em modo de venda estrutural')
   }
 
   // Skew flat (weight 2): RR25 > -1.0% — puts sem prêmio suficiente para put spread
@@ -354,6 +439,15 @@ export function computeNoTradeScore(gexDynamic: GEXDynamic | null): NoTradeResul
   if (vixChangePct !== null && Math.abs(vixChangePct) > 20) {
     noTradeScore += 1
     activeVetos.push(`VIX spike ${vixChangePct >= 0 ? '+' : ''}${vixChangePct.toFixed(1)}% — aguardar normalização`)
+  }
+
+  // VIX1D proxy > 1.15× VIX spot (weight 2): backwardation de curtíssimo prazo
+  // O mercado de opções está pagando mais pelo vencimento imediato do que pelo VIX spot —
+  // sinal de stress intraday iminente (análogo ao VIX1D/VIX da CBOE).
+  const vix1dRatio = termStructure?.vix1dRatio ?? null
+  if (vix1dRatio !== null && vix1dRatio > 1.15) {
+    noTradeScore += 2
+    activeVetos.push(`VIX1D/VIX=${vix1dRatio.toFixed(2)} — backwardation de curtíssimo prazo, stress intraday iminente`)
   }
 
   const noTradeLevel: NoTradeLevel =
