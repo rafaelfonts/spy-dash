@@ -12,6 +12,7 @@ import { getExpectedMoveSnapshot } from './expectedMoveState'
 import { getOpexStatus } from './opexCalendar'
 import { getSkewSnapshot } from './skewState'
 import type { GEXDynamic } from './gexService'
+import { GEX_THRESHOLDS } from '../lib/gexThresholds'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -203,7 +204,7 @@ export function computeRegimeScore(gexDynamic: GEXDynamic | null): RegimeScorerR
 
   if (spyLast != null && vt != null && spyLast > vt) raw += 1
 
-  if (vex != null && vex > 0 && vixLast != null && vixLast < 20) raw += 1
+  if (vex != null && vex > GEX_THRESHOLDS.VEX_TAILWIND && vixLast != null && vixLast < 20) raw += 1
 
   if (termStructure?.structure === 'contango') raw += 1
 
@@ -216,9 +217,9 @@ export function computeRegimeScore(gexDynamic: GEXDynamic | null): RegimeScorerR
 
   // --- vanna_regime ---
   let vannaRegime: 'tailwind' | 'neutral' | 'headwind'
-  if (vex != null && vex > 2 && vixLast != null && vixLast < 20) {
+  if (vex != null && vex > GEX_THRESHOLDS.VEX_TAILWIND && vixLast != null && vixLast < 20) {
     vannaRegime = 'tailwind'
-  } else if (vex != null && vex < -2) {
+  } else if (vex != null && vex < GEX_THRESHOLDS.VEX_HEADWIND) {
     vannaRegime = 'headwind'
   } else if (vixLast != null && vixLast > 20) {
     vannaRegime = 'headwind'
@@ -229,9 +230,9 @@ export function computeRegimeScore(gexDynamic: GEXDynamic | null): RegimeScorerR
   // --- charm_pressure ---
   let charmPressure: 'significant' | 'moderate' | 'neutral'
   const absCex = cex != null ? Math.abs(cex) : null
-  if (absCex != null && absCex > 2) {
+  if (absCex != null && absCex > GEX_THRESHOLDS.CEX_SIGNIFICANT) {
     charmPressure = 'significant'
-  } else if (absCex != null && absCex > 0.5) {
+  } else if (absCex != null && absCex > GEX_THRESHOLDS.CEX_MODERATE) {
     charmPressure = 'moderate'
   } else {
     charmPressure = 'neutral'
@@ -296,7 +297,7 @@ export function computeNoTradeScore(gexDynamic: GEXDynamic | null): NoTradeResul
   const vexAll = gexDynamic && gexDynamic.length > 0
     ? gexDynamic.reduce((sum, e) => sum + (e.gex.totalVannaExposure ?? 0), 0)
     : null
-  if (vexAll !== null && vexAll < -5 && vixLast !== null && vixLast > 20) {
+  if (vexAll !== null && vexAll < GEX_THRESHOLDS.VEX_DANGER && vixLast !== null && vixLast > 20) {
     noTradeScore += 3
     activeVetos.push(`VEX=${vexAll.toFixed(1)}M negativo + VIX=${vixLast.toFixed(1)} >20 — amplificação bearish`)
   }
@@ -307,12 +308,17 @@ export function computeNoTradeScore(gexDynamic: GEXDynamic | null): NoTradeResul
     activeVetos.push(`Regime GEX flipou ${flipCount}x hoje — mercado estruturalmente indeciso`)
   }
 
-  // Skew flat/inverted (weight 2)
+  // Skew flat (weight 2): RR25 > -1.0% — puts sem prêmio suficiente para put spread
+  // Skew invertido (weight +1 adicional): RR25 > 0% — calls mais caras que puts (destrutivo)
   const skewSnap = getSkewSnapshot()
   const relevantSkew = skewSnap?.dte21 ?? skewSnap?.dte7 ?? skewSnap?.dte0
-  if (relevantSkew && relevantSkew.riskReversal25 > -0.3) {
+  if (relevantSkew && relevantSkew.riskReversal25 > -1.0) {
     noTradeScore += 2
-    activeVetos.push(`Skew flat/invertido: RR25=${relevantSkew.riskReversal25.toFixed(2)}% — puts não pagam prêmio adicional`)
+    activeVetos.push(`Skew flat: RR25=${relevantSkew.riskReversal25.toFixed(2)}% — puts sem prêmio para put spread`)
+  }
+  if (relevantSkew && relevantSkew.riskReversal25 > 0) {
+    noTradeScore += 1
+    activeVetos.push('Skew INVERTIDO — calls mais caras que puts, NÃO vender put spread')
   }
 
   // SPY below VT + VIX >18 (weight 2)

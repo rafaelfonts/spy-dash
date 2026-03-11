@@ -17,21 +17,35 @@ import { buildIVConeSnapshot } from './ivConeService'
 // Pure calculation helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * RSI com suavização de Wilder (EMA fator 1/period).
+ * Requer prices.length >= period*2 para warm-up correto.
+ * Retorna 50 (neutro) quando série é muito curta ou completamente flat.
+ */
 function calcRSI(prices: number[], period = 14): number {
-  if (prices.length < period + 1) return 50
-  let gains = 0
-  let losses = 0
-  for (let i = prices.length - period; i < prices.length; i++) {
+  if (prices.length < period * 2) return 50
+
+  // Fase 1: semente via média simples dos primeiros `period` deltas
+  let avgGain = 0
+  let avgLoss = 0
+  for (let i = 1; i <= period; i++) {
     const diff = prices[i] - prices[i - 1]
-    if (diff > 0) gains += diff
-    else losses += Math.abs(diff)
+    if (diff > 0) avgGain += diff
+    else avgLoss += Math.abs(diff)
   }
-  const avgGain = gains / period
-  const avgLoss = losses / period
+  avgGain /= period
+  avgLoss /= period
+
+  // Fase 2: EMA de Wilder para o restante da série
+  for (let i = period + 1; i < prices.length; i++) {
+    const diff = prices[i] - prices[i - 1]
+    avgGain = (avgGain * (period - 1) + Math.max(0, diff)) / period
+    avgLoss = (avgLoss * (period - 1) + Math.max(0, -diff)) / period
+  }
+
   if (avgGain === 0 && avgLoss === 0) return 50  // flat market (e.g. closed) → neutral
   if (avgLoss === 0) return 100
-  const rs = avgGain / avgLoss
-  return 100 - 100 / (1 + rs)
+  return 100 - 100 / (1 + avgGain / avgLoss)
 }
 
 function calcEMA(prices: number[], period: number): number[] {

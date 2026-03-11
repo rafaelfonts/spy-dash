@@ -59,23 +59,23 @@ const CACHE_TTL_MS = 5 * 60_000  // 5 minutes
 // ---------------------------------------------------------------------------
 
 /**
- * Volatility Trigger — GEX-weighted average of the 3 strikes closest to refPrice.
- * refPrice: flipPoint ?? zeroGammaLevel ?? spotPrice.
- * Falls back to refPrice if byStrike is empty or all weights are zero.
+ * Volatility Trigger — ponto onde dealers mudam de long-gamma para short-gamma.
+ *
+ * Definição quantitativa correta (SpotGamma/Brent Kochuba):
+ *   VT = ZGL da expiração (já calculado via bisseção BS em findZeroGammaLevel).
+ *   SPY > VT → long gamma (dealers suprimem vol, favorável para venda de prêmio).
+ *   SPY < VT → short gamma (dealers amplificam movimentos, VETO).
+ *
+ * Fallback: se ZGL não convergiu (null), usa flipPoint como proxy discreto.
+ * Se ambos forem null, usa refPrice (neutro — sem sinal).
  */
 function calcVolatilityTrigger(
-  byStrike: Array<{ strike: number; netGEX: number }>,
+  _byStrike: Array<{ strike: number; netGEX: number }>,
   refPrice: number,
+  zeroGammaLevel: number | null,
+  flipPoint: number | null,
 ): number {
-  const candidates = byStrike
-    .filter((s) => Math.abs(s.netGEX) > 0)
-    .sort((a, b) => Math.abs(a.strike - refPrice) - Math.abs(b.strike - refPrice))
-    .slice(0, 3)
-  if (candidates.length === 0) return refPrice
-  const totalWeight = candidates.reduce((sum, s) => sum + Math.abs(s.netGEX), 0)
-  if (totalWeight === 0) return refPrice
-  const vt = candidates.reduce((sum, s) => sum + s.strike * Math.abs(s.netGEX), 0) / totalWeight
-  return Math.round(vt * 100) / 100
+  return zeroGammaLevel ?? flipPoint ?? refPrice
 }
 
 /** Read Fed Funds Rate from the FRED macro snapshot. Fallback: 5.3%. */
@@ -239,8 +239,7 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
     .sort((a, b) => Math.abs(b.vannaExp) - Math.abs(a.vannaExp))
     .slice(0, 20)
 
-  const vtRefPrice = profile.flipPoint ?? profile.zeroGammaLevel ?? spotPrice
-  const volatilityTrigger = calcVolatilityTrigger(profile.byStrike, vtRefPrice)
+  const volatilityTrigger = calcVolatilityTrigger(profile.byStrike, spotPrice, profile.zeroGammaLevel, profile.flipPoint)
 
   const maxPain = calculateMaxPain(
     profile.byStrike.map((s) => ({ strike: s.strike, callOI: s.callOI, putOI: s.putOI })),
@@ -397,8 +396,7 @@ async function calculateGexForExpiration(
     .sort((a, b) => Math.abs(b.vannaExp) - Math.abs(a.vannaExp))
     .slice(0, 20)
 
-  const vtRefPriceExp = profile.flipPoint ?? profile.zeroGammaLevel ?? spotPrice
-  const volatilityTriggerExp = calcVolatilityTrigger(profile.byStrike, vtRefPriceExp)
+  const volatilityTriggerExp = calcVolatilityTrigger(profile.byStrike, spotPrice, profile.zeroGammaLevel, profile.flipPoint)
 
   const maxPainExp = calculateMaxPain(
     profile.byStrike.map((s) => ({ strike: s.strike, callOI: s.callOI, putOI: s.putOI })),
@@ -530,8 +528,7 @@ export async function calculateAllExpirationsGex(symbol: string): Promise<GEXByE
         }))
         .sort((a, b) => Math.abs(b.vannaExp) - Math.abs(a.vannaExp))
         .slice(0, 20)
-      const vtRefAll = profile.flipPoint ?? profile.zeroGammaLevel ?? spotPrice
-      const volatilityTriggerAll = calcVolatilityTrigger(profile.byStrike, vtRefAll)
+      const volatilityTriggerAll = calcVolatilityTrigger(profile.byStrike, spotPrice, profile.zeroGammaLevel, profile.flipPoint)
       const maxPainAll = calculateMaxPain(
         profile.byStrike.map((s) => ({ strike: s.strike, callOI: s.callOI, putOI: s.putOI })),
         spotPrice,
