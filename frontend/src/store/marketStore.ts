@@ -137,8 +137,12 @@ export interface TechnicalIndicatorsData {
 export interface VIXTermStructureData {
   spot: number
   curve: Array<{ dte: number; iv: number }>
-  structure: 'contango' | 'backwardation' | 'flat'
+  structure: 'contango' | 'backwardation' | 'flat' | 'humped'
   steepness: number
+  midTermIV?: number | null
+  curvature?: number | null
+  vix1dProxy?: number | null
+  vix1dRatio?: number | null
   capturedAt: string
   lastUpdated: number
 }

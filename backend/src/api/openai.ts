@@ -709,10 +709,26 @@ function buildVIXTermStructureBlock(ts: {
   structure: string
   steepness: number
   curve: Array<{ dte: number; iv: number }>
+  midTermIV?: number | null
+  curvature?: number | null
+  vix1dProxy?: number | null
+  vix1dRatio?: number | null
 }): string {
   let block = `\n=== VIX TERM STRUCTURE ===\n`
   block += `Spot: ${ts.spot.toFixed(2)} | Estrutura: ${ts.structure.toUpperCase()}\n`
-  block += `Steepness: ${ts.steepness > 0 ? '+' : ''}${ts.steepness}%\n`
+  block += `Steepness: ${ts.steepness > 0 ? '+' : ''}${ts.steepness}%`
+  if (ts.curvature != null) {
+    block += ` | Curvatura: ${ts.curvature > 0 ? '+' : ''}${ts.curvature.toFixed(1)}%`
+  }
+  block += '\n'
+  if (ts.midTermIV != null) {
+    block += `IV Mid-Term: ${ts.midTermIV.toFixed(1)}%\n`
+  }
+  if (ts.vix1dProxy != null) {
+    block += `VIX1D Proxy: ${ts.vix1dProxy.toFixed(1)}%`
+    if (ts.vix1dRatio != null) block += ` (ratio=${ts.vix1dRatio.toFixed(2)}${ts.vix1dRatio > 1.15 ? ' ⚠ STRESS' : ''})`
+    block += '\n'
+  }
   if (ts.curve.length > 0) {
     block += `Curva IV por DTE: ${ts.curve.map((p) => `${p.dte}d=${p.iv}%`).join(' → ')}\n`
   }
@@ -721,6 +737,8 @@ function buildVIXTermStructureBlock(ts: {
       ? 'Mercado precifica mais vol futura — DTEs mais longos oferecem melhor theta enquanto vol spot é barata.'
       : ts.structure === 'backwardation'
       ? 'Vol spot > futura — pânico atual. 0-1 DTE pode capturar mean reversion rápida de vol.'
+      : ts.structure === 'humped'
+      ? `Barriga da curva elevada (curvature=${ts.curvature?.toFixed(1) ?? '?'}%) — evento binário precificado no mid-term (FOMC/CPI). Convexidade adversa para short-vol nesses vencimentos.`
       : 'Curva flat — vol estável em todos os prazos.'
   block += `Interpretação: ${interp}\n`
   return block

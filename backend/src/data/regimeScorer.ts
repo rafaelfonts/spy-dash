@@ -26,6 +26,8 @@ export interface PriceDistribution {
   p75: number
   p90: number
   expected_range_1sigma: string
+  /** true when left tail was shifted down using the RR25 skew factor (|RR25| > 1%). */
+  skewAdjusted: boolean
 }
 
 export interface RegimeScorerResult {
@@ -193,11 +195,38 @@ function computePriceDistribution(spot: number): PriceDistribution | null {
   const em = bestEntry.expectedMove
   const sigma = em / 1.645  // treat EM as ±1.645σ (90% CI of straddle)
 
-  const p10 = spot - 1.645 * sigma  // ≈ spot - em
-  const p25 = spot - 0.674 * sigma
-  const p50 = spot
-  const p75 = spot + 0.674 * sigma
-  const p90 = spot + 1.645 * sigma  // ≈ spot + em
+  // Skew adjustment: SPY has structural negative skew (put IV > call IV).
+  // When RR25 < -1.0%, the market prices a materially fatter left tail.
+  // We shift left-tail percentiles proportionally to |RR25| to reflect this asymmetry.
+  // Right tail is slightly compressed (call skew is depressed in negative-skew markets).
+  const skewSnap = getSkewSnapshot()
+  const skewEntry = skewSnap?.dte21 ?? skewSnap?.dte7 ?? skewSnap?.dte0
+  const hasSkew = skewEntry != null && skewEntry.riskReversal25 < -1.0
+
+  let p10: number, p25: number, p50: number, p75: number, p90: number
+  let skewAdjusted = false
+
+  if (hasSkew && skewEntry) {
+    // skewFactor: |RR25| as decimal, capped at 0.05 (RR25 = -5%) to avoid extreme distortions
+    const skewFactor = Math.min(Math.abs(skewEntry.riskReversal25) / 100, 0.05)
+    // leftShift: absolute dollar shift applied to left-tail percentiles.
+    // At RR25=-2%, spot=580: leftShift = 580 × 0.020 × 0.5 = 5.80$
+    const leftShift = spot * skewFactor * 0.5
+    // Left tail: heavier (lower p10 and p25)
+    p10 = spot - 1.645 * sigma - leftShift * 1.5
+    p25 = spot - 0.674 * sigma - leftShift * 0.8
+    p50 = spot
+    p75 = spot + 0.674 * sigma                  // right side: unchanged
+    p90 = spot + 1.645 * sigma * 0.90           // right tail: 10% compressed
+    skewAdjusted = true
+  } else {
+    // Symmetric (RR25 mild or unavailable)
+    p10 = spot - 1.645 * sigma
+    p25 = spot - 0.674 * sigma
+    p50 = spot
+    p75 = spot + 0.674 * sigma
+    p90 = spot + 1.645 * sigma
+  }
 
   return {
     p10: parseFloat(p10.toFixed(2)),
@@ -206,6 +235,7 @@ function computePriceDistribution(spot: number): PriceDistribution | null {
     p75: parseFloat(p75.toFixed(2)),
     p90: parseFloat(p90.toFixed(2)),
     expected_range_1sigma: `$${(spot - sigma).toFixed(2)}–$${(spot + sigma).toFixed(2)}`,
+    skewAdjusted,
   }
 }
 
@@ -448,6 +478,15 @@ export function computeNoTradeScore(gexDynamic: GEXDynamic | null): NoTradeResul
   if (vix1dRatio !== null && vix1dRatio > 1.15) {
     noTradeScore += 2
     activeVetos.push(`VIX1D/VIX=${vix1dRatio.toFixed(2)} — backwardation de curtíssimo prazo, stress intraday iminente`)
+  }
+
+  // Term structure humped (weight 1): barriga da curva elevada acima dos dois extremos.
+  // Indica evento binário precificado no mid-term (FOMC, CPI, OPEX) — convexidade adversa
+  // para posições short volatilidade naquele vencimento.
+  if (termStructure?.structure === 'humped') {
+    const curvatureLbl = termStructure.curvature != null ? ` (curvature=${termStructure.curvature.toFixed(1)}%)` : ''
+    noTradeScore += 1
+    activeVetos.push(`Term structure humped${curvatureLbl} — evento binário precificado na barriga, risco de convexidade`)
   }
 
   const noTradeLevel: NoTradeLevel =

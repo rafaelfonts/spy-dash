@@ -167,3 +167,68 @@ export function calcProbabilityOTMPut(
   }
   return normCdf(dd.d2)
 }
+
+/**
+ * Skew-adjusted POP for a short put at strike K.
+ *
+ * The flat-vol POP (calcProbabilityOTMPut) underestimates the real probability of loss
+ * for OTM puts because it ignores the volatility smile: puts at 25-delta trade at a
+ * higher IV than ATM (put skew). Using ATM vol for a deep OTM put overstates POP.
+ *
+ * This function interpolates the implied vol between ATM and the 25-delta put IV
+ * proportionally to how far OTM the strike is relative to the theoretical 25d strike.
+ * Beyond the 25-delta point, the vol is extrapolated linearly (capped at +50% of the
+ * 25d IV premium to avoid numerical instability at very deep OTM strikes).
+ *
+ * @param S              Spot price
+ * @param K              Put strike price (K ≤ S for OTM/ATM puts)
+ * @param T              Time to expiry in years (dte/365; min 0.5/365 for 0DTE)
+ * @param r              Risk-free rate as decimal (e.g. 0.053)
+ * @param atmIV          ATM implied volatility as decimal (e.g. 0.18 for 18%)
+ * @param put25dIVRatio  put-25d IV / ATM IV ratio — from SkewEntry.ivAtmSkewRatio.
+ *                       Should be ≥ 1.0 in normal negative-skew markets.
+ *                       Pass 1.0 (flat vol) when skew is unavailable or mild.
+ * @returns POP in [0, 1]
+ */
+export function calcSkewAdjustedPOP(
+  S: number,
+  K: number,
+  T: number,
+  r: number,
+  atmIV: number,
+  put25dIVRatio: number,
+): number {
+  if (T <= 0) return S > K ? 1 : 0
+  // Clamp ratio: must be ≥ 1.0 (put25d IV is never cheaper than ATM in normal skew)
+  const ratio = Math.max(put25dIVRatio, 1.0)
+
+  if (K >= S || ratio <= 1.0) {
+    // ATM/ITM or no meaningful skew — use flat vol
+    return calcProbabilityOTMPut(S, K, T, r, atmIV)
+  }
+
+  // Theoretical 25-delta put strike (lognormal approximation):
+  //   N(d2) = 0.25 → d2 = Φ⁻¹(0.25) ≈ -0.674
+  //   K_25d ≈ S × exp(-(r + σ²/2)T + 0.674·σ·√T)
+  //   Simplified: K_25d ≈ S × exp(-0.674 · σ · √T)
+  const sqrtT = Math.sqrt(T)
+  const k25dApprox = S * Math.exp(-(r + 0.5 * atmIV * atmIV) * T + 0.674 * atmIV * sqrtT)
+
+  // put25d IV = atmIV × ratio
+  const put25dIV = atmIV * ratio
+
+  if (K >= k25dApprox) {
+    // Strike is between ATM and the 25d put: linear interpolation of vol
+    const range = S - k25dApprox
+    if (range <= 0) return calcProbabilityOTMPut(S, K, T, r, atmIV)
+    const interpFrac = Math.max(0, Math.min(1, (S - K) / range))
+    const interpolatedIV = atmIV + interpFrac * (put25dIV - atmIV)
+    return calcProbabilityOTMPut(S, K, T, r, interpolatedIV)
+  }
+
+  // Strike is more OTM than the 25d put: linear extrapolation beyond put25dIV.
+  // Capped at +50% of the premium to avoid instability at very deep OTM strikes.
+  const beyond = (S - K) / (S - k25dApprox) - 1  // fraction beyond the 25d point
+  const extraIV = put25dIV * (1 + Math.min(beyond * 0.5, 0.5))
+  return calcProbabilityOTMPut(S, K, T, r, extraIV)
+}

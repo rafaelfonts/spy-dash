@@ -104,6 +104,8 @@ export const VIXCard = memo(function VIXCard() {
                 ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
                 : vixTS.structure === 'backwardation'
                 ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                : vixTS.structure === 'humped'
+                ? 'bg-orange-500/10 text-orange-400 border-orange-500/20'
                 : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
             }`}>
               {vixTS.structure.toUpperCase()}
@@ -113,7 +115,10 @@ export const VIXCard = memo(function VIXCard() {
               vixTS.steepness < 0 ? 'text-red-400' :
               'text-text-muted'
             }`}>
-              {vixTS.steepness > 0 ? '+' : ''}{vixTS.steepness}%
+              {vixTS.curvature != null
+                ? `curv ${vixTS.curvature > 0 ? '+' : ''}${vixTS.curvature.toFixed(1)}%`
+                : `${vixTS.steepness > 0 ? '+' : ''}${vixTS.steepness}%`
+              }
             </span>
           </div>
 
@@ -130,6 +135,7 @@ export const VIXCard = memo(function VIXCard() {
                     className={`w-full rounded-t-sm ${
                       vixTS.structure === 'contango' ? 'bg-blue-500/50' :
                       vixTS.structure === 'backwardation' ? 'bg-red-500/50' :
+                      vixTS.structure === 'humped' ? 'bg-orange-500/50' :
                       'bg-yellow-500/50'
                     }`}
                     style={{ height: `${heightPct}%` }}
