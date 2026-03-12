@@ -42,8 +42,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         </div>
         <PreMarketBriefing />
         <LastScheduledSignal />
-        <SignalPerformanceCard />
         <PortfolioPanel />
+        <SignalPerformanceCard />
         <RegimeDashboard />
         <AIPanel />
         <GEXPanel />

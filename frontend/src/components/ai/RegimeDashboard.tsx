@@ -363,14 +363,6 @@ export function RegimeDashboard() {
 
   const marketClosed = marketOpen === false
 
-  // Single consolidated status indicator in header — no redundancy
-  const statusIndicator = (() => {
-    if (marketOpen === null) return null
-    if (marketClosed)        return { label: 'Fechado',         color: '#555555', pulse: false }
-    if (gaugeSource === 'preview') return { label: 'Ao Vivo',   color: '#00ff88', pulse: true  }
-    return                         { label: 'Última análise',   color: '#666666', pulse: false }
-  })()
-
   // Price distribution: AI analysis takes priority, fall back to live preview
   const dist = output?.price_distribution ?? regimePreview?.priceDistribution ?? null
 
@@ -378,19 +370,8 @@ export function RegimeDashboard() {
     <div className="bg-card border border-border rounded-xl p-4 space-y-3">
 
       {/* ── Header ── */}
-      <div className="flex items-center justify-between">
-        <div className="text-[11px] font-semibold text-text-muted uppercase tracking-wide">
-          Regime
-        </div>
-        {statusIndicator && (
-          <div className="flex items-center gap-1.5 text-[10px]" style={{ color: statusIndicator.color }}>
-            <div
-              className={`w-1.5 h-1.5 rounded-full shrink-0${statusIndicator.pulse ? ' animate-pulse' : ''}`}
-              style={{ background: statusIndicator.color }}
-            />
-            {statusIndicator.label}
-          </div>
-        )}
+      <div className="text-[11px] font-semibold text-text-muted uppercase tracking-wide">
+        Regime
       </div>
 
       {/* ── Score block ── */}
