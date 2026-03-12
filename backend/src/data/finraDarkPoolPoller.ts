@@ -56,7 +56,7 @@ async function fetchLatestFinraDarkPool(): Promise<FinraDarkPoolSnapshot | null>
   }
 
   // Considera apenas a semana mais recente.
-  const latestWeek = rows[0].weekStartDate ?? rows[0].weekStartDate ?? null
+  const latestWeek = rows[0].weekStartDate ?? null
   if (!latestWeek) {
     console.warn('[FinraDarkPoolPoller] weekStartDate ausente — não é possível determinar semana')
     return null

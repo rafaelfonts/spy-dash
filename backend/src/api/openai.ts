@@ -1924,9 +1924,8 @@ export async function runAnalysisForPayload(
     cboePCRBlock,
     danBlockScheduled,
     ivConeBlockScheduled,
-      macroDigestBlockScheduled,
-      finraBlockScheduled,
-      secSummaryBlock,
+    macroDigestBlockScheduled,
+    secSummaryBlock,
   )
 
   const marketStatusNote = isMarketOpen()
@@ -2290,7 +2289,6 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       danBlockMain,
       ivConeBlockMain,
       macroDigestBlockMain,
-      finraBlockMain,
       secSummaryBlockMain,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
