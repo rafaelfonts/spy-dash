@@ -52,8 +52,8 @@ const GEX_LABELS: Record<string, string> = {
   stronger_positive: 'GEX+ forte',
   weaker_positive:   'GEX+ fraco',
   unchanged:         'GEX sem mudança',
-  weaker_negative:   'GEX− fraco',
-  stronger_negative: 'GEX− forte',
+  weaker_negative:   'GEX: fraco',
+  stronger_negative: 'GEX: forte',
 }
 
 // ---------------------------------------------------------------------------
