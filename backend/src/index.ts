@@ -23,6 +23,10 @@ import { startCBOEPCRScheduler } from './data/cboePCRPoller'
 import { startApeWisdomPoller } from './data/apeWisdomPoller'
 import { startMacroDigestScheduler, restoreMacroDigestFromCache } from './data/macroDigestService'
 import { startOutcomeFiller } from './data/signalLogger'
+import { startCftcCotPoller } from './data/cftcCotPoller'
+import { startTreasuryPoller } from './data/treasuryPoller'
+import { startEiaOilPoller } from './data/eiaOilPoller'
+import { startFinraDarkPoolPoller } from './data/finraDarkPoolPoller'
 import { registerSSE } from './api/sse'
 import { registerOpenAI } from './api/openai'
 import { registerRiskReview } from './api/riskReview'
@@ -180,6 +184,10 @@ async function bootstrap(): Promise<void> {
       startMacroCalendar()
       startNewsAggregator()
       startBlsPoller()
+      startCftcCotPoller()
+      startTreasuryPoller()
+      startEiaOilPoller()
+      startFinraDarkPoolPoller()
     } catch (err) {
       console.error('[Bootstrap] Failed to start streaming services:', (err as Error).message)
     }

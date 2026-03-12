@@ -12,6 +12,9 @@ import { getExpectedMoveSnapshot } from './expectedMoveState'
 import { getOpexStatus } from './opexCalendar'
 import { getSkewSnapshot } from './skewState'
 import { getTechnicalSnapshot } from './technicalIndicatorsState'
+import { getOptionChainSnapshot } from './optionChain'
+import { buildSurfaceFromChain, getClosestSmile, getSurfaceQuality } from '../lib/volSurface'
+import type { VolSmile, SurfaceQuality } from '../lib/volSurface'
 import type { GEXDynamic } from './gexService'
 import { GEX_THRESHOLDS } from '../lib/gexThresholds'
 
@@ -26,8 +29,10 @@ export interface PriceDistribution {
   p75: number
   p90: number
   expected_range_1sigma: string
-  /** true when left tail was shifted down using the RR25 skew factor (|RR25| > 1%). */
+  /** true when left tail was adjusted using the option chain vol surface. */
   skewAdjusted: boolean
+  /** true when the quadratic vol surface was used (vs. RR25-only fallback). */
+  surfaceFitted: boolean
 }
 
 export interface RegimeScorerResult {
@@ -37,7 +42,11 @@ export interface RegimeScorerResult {
   priceDistribution: PriceDistribution | null
   /** Number of times GEX regime flipped sign today (positive↔negative). ≥2 = structural indecision. */
   regimeFlipCount: number
+  /** Quality of the fitted vol surface (null when chain unavailable). */
+  surfaceQuality: SurfaceQuality | null
 }
+
+export type { SurfaceQuality }
 
 export type GexComparison =
   | 'stronger_positive'
@@ -179,9 +188,13 @@ export function getRegimeFlipCount(): number {
 // Price distribution from Expected Move (21D-closest entry)
 // ---------------------------------------------------------------------------
 
-function computePriceDistribution(spot: number): PriceDistribution | null {
+function computePriceDistribution(
+  spot: number,
+): { dist: PriceDistribution | null; smiles: VolSmile[]; surfaceQuality: SurfaceQuality | null } {
   const emSnapshot = getExpectedMoveSnapshot()
-  if (!emSnapshot || Object.keys(emSnapshot.byExpiry).length === 0) return null
+  if (!emSnapshot || Object.keys(emSnapshot.byExpiry).length === 0) {
+    return { dist: null, smiles: [], surfaceQuality: null }
+  }
 
   // Find entry with DTE closest to 21
   let bestEntry: { dte: number; expectedMove: number } | null = null
@@ -190,45 +203,73 @@ function computePriceDistribution(spot: number): PriceDistribution | null {
       bestEntry = entry
     }
   }
-  if (!bestEntry || bestEntry.expectedMove <= 0) return null
+  if (!bestEntry || bestEntry.expectedMove <= 0) {
+    return { dist: null, smiles: [], surfaceQuality: null }
+  }
 
   const em = bestEntry.expectedMove
   const sigma = em / 1.645  // treat EM as ±1.645σ (90% CI of straddle)
 
-  // Skew adjustment: SPY has structural negative skew (put IV > call IV).
-  // When RR25 < -1.0%, the market prices a materially fatter left tail.
-  // We shift left-tail percentiles proportionally to |RR25| to reflect this asymmetry.
-  // Right tail is slightly compressed (call skew is depressed in negative-skew markets).
-  const skewSnap = getSkewSnapshot()
-  const skewEntry = skewSnap?.dte21 ?? skewSnap?.dte7 ?? skewSnap?.dte0
-  const hasSkew = skewEntry != null && skewEntry.riskReversal25 < -1.0
+  // ---------------------------------------------------------------------------
+  // Vol surface — build from chain if available
+  // ---------------------------------------------------------------------------
+  const chain = getOptionChainSnapshot()
+  const smiles: VolSmile[] = chain && chain.length > 0 ? buildSurfaceFromChain(chain, spot) : []
+  const surfaceQuality = smiles.length > 0 ? getSurfaceQuality(smiles) : null
 
   let p10: number, p25: number, p50: number, p75: number, p90: number
   let skewAdjusted = false
+  let surfaceFitted = false
 
-  if (hasSkew && skewEntry) {
-    // skewFactor: |RR25| as decimal, capped at 0.05 (RR25 = -5%) to avoid extreme distortions
-    const skewFactor = Math.min(Math.abs(skewEntry.riskReversal25) / 100, 0.05)
-    // leftShift: absolute dollar shift applied to left-tail percentiles.
-    // At RR25=-2%, spot=580: leftShift = 580 × 0.020 × 0.5 = 5.80$
-    const leftShift = spot * skewFactor * 0.5
-    // Left tail: heavier (lower p10 and p25)
-    p10 = spot - 1.645 * sigma - leftShift * 1.5
-    p25 = spot - 0.674 * sigma - leftShift * 0.8
-    p50 = spot
-    p75 = spot + 0.674 * sigma                  // right side: unchanged
-    p90 = spot + 1.645 * sigma * 0.90           // right tail: 10% compressed
-    skewAdjusted = true
-  } else {
-    // Symmetric (RR25 mild or unavailable)
-    p10 = spot - 1.645 * sigma
-    p25 = spot - 0.674 * sigma
+  // Primary path: use quadratic smile when available with R² ≥ 0.70
+  const smile21d = getClosestSmile(smiles, 21)
+  if (smile21d && smile21d.r2 >= 0.70 && smile21d.a > 0) {
+    // Approximate log-moneyness at p10 / p25 initial estimates
+    const k_p10 = Math.log(Math.max(spot - 1.645 * sigma, 1) / spot)
+    const k_p25 = Math.log(Math.max(spot - 0.674 * sigma, 1) / spot)
+    const k_p90 = Math.log((spot + 1.645 * sigma) / spot)
+
+    const iv_atm = Math.max(smile21d.a, 0.01)
+    const iv_p10 = Math.max(smile21d.a + smile21d.b * k_p10 + smile21d.c * k_p10 * k_p10, 0.01)
+    const iv_p25 = Math.max(smile21d.a + smile21d.b * k_p25 + smile21d.c * k_p25 * k_p25, 0.01)
+    const iv_p90 = Math.max(smile21d.a + smile21d.b * k_p90 + smile21d.c * k_p90 * k_p90, 0.01)
+
+    // Scale sigma at each percentile by the smile vol ratio
+    // A higher vol at the p10 strike means the tail is fatter than log-normal
+    p10 = spot - 1.645 * sigma * (iv_p10 / iv_atm)
+    p25 = spot - 0.674 * sigma * (iv_p25 / iv_atm)
     p50 = spot
     p75 = spot + 0.674 * sigma
-    p90 = spot + 1.645 * sigma
+    p90 = spot + 1.645 * sigma * (iv_p90 / iv_atm)
+
+    skewAdjusted = iv_p10 > iv_atm * 1.01  // meaningful asymmetry detected
+    surfaceFitted = true
+
+  } else {
+    // Fallback: RR25-based skew adjustment (2-point linear interpolation)
+    const skewSnap = getSkewSnapshot()
+    const skewEntry = skewSnap?.dte21 ?? skewSnap?.dte7 ?? skewSnap?.dte0
+    const hasSkew = skewEntry != null && skewEntry.riskReversal25 < -1.0
+
+    if (hasSkew && skewEntry) {
+      const skewFactor = Math.min(Math.abs(skewEntry.riskReversal25) / 100, 0.05)
+      const leftShift = spot * skewFactor * 0.5
+      p10 = spot - 1.645 * sigma - leftShift * 1.5
+      p25 = spot - 0.674 * sigma - leftShift * 0.8
+      p50 = spot
+      p75 = spot + 0.674 * sigma
+      p90 = spot + 1.645 * sigma * 0.90
+      skewAdjusted = true
+    } else {
+      p10 = spot - 1.645 * sigma
+      p25 = spot - 0.674 * sigma
+      p50 = spot
+      p75 = spot + 0.674 * sigma
+      p90 = spot + 1.645 * sigma
+    }
   }
 
-  return {
+  const dist: PriceDistribution = {
     p10: parseFloat(p10.toFixed(2)),
     p25: parseFloat(p25.toFixed(2)),
     p50: parseFloat(p50.toFixed(2)),
@@ -236,7 +277,10 @@ function computePriceDistribution(spot: number): PriceDistribution | null {
     p90: parseFloat(p90.toFixed(2)),
     expected_range_1sigma: `$${(spot - sigma).toFixed(2)}–$${(spot + sigma).toFixed(2)}`,
     skewAdjusted,
+    surfaceFitted,
   }
+
+  return { dist, smiles, surfaceQuality }
 }
 
 // ---------------------------------------------------------------------------
@@ -344,13 +388,19 @@ export function computeRegimeScore(gexDynamic: GEXDynamic | null): RegimeScorerR
     charmPressure = 'neutral'
   }
 
-  // --- price_distribution ---
-  const priceDistribution = spyLast != null ? computePriceDistribution(spyLast) : null
+  // --- price_distribution + vol surface ---
+  let priceDistribution: PriceDistribution | null = null
+  let surfaceQuality: SurfaceQuality | null = null
+  if (spyLast != null) {
+    const { dist, surfaceQuality: sq } = computePriceDistribution(spyLast)
+    priceDistribution = dist
+    surfaceQuality = sq
+  }
 
   // --- regime flip count ---
   const regimeFlipCount = getRegimeFlipCount()
 
-  return { score, vannaRegime, charmPressure, priceDistribution, regimeFlipCount }
+  return { score, vannaRegime, charmPressure, priceDistribution, regimeFlipCount, surfaceQuality }
 }
 
 // ---------------------------------------------------------------------------

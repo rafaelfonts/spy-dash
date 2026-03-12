@@ -9,7 +9,7 @@
 
 import { emitter } from './marketState'
 import type { GEXDynamic } from './gexService'
-import type { NoTradeResult, GexComparison, PriceDistribution } from './regimeScorer'
+import type { NoTradeResult, GexComparison, PriceDistribution, SurfaceQuality } from './regimeScorer'
 import type { DANResult } from '../lib/danCalculator'
 
 export type { GEXDynamic }
@@ -64,6 +64,7 @@ export interface AdvancedMetricsPayload {
     charmPressure: 'significant' | 'moderate' | 'neutral'
     gexVsYesterday: GexComparison | null
     priceDistribution: PriceDistribution | null
+    surfaceQuality: SurfaceQuality | null
   } | null
   /** Whether US equity markets are currently open (09:30–16:00 ET, Mon–Fri). */
   marketOpen: boolean

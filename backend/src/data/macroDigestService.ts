@@ -88,6 +88,77 @@ function buildDigestPrompt(): string {
     sections.push(`DADOS MACRO FRED:\n${relevant}`)
   }
 
+  // SEC EDGAR — 8-K e 13F (resumo leve, melhor esforço)
+  try {
+    const { fetchRecent8KForSPYComponents, fetchRecent13FForSelectedFunds } = await import('./secEdgarService')
+
+    const [recent8k, recent13f] = await Promise.allSettled([
+      fetchRecent8KForSPYComponents(3),
+      fetchRecent13FForSelectedFunds(3),
+    ])
+
+    if (recent8k.status === 'fulfilled' && recent8k.value.length > 0) {
+      const lines = recent8k.value
+        .slice(0, 3)
+        .map((e) => {
+          const date = e.filedAt.slice(0, 10)
+          const sym = e.symbol ?? e.cik
+          const title = e.title ?? 'Evento 8-K'
+          return `- ${date} — ${sym}: ${title}`
+        })
+        .join('\n')
+      sections.push(`EVENTOS SEC 8-K RECENTES (componentes SPY):\n${lines}`)
+    }
+
+    if (recent13f.status === 'fulfilled' && recent13f.value.length > 0) {
+      const lines = recent13f.value
+        .slice(0, 3)
+        .map((p) => {
+          const dir = p.changeVsPrev ?? 'flat'
+          return `- ${p.managerName}: posição em SPY (${dir}) no relatório de ${p.reportDate}`
+        })
+        .join('\n')
+      sections.push(`MUDANÇAS 13F EM SPY (fundos selecionados):\n${lines}`)
+    }
+  } catch (err) {
+    console.warn('[MacroDigest] SEC EDGAR indisponível — omitindo seção SEC:', (err as Error).message)
+  }
+
+  // Treasury TGA — saldo e fluxo de liquidez
+  try {
+    const { getTreasuryTgaSnapshot } = await import('./treasuryState')
+    const tga = getTreasuryTgaSnapshot()
+    if (tga) {
+      const deltaStr =
+        tga.delta != null
+          ? `${tga.delta >= 0 ? '+' : ''}${tga.delta.toLocaleString('en-US')}`
+          : 'N/A'
+      sections.push(
+        `TREASURY TGA: ${tga.asOfDate} — saldo $${tga.closingBalance?.toLocaleString('en-US') ?? 'N/A'} (${deltaStr} vs abertura)`,
+      )
+    }
+  } catch {
+    // ignore — TGA é opcional no digest
+  }
+
+  // EIA Oil — estoques de petróleo/gasolina
+  try {
+    const { getEiaOilSnapshot } = await import('./eiaOilState')
+    const oil = getEiaOilSnapshot()
+    if (oil) {
+      const crude = oil.crudeInventories != null ? oil.crudeInventories.toLocaleString('en-US') : 'N/A'
+      const change =
+        oil.crudeChange != null
+          ? `${oil.crudeChange >= 0 ? '+' : ''}${oil.crudeChange.toFixed(2)}`
+          : 'N/A'
+      sections.push(
+        `EIA ESTOQUES: semana ${oil.asOfDate} — crude=${crude} (Δ=${change} M bbl)`,
+      )
+    }
+  } catch {
+    // ignore — EIA é opcional no digest
+  }
+
   if (newsSnapshot.fearGreed) {
     const fg = newsSnapshot.fearGreed
     sections.push(`FEAR & GREED: ${fg.score ?? 'N/A'}/100 — ${fg.label ?? 'N/A'}`)

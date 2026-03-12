@@ -37,6 +37,9 @@ import type { VolumeAnomalyData } from '../data/volumeAnomalyService'
 import { getIVConeSnapshot } from '../data/ivConeService'
 import type { IVConeSnapshot } from '../data/ivConeService'
 import { getLastMacroDigest } from '../data/macroDigestService'
+import { getTreasuryTgaSnapshot } from '../data/treasuryState'
+import { getEiaOilSnapshot } from '../data/eiaOilState'
+import { getFinraDarkPoolSnapshot } from '../data/finraDarkPoolState'
 
 interface ContextData {
   fearGreed?: { score: FearGreedData['score']; label: FearGreedData['label'] }
@@ -89,6 +92,32 @@ const FETCH_CONTEXT_TOOL = {
   },
 }
 
+const FETCH_SEC_FILINGS_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'fetch_sec_filings',
+    description:
+      'Consultar filings recentes da SEC relevantes para SPY: 8-K de componentes importantes e 13F de fundos/ETFs selecionados. ' +
+      'Use este tool SOMENTE quando o usuário perguntar explicitamente sobre fluxo institucional de fundos, grandes mudanças em posição em SPY, ' +
+      'ou eventos materiais (8-K) de empresas componentes. Não chame em toda análise rotineira.',
+    parameters: {
+      type: 'object',
+      properties: {
+        scope: {
+          type: 'string',
+          enum: ['spy', 'component', 'fund'],
+          description: 'Escopo principal da consulta: SPY agregado, componentes ou fundos.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Número máximo de eventos/filings a resumir (1–5).',
+        },
+      },
+      required: [],
+    },
+  },
+}
+
 // Anthropic tool format (name, description, input_schema)
 const ANTHROPIC_FETCH_CONTEXT_TOOL = {
   name: 'fetch_24h_context',
@@ -100,6 +129,27 @@ const ANTHROPIC_FETCH_CONTEXT_TOOL = {
     'when the user explicitly asks about macro drivers, earnings, or economic events, ' +
     'or when a high-impact macro event (FOMC, CPI, NFP, PPI) is scheduled within 48 hours.',
   input_schema: { type: 'object' as const, properties: {}, required: [] },
+}
+
+const ANTHROPIC_FETCH_SEC_FILINGS_TOOL = {
+  name: 'fetch_sec_filings',
+  description:
+    'Consultar filings recentes da SEC relevantes para SPY: 8-K de componentes importantes e 13F de fundos/ETFs selecionados. ' +
+    'Use este tool SOMENTE quando o usuário perguntar explicitamente sobre fluxo institucional de fundos, grandes mudanças em posição em SPY, ' +
+    'ou eventos materiais (8-K) de empresas componentes. Não chame em toda análise rotineira.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      scope: {
+        type: 'string',
+        enum: ['spy', 'component', 'fund'],
+      },
+      limit: {
+        type: 'number',
+      },
+    },
+    required: [],
+  },
 }
 
 // ---------------------------------------------------------------------------
@@ -451,7 +501,7 @@ interface RegimeScoreBlockResult {
 /** Pre-computes regime_score and related fields, returning a prompt block + the computed values. */
 function buildRegimeScoreBlock(gexDynamic: GEXDynamic | null): RegimeScoreBlockResult {
   const regimeScorerResult = computeRegimeScore(gexDynamic)
-  const { score, vannaRegime, charmPressure, priceDistribution, regimeFlipCount } = regimeScorerResult
+  const { score, vannaRegime, charmPressure, priceDistribution, regimeFlipCount, surfaceQuality } = regimeScorerResult
 
   const totalNetGamma = gexDynamic && gexDynamic.length > 0
     ? gexDynamic.reduce((sum, e) => sum + e.gex.totalNetGamma, 0)
@@ -462,9 +512,14 @@ function buildRegimeScoreBlock(gexDynamic: GEXDynamic | null): RegimeScoreBlockR
 
   let distLine = 'N/A'
   if (priceDistribution) {
-    const { p10, p25, p50, p75, p90, expected_range_1sigma } = priceDistribution
-    distLine = `p10=$${p10} p25=$${p25} p50=$${p50} p75=$${p75} p90=$${p90} | 1σ: ${expected_range_1sigma}`
+    const { p10, p25, p50, p75, p90, expected_range_1sigma, surfaceFitted, skewAdjusted } = priceDistribution
+    const method = surfaceFitted ? 'vol surface quadrática' : skewAdjusted ? 'ajuste RR25' : 'normal simétrica'
+    distLine = `p10=$${p10} p25=$${p25} p50=$${p50} p75=$${p75} p90=$${p90} | 1σ: ${expected_range_1sigma} | método: ${method}`
   }
+
+  const surfaceLine = surfaceQuality
+    ? `Vol Surface: ${surfaceQuality.status} (${surfaceQuality.expirationsFitted} exp, R²_avg=${surfaceQuality.avgR2.toFixed(2)})`
+    : 'Vol Surface: unavailable (usando distribuição aproximada)'
 
   const flipLine = regimeFlipCount >= 2
     ? `⚠️ INSTABILIDADE DE REGIME: GEX flipou ${regimeFlipCount}x hoje — mercado indeciso estruturalmente.`
@@ -478,6 +533,7 @@ function buildRegimeScoreBlock(gexDynamic: GEXDynamic | null): RegimeScoreBlockR
     `Vanna: ${vannaRegime} | Charm: ${charmPressure} | GEX vs Ontem: ${gexVsYesterday ?? 'N/A'}`,
     `Regime Flips Hoje: ${regimeFlipCount} — ${flipLine}`,
     `Price Distribution (~21D): ${distLine}`,
+    surfaceLine,
     `INSTRUÇÃO: NÃO recalcule regime_score — copie o valor ${score} literalmente no campo regime_score.`,
     `Score < 5: trade_signal=avoid | Score 5–6: wait | Score >= 7: analisar e decidir.`,
   ].join('\n')
@@ -576,7 +632,7 @@ function buildGexHistoryBlock(ctx: GEXHistoryContext): string {
   return block
 }
 
-function buildVolumeAnomalyBlock(data: VolumeAnomalyData): string {
+function buildVolumeAnomalyBlock(data: VolumeAnomalyData, finra?: FinraDarkPoolSnapshot | null): string {
   const anomalyLabels: Record<VolumeAnomalyData['anomalyLabel'], string> = {
     extreme_put:  'EXTREMO PUTS',
     high_put:     'PUTS ELEVADO',
@@ -593,6 +649,49 @@ function buildVolumeAnomalyBlock(data: VolumeAnomalyData): string {
     block += '⚠️ VETO FLUXO: Possível evento não precificado — fluxo institucional de proteção detectado. AGUARDAR ou reduzir size em 50%.\n'
   } else if (data.sizzle0dte < 0.5) {
     block += '⚠️ LIQUIDEZ REDUZIDA: Volume 0DTE anormalmente baixo — spreads mais largos. Confirmar bid/ask antes de recomendar entrada.\n'
+  }
+
+  // Combinação opcional com Dark Pool (FINRA) — fluxo institucional discreto
+  if (finra && finra.offExchangePct != null) {
+    block += `Fluxo off-exchange (ATS, semana ${finra.weekOf}): ${
+      finra.offExchangePct.toFixed(2)
+    }% do volume de SPY em dark pools.\n`
+    if (data.sizzle0dte > 1.5 && finra.offExchangePct >= 40) {
+      block +=
+        '⚡ CONFIRMAÇÃO FLUXO: Sizzle 0DTE elevado + participação ATS ≥40% → fluxo institucional forte em opções E em dark pools. Dar mais peso ao sinal de volume.\n'
+    } else if (data.sizzle0dte <= 1.2 && finra.offExchangePct >= 40) {
+      block +=
+        'Nota: Sizzle 0DTE moderado, mas participação ATS muito alta — possível acumulação discreta em dark pools sem explosão visível no book intraday.\n'
+    }
+  }
+
+  return block
+}
+
+function buildFinraDarkPoolBlock(finra: FinraDarkPoolSnapshot | null): string | null {
+  if (!finra) return null
+
+  let block = '\n=== FINRA DARK POOL (ATS SPY) — Fluxo Off-Exchange ===\n'
+  block += `Semana de referência: ${finra.weekOf}\n`
+  block += `Volume ATS (shares): ${
+    finra.totalVolume != null ? finra.totalVolume.toLocaleString('en-US') : 'n/d'
+  }\n`
+  block += `Participação off-exchange: ${
+    finra.offExchangePct != null ? `${finra.offExchangePct.toFixed(2)}%` : 'n/d'
+  }\n`
+  block += `Nº de ATS reportando SPY: ${finra.venueCount ?? 'n/d'}\n`
+
+  if (finra.offExchangePct != null) {
+    if (finra.offExchangePct >= 40) {
+      block +=
+        '⚡ INTERPRETAÇÃO: Spike de volume em dark pools (≥40% do volume total). Sinal de provável acumulação institucional discreta.\n'
+    } else if (finra.offExchangePct <= 20) {
+      block +=
+        'Nota: Fluxo off-exchange baixo (≤20%). Predomínio de fluxo em bolsa lit — menor sinal de atividade institucional oculta.\n'
+    } else {
+      block +=
+        'Nota: Participação off-exchange em faixa intermediária — use apenas como contexto, não como sinal independente.\n'
+    }
   }
 
   return block
@@ -847,7 +946,62 @@ function buildMacroContextBlock(
     }
   }
 
+  // Treasury TGA — liquidez fiscal (TGA drawdown)
+  const tgaSnap = getTreasuryTgaSnapshot()
+  if (tgaSnap) {
+    const deltaStr =
+      tgaSnap.delta != null
+        ? `${tgaSnap.delta >= 0 ? '+' : ''}${tgaSnap.delta.toLocaleString('en-US')}`
+        : 'N/A'
+    block += `\n**Treasury TGA (liquidez fiscal):** data=${tgaSnap.asOfDate} saldo=$${
+      tgaSnap.closingBalance?.toLocaleString('en-US') ?? 'N/A'
+    } Δdia=${deltaStr} (closing - opening).\n`
+    block += `Interpretação: TGA caindo (=Δ negativo) injeta liquidez no sistema; TGA subindo drena liquidez.\n`
+  }
+
+  // EIA Oil — estoques de petróleo (proxy para inflação futura / expectativas de Fed)
+  const eiaSnap = getEiaOilSnapshot()
+  if (eiaSnap) {
+    const crude = eiaSnap.crudeInventories != null
+      ? eiaSnap.crudeInventories.toLocaleString('en-US')
+      : 'N/A'
+    const change =
+      eiaSnap.crudeChange != null
+        ? `${eiaSnap.crudeChange >= 0 ? '+' : ''}${eiaSnap.crudeChange.toFixed(2)}`
+        : 'N/A'
+    block += `\n**EIA Estoques de Petróleo:** semana=${eiaSnap.asOfDate} crude=${crude} (Δ=${change} M bbl). `
+    block += `Quedas consecutivas em estoques + demanda forte = pressão inflacionária potencial; alta nos estoques = alívio na pressão de preços.\n`
+  }
+
   return block || 'Sem dados macro disponíveis neste momento.'
+}
+
+function buildSecSummaryBlock(
+  events: Sec8KEvent[] | null,
+  positions: Sec13FPositionSummary[] | null,
+): string | null {
+  const lines: string[] = []
+
+  if (events && events.length > 0) {
+    lines.push('**Eventos SEC 8-K recentes (componentes SPY):**')
+    for (const e of events.slice(0, 3)) {
+      const date = e.filedAt.slice(0, 10)
+      const sym = e.symbol ?? e.cik
+      const title = e.title ?? 'Evento 8-K'
+      lines.push(`- ${date} — ${sym}: ${title}`)
+    }
+  }
+
+  if (positions && positions.length > 0) {
+    lines.push('**Mudanças 13F em SPY (fundos selecionados):**')
+    for (const p of positions.slice(0, 3)) {
+      const dir = p.changeVsPrev ?? 'flat'
+      lines.push(`- ${p.managerName}: posição em SPY (${dir}) no relatório de ${p.reportDate}`)
+    }
+  }
+
+  if (lines.length === 0) return null
+  return `\n=== CONTEXTO SEC (resumo curto) ===\n${lines.join('\n')}\n`
 }
 
 /**
@@ -991,6 +1145,7 @@ function buildPrompt(
   danBlock?: string | null,
   ivConeBlock?: string | null,
   macroDigestBlock?: string | null,
+  secSummaryBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -1005,6 +1160,10 @@ function buildPrompt(
 
   if (macroDigestBlock) {
     prompt += macroDigestBlock
+  }
+
+  if (secSummaryBlock) {
+    prompt += secSummaryBlock
   }
 
   prompt += `Análise de mercado atual:\n\n`
@@ -1415,7 +1574,7 @@ async function streamClaudeAnalyze(params: ClaudeStreamParams): Promise<{ fullRe
     stream: true,
   }
   if (includeTools) {
-    body.tools = [ANTHROPIC_FETCH_CONTEXT_TOOL]
+    body.tools = [ANTHROPIC_FETCH_CONTEXT_TOOL, ANTHROPIC_FETCH_SEC_FILINGS_TOOL]
     body.tool_choice = { type: 'auto' }
   }
 
@@ -1716,9 +1875,25 @@ export async function runAnalysisForPayload(
   const volAnomalyData = (todayVolSnap && volHistory.length >= 2)
     ? computeVolumeAnomaly(todayVolSnap, volHistory.slice(0, -1))
     : null
+  const finraSnapMain = getFinraDarkPoolSnapshot()
   const volAnomalyBlock = (volAnomalyData && (volAnomalyData.sizzle0dte > 1.5 || volAnomalyData.sizzle0dte < 0.6))
-    ? buildVolumeAnomalyBlock(volAnomalyData)
+    ? buildVolumeAnomalyBlock(volAnomalyData, finraSnapMain)
     : null
+  const finraBlockMain = finraSnapMain ? buildFinraDarkPoolBlock(finraSnapMain) : null
+  // Resumo SEC curto — usa o mesmo serviço do macro digest, mas apenas se já estiver em cache
+  let secSummaryBlock: string | null = null
+  try {
+    const { fetchRecent8KForSPYComponents, fetchRecent13FForSelectedFunds } = await import('../data/secEdgarService')
+    const [recent8k, recent13f] = await Promise.allSettled([
+      fetchRecent8KForSPYComponents(3),
+      fetchRecent13FForSelectedFunds(3),
+    ])
+    const events = recent8k.status === 'fulfilled' ? recent8k.value : null
+    const positions = recent13f.status === 'fulfilled' ? recent13f.value : null
+    secSummaryBlock = buildSecSummaryBlock(events, positions)
+  } catch {
+    secSummaryBlock = null
+  }
   const cboePCRData = await getLastCBOEPCR()
   const cboePCRBlock = cboePCRData ? buildCBOEPCRBlock(cboePCRData) : null
   const danBlockScheduled = advancedSnapshot?.dan ? buildDANBlock(advancedSnapshot.dan) : null
@@ -1749,7 +1924,9 @@ export async function runAnalysisForPayload(
     cboePCRBlock,
     danBlockScheduled,
     ivConeBlockScheduled,
-    macroDigestBlockScheduled,
+      macroDigestBlockScheduled,
+      finraBlockScheduled,
+      secSummaryBlock,
   )
 
   const marketStatusNote = isMarketOpen()
@@ -1791,7 +1968,7 @@ export async function runAnalysisForPayload(
         model: 'gpt-4o',
         stream: true,
         max_tokens: 2500,
-        tools: [FETCH_CONTEXT_TOOL],
+        tools: [FETCH_CONTEXT_TOOL, FETCH_SEC_FILINGS_TOOL],
         tool_choice: 'auto',
         messages: [
           { role: 'system', content: systemPrompt },
@@ -1858,6 +2035,67 @@ export async function runAnalysisForPayload(
         const { fullResponse: secondResponse } = await streamTokens(secondRes, noop)
         fullResponse = secondResponse
       }
+    }
+  }
+
+  if (toolCallName === 'fetch_sec_filings') {
+    const { fetchRecent8KForSPYComponents, fetchRecent13FForSelectedFunds } = await import('../data/secEdgarService')
+    const [recent8k, recent13f] = await Promise.allSettled([
+      fetchRecent8KForSPYComponents(3),
+      fetchRecent13FForSelectedFunds(3),
+    ])
+
+    let secBlock = '\n=== CONTEXTO SEC (8-K / 13F) ===\n'
+    if (recent8k.status === 'fulfilled' && recent8k.value.length > 0) {
+      secBlock += '8-K recentes de componentes SPY:\n'
+      for (const e of recent8k.value.slice(0, 3)) {
+        const date = e.filedAt.slice(0, 10)
+        const sym = e.symbol ?? e.cik
+        const title = e.title ?? 'Evento 8-K'
+        secBlock += `- ${date} — ${sym}: ${title}\n`
+      }
+    }
+    if (recent13f.status === 'fulfilled' && recent13f.value.length > 0) {
+      secBlock += '\n13F recentes (posição em SPY para fundos selecionados):\n'
+      for (const p of recent13f.value.slice(0, 3)) {
+        const dir = p.changeVsPrev ?? 'flat'
+        secBlock += `- ${p.managerName}: posição em SPY (${dir}) no relatório de ${p.reportDate}\n`
+      }
+    }
+
+    const followUpMessages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'call_sec',
+            type: 'function',
+            function: { name: 'fetch_sec_filings', arguments: '{}' },
+          },
+        ],
+      } as any,
+      { role: 'tool', tool_call_id: 'call_sec', content: secBlock } as any,
+    ]
+
+    const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${CONFIG.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        stream: true,
+        max_tokens: 2500,
+        messages: followUpMessages,
+      }),
+    })
+    if (secondRes.ok && secondRes.body) {
+      const { fullResponse: secondResponse } = await streamTokens(secondRes, sendEvent)
+      fullResponse = secondResponse
     }
   }
 
@@ -2015,6 +2253,19 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const ivConeBlockMain = ivConeSnapshotMain ? buildIVConeBlock(ivConeSnapshotMain) : null
     const macroDigestDataMain = getLastMacroDigest()
     const macroDigestBlockMain = macroDigestDataMain ? buildMacroDigestBlock(macroDigestDataMain) : null
+    let secSummaryBlockMain: string | null = null
+    try {
+      const { fetchRecent8KForSPYComponents, fetchRecent13FForSelectedFunds } = await import('../data/secEdgarService')
+      const [recent8kMain, recent13fMain] = await Promise.allSettled([
+        fetchRecent8KForSPYComponents(3),
+        fetchRecent13FForSelectedFunds(3),
+      ])
+      const eventsMain = recent8kMain.status === 'fulfilled' ? recent8kMain.value : null
+      const positionsMain = recent13fMain.status === 'fulfilled' ? recent13fMain.value : null
+      secSummaryBlockMain = buildSecSummaryBlock(eventsMain, positionsMain)
+    } catch {
+      secSummaryBlockMain = null
+    }
 
     const userContent = buildPrompt(
       snapshot,
@@ -2039,6 +2290,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       danBlockMain,
       ivConeBlockMain,
       macroDigestBlockMain,
+      finraBlockMain,
+      secSummaryBlockMain,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     if (!CONFIG.ANTHROPIC_API_KEY) {
@@ -2093,7 +2346,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
             model: 'gpt-4o',
             stream: true,
             max_tokens: 2500,
-            tools: [FETCH_CONTEXT_TOOL],
+            tools: [FETCH_CONTEXT_TOOL, FETCH_SEC_FILINGS_TOOL],
             tool_choice: 'auto',
             messages: baseMessages,
           }),
@@ -2167,6 +2420,65 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
           const { fullResponse: secondResponse } = await streamTokens(secondRes, sendEvent)
           fullResponse = secondResponse
         }
+      } else if (toolCallName === 'fetch_sec_filings') {
+        console.log(`[ANALYZE] user=${userId} tool_call=fetch_sec_filings → injecting SEC context`)
+        const { fetchRecent8KForSPYComponents, fetchRecent13FForSelectedFunds } = await import('../data/secEdgarService')
+        const [recent8k, recent13f] = await Promise.allSettled([
+          fetchRecent8KForSPYComponents(3),
+          fetchRecent13FForSelectedFunds(3),
+        ])
+
+        let secBlock = '\n=== CONTEXTO SEC (8-K / 13F) ===\n'
+        if (recent8k.status === 'fulfilled' && recent8k.value.length > 0) {
+          secBlock += '8-K recentes de componentes SPY:\n'
+          for (const e of recent8k.value.slice(0, 3)) {
+            const date = e.filedAt.slice(0, 10)
+            const sym = e.symbol ?? e.cik
+            const title = e.title ?? 'Evento 8-K'
+            secBlock += `- ${date} — ${sym}: ${title}\n`
+          }
+        }
+        if (recent13f.status === 'fulfilled' && recent13f.value.length > 0) {
+          secBlock += '\n13F recentes (posição em SPY para fundos selecionados):\n'
+          for (const p of recent13f.value.slice(0, 3)) {
+            const dir = p.changeVsPrev ?? 'flat'
+            secBlock += `- ${p.managerName}: posição em SPY (${dir}) no relatório de ${p.reportDate}\n`
+          }
+        }
+
+        const followUpMessages = [
+          ...baseMessages,
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              { id: 'call_sec', type: 'function', function: { name: 'fetch_sec_filings', arguments: '{}' } },
+            ],
+          } as any,
+          { role: 'tool', tool_call_id: 'call_sec', content: secBlock } as any,
+        ]
+
+        const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${CONFIG.OPENAI_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o',
+            stream: true,
+            max_tokens: 2500,
+            messages: followUpMessages,
+          }),
+        })
+        if (!secondRes.ok) {
+          const text = await secondRes.text()
+          sendEvent('error', { message: `OpenAI error (follow-up SEC): ${secondRes.status} — ${text}` })
+          res.end()
+          return
+        }
+        const { fullResponse: secondResponse } = await streamTokens(secondRes, sendEvent)
+        fullResponse = secondResponse
       } else {
         console.log(`[ANALYZE] user=${userId} tool_call=none → base context only`)
       }

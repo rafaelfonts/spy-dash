@@ -21,6 +21,10 @@ export const CONFIG = {
   FINNHUB_API_KEY: process.env.FINNHUB_API_KEY ?? '',
   GNEWS_API_KEY: process.env.GNEWS_API_KEY ?? '',
   BLS_API_KEY: process.env.BLS_API_KEY ?? '',
+  // CFTC / Treasury / EIA / FINRA extras
+  CFTC_PRE_BASE_URL: process.env.CFTC_PRE_BASE_URL ?? '',
+  EIA_API_KEY: process.env.EIA_API_KEY ?? '',
+  FINRA_API_KEY: process.env.FINRA_API_KEY ?? '',
   PORT: parseInt(process.env.PORT ?? '3001', 10),
   CORS_ORIGIN: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
   ANALYZE_COOLDOWN_MS: parseInt(process.env.ANALYZE_COOLDOWN_MS ?? '30000', 10),

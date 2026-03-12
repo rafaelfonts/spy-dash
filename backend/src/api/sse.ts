@@ -10,6 +10,10 @@ import { getTodaysBriefing } from '../data/preMarketBriefing'
 import { getLastMacroDigest } from '../data/macroDigestService'
 import { getLastScheduledSignal } from '../data/scheduledSignalService'
 import { getLastCBOEPCR } from '../data/cboePCRPoller'
+import { getCftcCotSnapshot } from '../data/cftcCotState'
+import { getTreasuryTgaSnapshot } from '../data/treasuryState'
+import { getEiaOilSnapshot } from '../data/eiaOilState'
+import { getFinraDarkPoolSnapshot } from '../data/finraDarkPoolState'
 import type { SSEClient } from '../types/market'
 import { SSEBatcher } from '../lib/sseBatcher'
 import { checkAlerts } from '../data/alertEngine'
@@ -71,6 +75,10 @@ emitter.on('macro-digest', (data) => broadcast('macro-digest', data))
 emitter.on('briefing', (data) => broadcast('briefing', data))
 emitter.on('trade_signal_update', (data) => broadcast('trade_signal_update', data))
 emitter.on('cboe_pcr', (data) => broadcast('cboe_pcr', data))
+emitter.on('cftc_cot', (data) => broadcast('cftc_cot', data))
+emitter.on('treasury_tga', (data) => broadcast('treasury_tga', data))
+emitter.on('eia_oil', (data) => broadcast('eia_oil', data))
+emitter.on('finra_darkpool', (data) => broadcast('finra_darkpool', data))
 emitter.on('quote', (data) => {
   if (data.last !== null) checkAlerts(data.last)
   broadcast('quote', {
@@ -203,6 +211,30 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     const advancedSnapshot = getAdvancedMetricsSnapshot()
     if (advancedSnapshot) {
       client.write('advanced-metrics', advancedSnapshot)
+    }
+
+    // Send last CFTC COT snapshot if available
+    const cotSnapshot = getCftcCotSnapshot()
+    if (cotSnapshot) {
+      client.write('cftc_cot', cotSnapshot)
+    }
+
+    // Send last Treasury TGA snapshot if available
+    const tgaSnapshot = getTreasuryTgaSnapshot()
+    if (tgaSnapshot) {
+      client.write('treasury_tga', tgaSnapshot)
+    }
+
+    // Send last EIA Oil snapshot if available
+    const oilSnapshot = getEiaOilSnapshot()
+    if (oilSnapshot) {
+      client.write('eia_oil', oilSnapshot)
+    }
+
+    // Send last FINRA Dark Pool snapshot if available
+    const finraSnapshot = getFinraDarkPoolSnapshot()
+    if (finraSnapshot) {
+      client.write('finra_darkpool', finraSnapshot)
     }
 
     // Send cached VIX term structure snapshot

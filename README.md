@@ -317,6 +317,33 @@ Painel com cinco fontes de dados exibidas no frontend, agregadas via SSE (earnin
 | **Headlines** | GNews | A cada 30min |
 | **Fear & Greed** | CNN (endpoint público) | A cada 4h |
 
+### Fontes institucionais adicionais (COT, TGA, EIA, FINRA, SEC)
+
+- **CFTC Commitment of Traders (COT)**  
+  - Poller semanal (`cftcCotPoller.ts`) consulta o ambiente público da CFTC e calcula `CftcCotSnapshot` com registros relevantes para SPX/VIX (hedge funds, asset managers, comerciais).  
+  - Snapshot em memória (`cftcCotState.ts`) e broadcast SSE `cftc_cot`; usado no prompt IA como contexto de posicionamento institucional (ex.: hedge funds net long em percentil extremo → aumenta peso de downside risk).
+
+- **Treasury TGA (caixa do Tesouro)**  
+  - Poller diário (`treasuryPoller.ts`) consome a API oficial `fiscaldata.treasury.gov` (Daily Treasury Statement) e produz `TreasuryTgaSnapshot` com saldo de caixa (TGA) e variação diária (delta).  
+  - Estado em memória (`treasuryState.ts`), evento SSE `treasury_tga` e integração no macro digest (`macroDigestService.ts`) + prompt IA (`buildMacroContextBlock`): TGA caindo injeta liquidez, TGA subindo drena liquidez.
+
+- **EIA Oil (estoques de petróleo/gasolina)**  
+  - Poller semanal (`eiaOilPoller.ts`) consulta a API open data da EIA usando `EIA_API_KEY` e gera `EiaOilSnapshot` com estoques e variação semanal.  
+  - Estado em memória (`eiaOilState.ts`), evento SSE `eia_oil` e seções no macro digest e no bloco macro da IA — proxy para pressão inflacionária futura (quedas consecutivas em estoques + demanda forte aumentam risco de inflação).
+
+- **FINRA Dark Pool / ATS volume SPY**  
+  - Poller semanal (`finraDarkPoolPoller.ts`) usa a FINRA OTC Transparency API (via `FINRA_API_KEY`) para agregar volume ATS de SPY e calcular `% off-exchange` (dark pool share).  
+  - Snapshot em memória (`finraDarkPoolState.ts`), evento SSE `finra_darkpool` e bloco dedicado no prompt IA (`buildFinraDarkPoolBlock`).  
+  - `buildVolumeAnomalyBlock()` agora combina **Sizzle 0DTE** com `offExchangePct`: sizzle alto + ≥40% do volume em dark pools reforça sinal de fluxo institucional; sizzle neutro com off-exchange muito alto sugere acúmulo discreto.
+
+- **SEC EDGAR (8-K / 13F)**  
+  - Serviço sob demanda (`secEdgarService.ts`) usando `data.sec.gov` com `User-Agent` identificado, cache em memória (TTL ~15min) e throttle de requisições.  
+  - Funções: `fetchRecent8KForSPYComponents(limit)` (últimos 8-K de alguns componentes SPY) e `fetchRecent13FForSelectedFunds(limit)` (13F de fundos/ETFs selecionados).  
+  - Integrações:
+    - **Macro Digest**: seções opcionais “EVENTOS SEC 8-K RECENTES (componentes SPY)” e “MUDANÇAS 13F EM SPY (fundos selecionados)” em `macroDigestService.ts`.  
+    - **Tool Calling**: novo tool `fetch_sec_filings` em `openai.ts` (disponível para Claude/GPT) permite ao modelo buscar contexto institucional extra (8‑K/13F) quando o usuário perguntar explicitamente sobre fluxo de fundos ou eventos SEC.  
+    - **Resumo curto no prompt base**: `buildSecSummaryBlock()` injeta um trecho enxuto com 8‑K/13F recentes sempre que já houver dados SEC em cache, sem inflar o prompt em análises rotineiras.
+
 **Earnings (backend/IA):** poller a cada 6h com 50 símbolos em 5 setores (janela -7 a +90 dias); usado no pre-market briefing, tool calling da IA (DTE≤7) e contexto macro — sem componente visual no Feed de Mercado.
 
 **Dados Macro FRED:** CPI All Items, Core CPI, PCE Deflator, Fed Funds Rate, Yield Curve (T10Y2Y), Yield Spread 5Y-2Y (T5Y2Y), Treasury Yield 3M (DGS3MO), com direção vs. leitura anterior e color-coding semântico.

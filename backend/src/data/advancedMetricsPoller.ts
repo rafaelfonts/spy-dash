@@ -177,6 +177,7 @@ async function tick(): Promise<void> {
       charmPressure: regimeLive.charmPressure,
       gexVsYesterday,
       priceDistribution: regimeLive.priceDistribution,
+      surfaceQuality: regimeLive.surfaceQuality,
     },
     marketOpen: isMarketOpen(),
   }

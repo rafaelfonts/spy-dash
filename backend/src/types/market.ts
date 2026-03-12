@@ -161,6 +161,87 @@ export interface StatusEvent {
 }
 
 // =============================================================================
+// Macro / Fluxo institucional extra — CFTC COT, Treasury, EIA, Dark Pool
+// =============================================================================
+
+export interface CftcCotRecord {
+  /** Data da posição (terça-feira da semana de referência) em YYYY-MM-DD. */
+  asOfDate: string
+  /** Mercado subjacente, ex: 'E-MINI S&P 500', 'VIX FUTURES'. */
+  marketName: string
+  /** Categoria agregada, ex: 'Leveraged Funds', 'Asset Manager/Institutional'. */
+  traderCategory: string
+  /** Posições líquidas em contratos (long − short). */
+  netContracts: number | null
+  /** Percentil histórico da posição líquida (0–100) quando disponível. */
+  netPercentile?: number | null
+}
+
+export interface CftcCotSnapshot {
+  fetchedAt: string            // ISO 8601
+  weekOf: string               // YYYY-MM-DD (semana de referência)
+  /** Registros relevantes para SPX / VIX já filtrados. */
+  records: CftcCotRecord[]
+}
+
+/** Treasury General Account — saldo de caixa e variação diária. */
+export interface TreasuryTgaSnapshot {
+  asOfDate: string             // YYYY-MM-DD
+  openingBalance: number | null
+  closingBalance: number | null
+  /** closingBalance − openingBalance (variação do dia). */
+  delta: number | null
+  fetchedAt: string            // ISO 8601
+}
+
+/** Estoques de petróleo/gasolina da EIA — visão compacta para briefing macro. */
+export interface EiaOilSnapshot {
+  asOfDate: string             // YYYY-MM-DD da última semana disponível
+  crudeInventories: number | null
+  gasolineInventories: number | null
+  /** Variação semanal de estoques de petróleo, em milhões de barris, se disponível. */
+  crudeChange: number | null
+  fetchedAt: string            // ISO 8601
+}
+
+/** Volume agregado em dark pools (FINRA ATS) para SPY. */
+export interface FinraDarkPoolSnapshot {
+  weekOf: string               // YYYY-MM-DD (segunda-feira da semana de referência)
+  totalVolume: number | null   // volume total negociado em ATS (shares)
+  offExchangePct: number | null // % do volume total de SPY que ocorreu off-exchange
+  venueCount: number | null
+  fetchedAt: string            // ISO 8601
+}
+
+// =============================================================================
+// SEC EDGAR — 8-K / 13F (apenas backend/IA, não exposto via SSE)
+// =============================================================================
+
+export interface SecFilingBase {
+  cik: string                  // CIK zero-padded (10 dígitos)
+  symbol?: string              // ticker, quando disponível
+  formType: string             // ex: '8-K', '13F-HR'
+  filedAt: string              // ISO 8601
+  accession: string            // accession number da filing
+  title?: string
+}
+
+export interface Sec8KEvent extends SecFilingBase {
+  itemNumbers?: string[]       // itens 8-K relevantes, ex: ['2.02', '7.01']
+  isEarningsRelated?: boolean
+  isGuidanceRelated?: boolean
+}
+
+export interface Sec13FPositionSummary {
+  managerName: string
+  cik: string
+  reportDate: string           // YYYY-MM-DD
+  spyExposureUsd: number | null
+  spyShares: number | null
+  changeVsPrev?: 'increase' | 'decrease' | 'new' | 'closed' | 'flat'
+}
+
+// =============================================================================
 // Zod schemas — referência viva do formato esperado de cada API externa
 // =============================================================================
 import { z } from 'zod'
