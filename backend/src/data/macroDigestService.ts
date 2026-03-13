@@ -56,7 +56,7 @@ function getTodayDateET(): string {
   return `${y}-${m}-${d}`
 }
 
-function buildDigestPrompt(): string {
+async function buildDigestPrompt(): Promise<string> {
   const sections: string[] = []
 
   if (newsSnapshot.headlines?.length) {
@@ -186,7 +186,7 @@ Idioma: Português.`
 }
 
 async function generateAndSendMacroDigest(): Promise<void> {
-  const prompt = buildDigestPrompt()
+  const prompt = await buildDigestPrompt()
   if (!prompt) {
     console.warn('[MacroDigest] newsSnapshot vazio — pulando digest')
     return

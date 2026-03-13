@@ -8,7 +8,7 @@ import { createBreaker } from '../lib/circuitBreaker'
 import type { OptionExpiry } from '../data/optionChain'
 import { getOptionChainCapturedAt, getOptionChainSnapshot } from '../data/optionChain'
 import { humanizeAge, isMarketOpen } from '../lib/time'
-import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem, AnalysisStructuredOutput, PricePoint } from '../types/market'
+import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem, AnalysisStructuredOutput, PricePoint, FinraDarkPoolSnapshot, Sec8KEvent, Sec13FPositionSummary } from '../types/market'
 import { saveAnalysis, buildMemoryBlock } from '../data/analysisMemory'
 import { getLastVwap } from '../data/priceHistory'
 import type { DailyGexResult, GEXDynamic } from '../data/gexService'
@@ -2125,7 +2125,7 @@ export async function runAnalysisForPayload(
       }),
     })
     if (secondRes.ok && secondRes.body) {
-      const { fullResponse: secondResponse } = await streamTokens(secondRes, sendEvent)
+      const { fullResponse: secondResponse } = await streamTokens(secondRes, noop)
       fullResponse = secondResponse
     }
   }
