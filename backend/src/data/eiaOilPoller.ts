@@ -1,5 +1,6 @@
 import { CONFIG } from '../config'
 import { cacheGet, cacheSet } from '../lib/cacheStore'
+import { createBreaker } from '../lib/circuitBreaker'
 import type { EiaOilSnapshot } from '../types/market'
 import { publishEiaOil } from './eiaOilState'
 
@@ -11,6 +12,18 @@ const TTL_7D_MS = 7 * 24 * 60 * 60 * 1000
 const CHECK_INTERVAL_MS = 60 * 1000
 
 const EIA_BASE = 'https://api.eia.gov/v2/petroleum/sti/data'
+
+const fetchBreaker = createBreaker(
+  async (urlStr: string): Promise<unknown> => {
+    const res = await fetch(urlStr, {
+      headers: { 'User-Agent': 'SPYDash/1.0' },
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json() as Promise<unknown>
+  },
+  'eia',
+  { resetTimeout: 60 * 60 * 1000, volumeThreshold: 1 },
+)
 
 async function fetchLatestEia(): Promise<EiaOilSnapshot | null> {
   if (!CONFIG.EIA_API_KEY) {
@@ -28,16 +41,10 @@ async function fetchLatestEia(): Promise<EiaOilSnapshot | null> {
   url.searchParams.set('offset', '0')
   url.searchParams.set('length', '1')
 
-  const res = await fetch(url.toString(), {
-    headers: { 'User-Agent': 'SPYDash/1.0' },
-  })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`EIA HTTP ${res.status}: ${text.slice(0, 120)}`)
-  }
+  const rawData = (await fetchBreaker.fire(url.toString())) as any | null
+  if (!rawData) return null
 
-  const json: any = await res.json()
-  const rows: any[] = Array.isArray(json.response?.data) ? json.response.data : []
+  const rows: any[] = Array.isArray(rawData.response?.data) ? rawData.response.data : []
   if (rows.length === 0) {
     console.warn('[EiaOilPoller] Nenhuma linha em EIA petroleum/sti')
     return null
