@@ -1,5 +1,6 @@
 import { CONFIG } from '../config'
 import { cacheGet, cacheSet } from '../lib/cacheStore'
+import { createBreaker } from '../lib/circuitBreaker'
 import type { FinraDarkPoolSnapshot } from '../types/market'
 import { publishFinraDarkPool } from './finraDarkPoolState'
 
@@ -23,6 +24,22 @@ interface FinraRow {
   mpid?: string
 }
 
+const fetchBreaker = createBreaker(
+  async (urlStr: string): Promise<unknown> => {
+    const res = await fetch(urlStr, {
+      headers: {
+        Authorization: `Bearer ${CONFIG.FINRA_API_KEY}`,
+        'User-Agent': 'SPYDash/1.0',
+        Accept: 'application/json',
+      },
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json() as Promise<unknown>
+  },
+  'finra',
+  { resetTimeout: 60 * 60 * 1000, volumeThreshold: 1 },
+)
+
 async function fetchLatestFinraDarkPool(): Promise<FinraDarkPoolSnapshot | null> {
   if (!CONFIG.FINRA_API_KEY) {
     console.warn('[FinraDarkPoolPoller] FINRA_API_KEY não configurada — pulando poller')
@@ -35,21 +52,9 @@ async function fetchLatestFinraDarkPool(): Promise<FinraDarkPoolSnapshot | null>
   url.searchParams.set('sort', '-weekStartDate')
   url.searchParams.set('issueSymbol', 'SPY')
 
-  const res = await fetch(url.toString(), {
-    headers: {
-      'User-Agent': 'SPYDash/1.0',
-      Authorization: `Bearer ${CONFIG.FINRA_API_KEY}`,
-      Accept: 'application/json',
-    },
-  })
-
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`FINRA HTTP ${res.status}: ${text.slice(0, 160)}`)
-  }
-
-  const json: any = await res.json()
-  const rows: FinraRow[] = Array.isArray(json.data ?? json) ? (json.data ?? json) : []
+  const rawData = await fetchBreaker.fire(url.toString()) as FinraRow[] | null
+  if (!rawData) return null
+  const rows: FinraRow[] = Array.isArray(rawData) ? rawData : []
   if (rows.length === 0) {
     console.warn('[FinraDarkPoolPoller] Nenhuma linha retornada para SPY')
     return null
