@@ -41,6 +41,8 @@ import { getTreasuryTgaSnapshot } from '../data/treasuryState'
 import { getEiaOilSnapshot } from '../data/eiaOilState'
 import { getFinraDarkPoolSnapshot } from '../data/finraDarkPoolState'
 import { getRVOLSnapshot } from '../data/rvolPoller'
+import { searchLiveNews } from '../lib/tavilyClient'
+import { buildNewsDigest } from '../lib/newsDigest'
 
 interface ContextData {
   fearGreed?: { score: FearGreedData['score']; label: FearGreedData['label'] }
@@ -150,6 +152,58 @@ const ANTHROPIC_FETCH_SEC_FILINGS_TOOL = {
       },
     },
     required: [],
+  },
+}
+
+// ---------------------------------------------------------------------------
+// Tool definition — search_live_news
+// The model calls this tool when it detects an unexplained price/volume anomaly.
+// ---------------------------------------------------------------------------
+
+const SEARCH_LIVE_NEWS_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'search_live_news',
+    description:
+      'Busca notícias ao vivo sobre o SPY e mercado americano quando detectar movimento de preço/volume inexplicável ' +
+      'pelos dados estruturais internos. ' +
+      'Acione quando: (1) variação ≥ 0.4% em 15min não correlacionada com VIX/GEX/P/C; ' +
+      '(2) RVOL > 2.0 sem catalisador estrutural identificado; ' +
+      '(3) regime_score caiu ≥ 3 pontos sem mudança em GEX, vanna ou charm. ' +
+      'Formule a query incluindo o preço atual do SPY, a variação e o timeframe.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Query contextualizada ao movimento detectado. Ex: "SPY fell 0.6% in 15min from $580 to $576 reason today"',
+        },
+        reason: {
+          type: 'string',
+          description: 'Descrição da anomalia. Ex: "RVOL 2.3x without GEX or P/C catalyst"',
+        },
+      },
+      required: ['query', 'reason'],
+    },
+  },
+}
+
+const ANTHROPIC_SEARCH_LIVE_NEWS_TOOL = {
+  name: 'search_live_news',
+  description:
+    'Busca notícias ao vivo sobre o SPY e mercado americano quando detectar movimento de preço/volume inexplicável ' +
+    'pelos dados estruturais internos. ' +
+    'Acione quando: (1) variação ≥ 0.4% em 15min não correlacionada com VIX/GEX/P/C; ' +
+    '(2) RVOL > 2.0 sem catalisador estrutural identificado; ' +
+    '(3) regime_score caiu ≥ 3 pontos sem mudança em GEX, vanna ou charm. ' +
+    'Formule a query incluindo o preço atual do SPY, a variação e o timeframe.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      query: { type: 'string' },
+      reason: { type: 'string' },
+    },
+    required: ['query', 'reason'],
   },
 }
 
@@ -1497,7 +1551,7 @@ async function extractStructuredOutput(
 async function streamTokens(
   openaiRes: Response,
   sendEvent: (event: string, data: unknown) => void,
-): Promise<{ fullResponse: string; toolCallName: string | null }> {
+): Promise<{ fullResponse: string; toolCallName: string | null; toolCallArgs: string }> {
   const reader = openaiRes.body?.getReader()
   if (!reader) throw new Error('No response body')
 
@@ -1564,7 +1618,7 @@ async function streamTokens(
     }
   }
 
-  return { fullResponse, toolCallName }
+  return { fullResponse, toolCallName, toolCallArgs }
 }
 
 // ---------------------------------------------------------------------------
@@ -1583,7 +1637,7 @@ interface ClaudeStreamParams {
   includeTools?: boolean
 }
 
-async function streamClaudeAnalyze(params: ClaudeStreamParams): Promise<{ fullResponse: string; toolCallName: string | null }> {
+async function streamClaudeAnalyze(params: ClaudeStreamParams): Promise<{ fullResponse: string; toolCallName: string | null; toolCallArgs: string }> {
   const { system, messages, sendEvent, includeTools = true } = params
 
   try {
@@ -1606,7 +1660,7 @@ async function streamClaudeAnalyze(params: ClaudeStreamParams): Promise<{ fullRe
     stream: true,
   }
   if (includeTools) {
-    body.tools = [ANTHROPIC_FETCH_CONTEXT_TOOL, ANTHROPIC_FETCH_SEC_FILINGS_TOOL]
+    body.tools = [ANTHROPIC_FETCH_CONTEXT_TOOL, ANTHROPIC_FETCH_SEC_FILINGS_TOOL, ANTHROPIC_SEARCH_LIVE_NEWS_TOOL]
     body.tool_choice = { type: 'auto' }
   }
 
@@ -1619,6 +1673,7 @@ async function streamClaudeAnalyze(params: ClaudeStreamParams): Promise<{ fullRe
   }>
   let fullResponse = ''
   let toolCallName: string | null = null
+  let toolCallArgs = ''
   let currentToolUse: { id: string; name: string; input: string } | null = null
 
   for await (const event of stream) {
@@ -1640,6 +1695,7 @@ async function streamClaudeAnalyze(params: ClaudeStreamParams): Promise<{ fullRe
     }
     if (event.type === 'content_block_stop' && currentToolUse) {
       toolCallName = currentToolUse.name
+      toolCallArgs = currentToolUse.input
       currentToolUse = null
     }
     if (event.type === 'message_delta' && 'delta' in event) {
@@ -1648,7 +1704,7 @@ async function streamClaudeAnalyze(params: ClaudeStreamParams): Promise<{ fullRe
     }
   }
 
-  return { fullResponse, toolCallName }
+  return { fullResponse, toolCallName, toolCallArgs }
   } catch (err) {
     const e = err as Error
     console.error('[Claude] Erro ao instanciar ou executar SDK:', e.message, e.name ? `(${e.name})` : '')
@@ -1658,7 +1714,7 @@ async function streamClaudeAnalyze(params: ClaudeStreamParams): Promise<{ fullRe
 
 /** Circuit breaker for Claude (primary). Fallback returns null → caller uses OpenAI. */
 const claudeAnalysisBreaker = createBreaker(
-  async (params: ClaudeStreamParams): Promise<{ fullResponse: string; toolCallName: string | null }> => {
+  async (params: ClaudeStreamParams): Promise<{ fullResponse: string; toolCallName: string | null; toolCallArgs: string }> => {
     return streamClaudeAnalyze(params)
   },
   'claude-primary',
@@ -1779,7 +1835,12 @@ const STATIC_SYSTEM_PROMPT =
   'Bloco Sizzle ausente = vol 0DTE normal (0.6x–1.5x) — sem anomalia; não mencionar. ' +
   'Bloco Técnico (RSI/MACD/BBands): quando ausente do prompt, a análise é estrutural (GEX + IV + Expected Move + Skew + OPEX). ' +
   'NÃO solicite dados técnicos via tool call quando o bloco técnico estiver ausente. ' +
-  'RSI e MACD são irrelevantes para Put Spread de 21–45 DTE sem regime de alta vol (VIX>25), RSI extremo (<35 ou >70), ou pós-OPEX.'
+  'RSI e MACD são irrelevantes para Put Spread de 21–45 DTE sem regime de alta vol (VIX>25), RSI extremo (<35 ou >70), ou pós-OPEX. ' +
+  'FERRAMENTA search_live_news — Acione quando: (1) variação de preço ≥ 0.4% em 15min não explicada por VIX, GEX ou P/C; ' +
+  '(2) RVOL > 2.0 sem catalisador estrutural identificado nos dados internos; ' +
+  '(3) regime_score caiu ≥ 3 pontos sem mudança em GEX, vanna ou charm. ' +
+  'Formule a query incluindo o preço atual do SPY, a variação percentual e o timeframe. ' +
+  'Exemplo: "SPY drop 0.5% in 20 minutes at $580 reason catalyst news"'
 
 /**
  * Returns true if the tech block (RSI/MACD/BBands) should be included in the prompt.
@@ -1973,6 +2034,7 @@ export async function runAnalysisForPayload(
 
   let firstResponse = ''
   let toolCallName: string | null = null
+  let toolCallArgs = ''
   let usedClaude = false
 
   if (useClaudePrimary) {
@@ -1980,11 +2042,12 @@ export async function runAnalysisForPayload(
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
       sendEvent: noop,
-    })) as { fullResponse: string; toolCallName: string | null } | null
+    })) as { fullResponse: string; toolCallName: string | null; toolCallArgs: string } | null
     if (claudeResult != null) {
       usedClaude = true
       firstResponse = claudeResult.fullResponse
       toolCallName = claudeResult.toolCallName
+      toolCallArgs = claudeResult.toolCallArgs
     }
   }
 
@@ -1999,7 +2062,7 @@ export async function runAnalysisForPayload(
         model: 'gpt-4o',
         stream: true,
         max_tokens: 2500,
-        tools: [FETCH_CONTEXT_TOOL, FETCH_SEC_FILINGS_TOOL],
+        tools: [FETCH_CONTEXT_TOOL, FETCH_SEC_FILINGS_TOOL, SEARCH_LIVE_NEWS_TOOL],
         tool_choice: 'auto',
         messages: [
           { role: 'system', content: systemPrompt },
@@ -2011,6 +2074,7 @@ export async function runAnalysisForPayload(
       const openaiFirst = await streamTokens(firstRes, noop)
       firstResponse = openaiFirst.fullResponse
       toolCallName = openaiFirst.toolCallName
+      toolCallArgs = openaiFirst.toolCallArgs
     }
   }
 
@@ -2127,6 +2191,76 @@ export async function runAnalysisForPayload(
     if (secondRes.ok && secondRes.body) {
       const { fullResponse: secondResponse } = await streamTokens(secondRes, noop)
       fullResponse = secondResponse
+    }
+  }
+
+  if (toolCallName === 'search_live_news') {
+    let query = 'SPY market movement today'
+    let reason = 'anomalia detectada'
+    try {
+      const parsed = JSON.parse(toolCallArgs || '{}') as { query?: string; reason?: string }
+      if (parsed.query) query = parsed.query
+      if (parsed.reason) reason = parsed.reason
+    } catch {
+      console.warn('[search_live_news] Falha ao parsear toolCallArgs, usando query genérica')
+    }
+
+    const tavilyResults = await searchLiveNews(query)
+    const digest = await buildNewsDigest(tavilyResults, reason)
+    const mostRecentDate = tavilyResults.find((r) => r.published_date)?.published_date ?? null
+    const newsConf = calculateConfidence('tavily', mostRecentDate)
+    const newsBlock = digest
+      ? `\n=== NOTÍCIAS AO VIVO (busca contextualizada) ===\n[Confiança: ${newsConf.score} ${newsConf.label}]\n${digest}\n`
+      : '\n=== NOTÍCIAS AO VIVO ===\nSem notícias de impacto encontradas para este movimento.\n'
+
+    if (usedClaude) {
+      const claudeFollowUp = await streamClaudeAnalyze({
+        system: systemPrompt,
+        messages: [
+          { role: 'user', content: userContent },
+          {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'call_news', name: 'search_live_news', input: { query, reason } }],
+          },
+          {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 'call_news', content: newsBlock }],
+          },
+        ],
+        sendEvent: noop,
+        includeTools: false,
+      })
+      fullResponse = claudeFollowUp.fullResponse
+    } else if (CONFIG.OPENAI_API_KEY) {
+      const followUpMessages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            { id: 'call_news', type: 'function', function: { name: 'search_live_news', arguments: toolCallArgs || '{}' } },
+          ],
+        } as any,
+        { role: 'tool', tool_call_id: 'call_news', content: newsBlock } as any,
+      ]
+      const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${CONFIG.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          stream: true,
+          max_tokens: 2500,
+          messages: followUpMessages,
+        }),
+      })
+      if (secondRes.ok && secondRes.body) {
+        const { fullResponse: secondResponse } = await streamTokens(secondRes, noop)
+        fullResponse = secondResponse
+      }
     }
   }
 
@@ -2349,6 +2483,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
 
       let firstResponse = ''
       let toolCallName: string | null = null
+      let toolCallArgs = ''
       let usedClaude = false
 
       if (useClaudePrimary) {
@@ -2356,11 +2491,12 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
           system: systemPrompt,
           messages: [{ role: 'user', content: userContent }],
           sendEvent,
-        })) as { fullResponse: string; toolCallName: string | null } | null
+        })) as { fullResponse: string; toolCallName: string | null; toolCallArgs: string } | null
         if (claudeResult != null) {
           usedClaude = true
           firstResponse = claudeResult.fullResponse
           toolCallName = claudeResult.toolCallName
+          toolCallArgs = claudeResult.toolCallArgs
         }
       }
 
@@ -2376,7 +2512,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
             model: 'gpt-4o',
             stream: true,
             max_tokens: 2500,
-            tools: [FETCH_CONTEXT_TOOL, FETCH_SEC_FILINGS_TOOL],
+            tools: [FETCH_CONTEXT_TOOL, FETCH_SEC_FILINGS_TOOL, SEARCH_LIVE_NEWS_TOOL],
             tool_choice: 'auto',
             messages: baseMessages,
           }),
@@ -2390,6 +2526,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
         const openaiFirst = await streamTokens(firstRes, sendEvent)
         firstResponse = openaiFirst.fullResponse
         toolCallName = openaiFirst.toolCallName
+        toolCallArgs = openaiFirst.toolCallArgs
       }
 
       let fullResponse = firstResponse!
@@ -2509,6 +2646,81 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
         }
         const { fullResponse: secondResponse } = await streamTokens(secondRes, sendEvent)
         fullResponse = secondResponse
+      } else if (toolCallName === 'search_live_news') {
+        console.log(`[ANALYZE] user=${userId} tool_call=search_live_news → fetching live news`)
+
+        let query = 'SPY market movement today'
+        let reason = 'anomalia detectada'
+        try {
+          const parsed = JSON.parse(toolCallArgs || '{}') as { query?: string; reason?: string }
+          if (parsed.query) query = parsed.query
+          if (parsed.reason) reason = parsed.reason
+        } catch {
+          console.warn('[search_live_news] Falha ao parsear toolCallArgs, usando query genérica')
+        }
+
+        sendEvent('token', { text: `\n[Buscando notícias: ${reason}...]\n` })
+
+        const tavilyResults = await searchLiveNews(query)
+        const digest = await buildNewsDigest(tavilyResults, reason)
+        const mostRecentDate = tavilyResults.find((r) => r.published_date)?.published_date ?? null
+        const newsConf = calculateConfidence('tavily', mostRecentDate)
+        const newsBlock = digest
+          ? `\n=== NOTÍCIAS AO VIVO (busca contextualizada) ===\n[Confiança: ${newsConf.score} ${newsConf.label}]\n${digest}\n`
+          : '\n=== NOTÍCIAS AO VIVO ===\nSem notícias de impacto encontradas para este movimento.\n'
+
+        if (usedClaude) {
+          const claudeFollowUp = await streamClaudeAnalyze({
+            system: systemPrompt,
+            messages: [
+              { role: 'user', content: userContent },
+              {
+                role: 'assistant',
+                content: [{ type: 'tool_use', id: 'call_news', name: 'search_live_news', input: { query, reason } }],
+              },
+              {
+                role: 'user',
+                content: [{ type: 'tool_result', tool_use_id: 'call_news', content: newsBlock }],
+              },
+            ],
+            sendEvent,
+            includeTools: false,
+          })
+          fullResponse = claudeFollowUp.fullResponse
+        } else {
+          const followUpMessages = [
+            ...baseMessages,
+            {
+              role: 'assistant',
+              content: '',
+              tool_calls: [
+                { id: 'call_news', type: 'function', function: { name: 'search_live_news', arguments: toolCallArgs || '{}' } },
+              ],
+            } as any,
+            { role: 'tool', tool_call_id: 'call_news', content: newsBlock } as any,
+          ]
+          const secondRes = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${CONFIG.OPENAI_API_KEY}`,
+            },
+            body: JSON.stringify({
+              model: 'gpt-4o',
+              stream: true,
+              max_tokens: 2500,
+              messages: followUpMessages,
+            }),
+          })
+          if (!secondRes.ok) {
+            const text = await secondRes.text()
+            sendEvent('error', { message: `OpenAI error (news follow-up): ${secondRes.status} — ${text}` })
+            res.end()
+            return
+          }
+          const { fullResponse: secondResponse } = await streamTokens(secondRes, sendEvent)
+          fullResponse = secondResponse
+        }
       } else {
         console.log(`[ANALYZE] user=${userId} tool_call=none → base context only`)
       }

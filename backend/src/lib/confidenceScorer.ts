@@ -16,6 +16,7 @@ const SOURCES: Record<string, SourceConfig> = {
   earnings:    { name: 'Earnings',      publishCycleMs: 6*3600_000,   maxAcceptableAgeMs: 12*3600_000 },
   optionChain: { name: 'Option Chain',  publishCycleMs: 300_000,      maxAcceptableAgeMs: 600_000 },
   technicals:  { name: 'Indicadores Técnicos', publishCycleMs: 15 * 60_000, maxAcceptableAgeMs: 60 * 60_000 },
+  tavily:      { name: 'Notícias Web',          publishCycleMs: 7_200_000,   maxAcceptableAgeMs: 21_600_000 },
 }
 
 export interface ConfidenceResult {

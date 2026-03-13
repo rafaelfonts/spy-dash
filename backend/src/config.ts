@@ -20,6 +20,7 @@ export const CONFIG = {
   FRED_API_KEY: process.env.FRED_API_KEY ?? '',
   FINNHUB_API_KEY: process.env.FINNHUB_API_KEY ?? '',
   GNEWS_API_KEY: process.env.GNEWS_API_KEY ?? '',
+  TAVILY_API_KEY: process.env.TAVILY_API_KEY ?? '',
   BLS_API_KEY: process.env.BLS_API_KEY ?? '',
   // CFTC / Treasury / EIA / FINRA extras
   CFTC_PRE_BASE_URL: process.env.CFTC_PRE_BASE_URL ?? '',
@@ -53,4 +54,8 @@ if (CONFIG.ANTHROPIC_API_KEY && CONFIG.ANTHROPIC_API_KEY.length < 20) {
 
 if (!CONFIG.OPENAI_API_KEY || CONFIG.OPENAI_API_KEY.length < 20) {
   throw new Error('OPENAI_API_KEY inválida ou ausente. Backend não pode iniciar.')
+}
+
+if (!CONFIG.TAVILY_API_KEY) {
+  console.warn('⚠️  TAVILY_API_KEY não configurada. Tool search_live_news usará fallback.')
 }
