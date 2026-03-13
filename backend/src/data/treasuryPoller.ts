@@ -1,5 +1,6 @@
 import { CONFIG } from '../config'
 import { cacheGet, cacheSet } from '../lib/cacheStore'
+import { createBreaker } from '../lib/circuitBreaker'
 import type { TreasuryTgaSnapshot } from '../types/market'
 import { publishTreasuryTga } from './treasuryState'
 
@@ -11,6 +12,18 @@ const CHECK_INTERVAL_MS = 60 * 1000
 
 const TREASURY_BASE =
   'https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/dts/dts_table_1';
+
+const fetchBreaker = createBreaker(
+  async (urlStr: string): Promise<unknown> => {
+    const res = await fetch(urlStr, {
+      headers: { 'User-Agent': 'SPYDash/1.0' },
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json() as Promise<unknown>
+  },
+  'treasury',
+  { resetTimeout: 60 * 60 * 1000, volumeThreshold: 1 },
+)
 
 interface TreasuryRow {
   record_date: string
@@ -25,16 +38,10 @@ async function fetchLatestTga(): Promise<TreasuryTgaSnapshot | null> {
   url.searchParams.set('page[size]', '1')
   url.searchParams.set('sort', '-record_date')
 
-  const res = await fetch(url.toString(), {
-    headers: { 'User-Agent': 'SPYDash/1.0' },
-  })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Treasury DTS HTTP ${res.status}: ${text.slice(0, 120)}`)
-  }
+  const rawData = await fetchBreaker.fire(url.toString()) as any
+  if (!rawData) return null
 
-  const json: any = await res.json()
-  const rows: TreasuryRow[] = Array.isArray(json.data) ? json.data : []
+  const rows: TreasuryRow[] = Array.isArray(rawData.data) ? rawData.data : []
   if (rows.length === 0) {
     console.warn('[TreasuryPoller] Nenhuma linha em dts_table_1')
     return null
