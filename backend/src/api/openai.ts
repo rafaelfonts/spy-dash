@@ -8,7 +8,7 @@ import { createBreaker } from '../lib/circuitBreaker'
 import type { OptionExpiry } from '../data/optionChain'
 import { getOptionChainCapturedAt, getOptionChainSnapshot } from '../data/optionChain'
 import { humanizeAge, isMarketOpen } from '../lib/time'
-import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem, AnalysisStructuredOutput, PricePoint, FinraDarkPoolSnapshot, Sec8KEvent, Sec13FPositionSummary } from '../types/market'
+import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem, AnalysisStructuredOutput, PricePoint, FinraDarkPoolSnapshot, Sec8KEvent, Sec13FPositionSummary, CftcCotSnapshot } from '../types/market'
 import { saveAnalysis, buildMemoryBlock } from '../data/analysisMemory'
 import { getLastVwap } from '../data/priceHistory'
 import type { DailyGexResult, GEXDynamic } from '../data/gexService'
@@ -40,6 +40,7 @@ import { getLastMacroDigest } from '../data/macroDigestService'
 import { getTreasuryTgaSnapshot } from '../data/treasuryState'
 import { getEiaOilSnapshot } from '../data/eiaOilState'
 import { getFinraDarkPoolSnapshot } from '../data/finraDarkPoolState'
+import { getCftcCotSnapshot } from '../data/cftcCotState'
 import { getRVOLSnapshot } from '../data/rvolPoller'
 import { searchLiveNews } from '../lib/tavilyClient'
 import { buildNewsDigest } from '../lib/newsDigest'
@@ -752,6 +753,20 @@ function buildFinraDarkPoolBlock(finra: FinraDarkPoolSnapshot | null): string | 
   return block
 }
 
+function buildCftcBlock(cot: CftcCotSnapshot | null): string | null {
+  if (!cot || cot.records.length === 0) return null
+  const lines = cot.records.map((r) => {
+    const net = r.netContracts != null ? r.netContracts.toLocaleString('en-US') : 'N/A'
+    const pct = r.netPercentile != null ? ` (${r.netPercentile.toFixed(0)}º pct)` : ''
+    return `  - ${r.marketName} | ${r.traderCategory}: ${net} contratos líquidos${pct}`
+  })
+  return (
+    `\n=== CFTC COT — Positioning Institucional (semana ${cot.weekOf}) ===\n` +
+    lines.join('\n') +
+    '\nFonte: CFTC Commitment of Traders. Positivo = net long. Percentil = histórico 3 anos.\n'
+  )
+}
+
 function buildCBOEPCRBlock(data: CBOEPCRData): string {
   const labelMap: Record<CBOEPCRData['label'], string> = {
     extreme_fear: 'MEDO EXTREMO — proteção sistêmica ativa',
@@ -1226,6 +1241,8 @@ function buildPrompt(
   ivConeBlock?: string | null,
   macroDigestBlock?: string | null,
   secSummaryBlock?: string | null,
+  finraBlock?: string | null,
+  cftcBlock?: string | null,
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
@@ -1301,6 +1318,12 @@ function buildPrompt(
   if (volAnomalyBlock) {
     prompt += volAnomalyBlock
   }
+
+  // --- FINRA Dark Pool (ATS SPY) ---
+  if (finraBlock) prompt += finraBlock
+
+  // --- CFTC COT — Positioning Institucional ---
+  if (cftcBlock) prompt += cftcBlock
 
   // --- GEX (Gamma Exposure) ---
   if (gexMultiBlock) {
@@ -1973,6 +1996,8 @@ export async function runAnalysisForPayload(
     ? buildVolumeAnomalyBlock(volAnomalyData, finraSnapMain)
     : null
   const finraBlockMain = finraSnapMain ? buildFinraDarkPoolBlock(finraSnapMain) : null
+  const cftcSnapMain = getCftcCotSnapshot()
+  const cftcBlockMain = buildCftcBlock(cftcSnapMain)
   // Resumo SEC curto — usa o mesmo serviço do macro digest, mas apenas se já estiver em cache
   let secSummaryBlock: string | null = null
   try {
@@ -2019,6 +2044,8 @@ export async function runAnalysisForPayload(
     ivConeBlockScheduled,
     macroDigestBlockScheduled,
     secSummaryBlock,
+    finraBlockMain,
+    cftcBlockMain,
   )
 
   const marketStatusNote = isMarketOpen()
@@ -2408,9 +2435,13 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const volAnomalyData = (todayVolSnap && volHistory.length >= 2)
       ? computeVolumeAnomaly(todayVolSnap, volHistory.slice(0, -1))
       : null
+    const finraSnapSSE = getFinraDarkPoolSnapshot()
     const volAnomalyBlock = (volAnomalyData && (volAnomalyData.sizzle0dte > 1.5 || volAnomalyData.sizzle0dte < 0.6))
-      ? buildVolumeAnomalyBlock(volAnomalyData)
+      ? buildVolumeAnomalyBlock(volAnomalyData, finraSnapSSE)
       : null
+    const finraBlockSSE = finraSnapSSE ? buildFinraDarkPoolBlock(finraSnapSSE) : null
+    const cftcSnapSSE = getCftcCotSnapshot()
+    const cftcBlockSSE = buildCftcBlock(cftcSnapSSE)
     const cboePCRData = await getLastCBOEPCR()
     const cboePCRBlock = cboePCRData ? buildCBOEPCRBlock(cboePCRData) : null
     const danBlockMain = advancedSnapshot?.dan ? buildDANBlock(advancedSnapshot.dan) : null
@@ -2456,6 +2487,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       ivConeBlockMain,
       macroDigestBlockMain,
       secSummaryBlockMain,
+      finraBlockSSE,
+      cftcBlockSSE,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     if (!CONFIG.ANTHROPIC_API_KEY) {
