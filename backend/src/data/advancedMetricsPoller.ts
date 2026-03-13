@@ -27,6 +27,7 @@ import type { VolumeSnapshot } from './volumeAnomalyService'
 import { marketState } from './marketState'
 import { getOptionChainSnapshot } from './optionChain'
 import { calculateDAN } from '../lib/danCalculator'
+import { getRVOLSnapshot } from './rvolPoller'
 
 const SYMBOL = 'SPY'
 const POLL_INTERVAL_MS   = 60_000   // 60 s during market hours
@@ -180,6 +181,7 @@ async function tick(): Promise<void> {
       surfaceQuality: regimeLive.surfaceQuality,
     },
     marketOpen: isMarketOpen(),
+    rvol: getRVOLSnapshot(),
   }
 
   publishAdvancedMetrics(payload)

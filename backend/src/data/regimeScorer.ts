@@ -17,6 +17,7 @@ import { buildSurfaceFromChain, getClosestSmile, getSurfaceQuality } from '../li
 import type { VolSmile, SurfaceQuality } from '../lib/volSurface'
 import type { GEXDynamic } from './gexService'
 import { GEX_THRESHOLDS } from '../lib/gexThresholds'
+import { getRVOLSnapshot } from './rvolPoller'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -362,7 +363,18 @@ export function computeRegimeScore(gexDynamic: GEXDynamic | null): RegimeScorerR
     else if (crossover === 'bearish') raw -= 1
   }
 
-  // Clampar em 0–10 (max interno pode chegar a 12 com momentum confirmando tudo)
+  // RVOL > 1.5 com acumulação + VIX < 18 + GEX positivo → fluxo institucional comprador
+  const rvol = getRVOLSnapshot()
+  if (
+    rvol && rvol.rvol > 1.5 &&
+    rvol.rvolBias === 'accumulation' &&
+    vixLast != null && vixLast < 18 &&
+    totalNetGamma != null && totalNetGamma > 0
+  ) {
+    raw += 1
+  }
+
+  // Clampar em 0–10 (max interno pode chegar a 13 com momentum + RVOL confirmando tudo)
   const score = Math.max(0, Math.min(10, raw))
 
   // --- vanna_regime ---
@@ -537,6 +549,17 @@ export function computeNoTradeScore(gexDynamic: GEXDynamic | null): NoTradeResul
     const curvatureLbl = termStructure.curvature != null ? ` (curvature=${termStructure.curvature.toFixed(1)}%)` : ''
     noTradeScore += 1
     activeVetos.push(`Term structure humped${curvatureLbl} — evento binário precificado na barriga, risco de convexidade`)
+  }
+
+  // RVOL > 1.5 + VIX > 20 + SPY caindo → distribuição institucional agressiva (weight 1)
+  const rvolSnap = getRVOLSnapshot()
+  if (
+    rvolSnap && rvolSnap.rvol > 1.5 &&
+    rvolSnap.rvolBias === 'distribution' &&
+    (vixLast ?? 0) > 20
+  ) {
+    noTradeScore += 1
+    activeVetos.push(`RVOL=${rvolSnap.rvol.toFixed(2)}× distribuição institucional + VIX>${(vixLast ?? 0).toFixed(0)} — venda com volume acima do normal`)
   }
 
   const noTradeLevel: NoTradeLevel =

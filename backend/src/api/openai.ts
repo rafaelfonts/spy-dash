@@ -40,6 +40,7 @@ import { getLastMacroDigest } from '../data/macroDigestService'
 import { getTreasuryTgaSnapshot } from '../data/treasuryState'
 import { getEiaOilSnapshot } from '../data/eiaOilState'
 import { getFinraDarkPoolSnapshot } from '../data/finraDarkPoolState'
+import { getRVOLSnapshot } from '../data/rvolPoller'
 
 interface ContextData {
   fearGreed?: { score: FearGreedData['score']; label: FearGreedData['label'] }
@@ -1077,6 +1078,31 @@ function buildExpectedMoveBlock(snapshot: ExpectedMoveSnapshot | null, spyLast: 
   return lines.join('\n')
 }
 
+/**
+ * RVOL block — SPY relative volume proxy for institutional flow.
+ * Reads getRVOLSnapshot() directly; returns null when unavailable.
+ */
+function buildRVOLBlock(): string | null {
+  const rvol = getRVOLSnapshot()
+  if (!rvol || rvol.avg20dVolume <= 0) return null
+  const pct = ((rvol.rvol - 1) * 100).toFixed(0)
+  const sign = rvol.rvol >= 1 ? '+' : ''
+  const biasLabel =
+    rvol.rvolBias === 'accumulation' ? '🟢 ACUMULAÇÃO — fluxo institucional comprador'
+    : rvol.rvolBias === 'distribution' ? '🔴 DISTRIBUIÇÃO — fluxo institucional vendedor'
+    : '⚪ neutro'
+  return (
+    `\n**RVOL (Volume Relativo SPY)**: ${rvol.rvol.toFixed(2)}× (${sign}${pct}% vs. média 20d)\n` +
+    `- Volume hoje: ${(rvol.todayVolume / 1e6).toFixed(1)}M | Média 20d: ${(rvol.avg20dVolume / 1e6).toFixed(1)}M\n` +
+    `- Bias: ${biasLabel}\n` +
+    (rvol.rvolBias === 'accumulation'
+      ? '- RVOL acima da média com SPY subindo: dealers comprando acima do normal — confirma viés bullish.\n'
+      : rvol.rvolBias === 'distribution'
+        ? '- RVOL acima da média com SPY caindo: venda com volume elevado — sinal de cautela.\n'
+        : '')
+  )
+}
+
 /** Risk-free rate from FRED DFF in macro snapshot; fallback 5.3%. */
 function getRiskFreeRate(): number {
   const dff = newsSnapshot.macro.find((m) => m.seriesId === 'DFF')
@@ -1230,6 +1256,12 @@ function buildPrompt(
   // --- Put/Call Ratio (intraday Tradier) ---
   if (putCallRatioBlock) {
     prompt += putCallRatioBlock
+  }
+
+  // --- RVOL — Relative Volume (proxy fluxo institucional) ---
+  const rvolBlock = buildRVOLBlock()
+  if (rvolBlock) {
+    prompt += rvolBlock
   }
 
   // --- CBOE PCR (pregão anterior — fluxo institucional amplo) ---

@@ -5,6 +5,35 @@ import type { EnrichedPosition } from '../../hooks/usePortfolio'
 import { Skeleton } from '../ui/Skeleton'
 import { Modal } from '../ui/Modal'
 import { AddPositionModal } from './AddPositionModal'
+import { supabase } from '../../lib/supabase'
+import { getApiBase } from '../../lib/apiBase'
+
+interface SpreadGreeks {
+  positionId: string
+  strategy: string
+  netDelta: number
+  netGamma: number
+  netTheta: number
+  netVega: number
+  maxRisk: number
+  breakeven: number
+}
+
+interface PortfolioGreeks {
+  totalDelta: number
+  totalGamma: number
+  totalTheta: number
+  totalVega: number
+  positions: SpreadGreeks[]
+  varScenarios: {
+    oneStdDown: number
+    twoStdDown: number
+    oneStdUp: number
+    twoStdUp: number
+  }
+  spy: number
+  capturedAt: string
+}
 
 function PositionRow({
   p,
@@ -113,6 +142,30 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
   const [modalOpen, setModalOpen] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<{ id: string; strategy: string } | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [greeksOpen, setGreeksOpen] = useState(false)
+  const [greeks, setGreeks] = useState<PortfolioGreeks | null>(null)
+  const [greeksLoading, setGreeksLoading] = useState(false)
+
+  const fetchGreeks = useCallback(async () => {
+    setGreeksLoading(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const headers: Record<string, string> = {}
+      if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`
+      const res = await fetch(`${getApiBase()}/api/portfolio/greeks`, { headers })
+      if (res.status === 204) { setGreeks(null); return }
+      if (!res.ok) return
+      setGreeks(await res.json())
+    } finally {
+      setGreeksLoading(false)
+    }
+  }, [])
+
+  const handleGreeksToggle = useCallback(() => {
+    const opening = !greeksOpen
+    setGreeksOpen(opening)
+    if (opening && !greeks) fetchGreeks()
+  }, [greeksOpen, greeks, fetchGreeks])
 
   const handleCreateSuccess = useCallback(() => {
     refresh()
@@ -182,6 +235,18 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
           >
             {analyzing ? 'Analisando…' : 'Analisar'}
           </button>
+          <button
+            type="button"
+            onClick={handleGreeksToggle}
+            disabled={positions.length === 0}
+            className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 border active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+              greeksOpen
+                ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300'
+                : 'bg-bg-elevated border-border-subtle text-text-secondary hover:bg-border-subtle hover:text-text-primary'
+            }`}
+          >
+            Greeks / VaR
+          </button>
         </div>
       </div>
 
@@ -248,6 +313,105 @@ export const PortfolioPanel = memo(function PortfolioPanel() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {greeksOpen && (
+            <div className="mt-4 pt-4 border-t border-border-subtle">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-semibold text-text-primary">Greeks & VaR</h3>
+                <button
+                  type="button"
+                  onClick={fetchGreeks}
+                  disabled={greeksLoading}
+                  className="text-[10px] text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
+                >
+                  {greeksLoading ? 'Calculando…' : '↻ Recalcular'}
+                </button>
+              </div>
+
+              {greeksLoading && !greeks ? (
+                <div className="space-y-1.5">
+                  <Skeleton className="w-full h-8" />
+                  <Skeleton className="w-full h-8" />
+                </div>
+              ) : !greeks ? (
+                <p className="text-xs text-text-muted py-2">Sem dados de Greeks. Clique em Recalcular.</p>
+              ) : (
+                <>
+                  {/* Aggregate Greeks */}
+                  <div className="grid grid-cols-4 gap-2 mb-4">
+                    {[
+                      { label: 'Δ Delta', value: greeks.totalDelta.toFixed(2), color: greeks.totalDelta >= 0 ? 'text-[#00ff88]' : 'text-red-400' },
+                      { label: 'Θ Theta/dia', value: `$${greeks.totalTheta.toFixed(2)}`, color: greeks.totalTheta >= 0 ? 'text-[#00ff88]' : 'text-red-400' },
+                      { label: 'ν Vega', value: greeks.totalVega.toFixed(2), color: greeks.totalVega >= 0 ? 'text-text-secondary' : 'text-red-400' },
+                      { label: 'Γ Gamma', value: greeks.totalGamma.toFixed(4), color: 'text-text-secondary' },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} className="rounded-lg bg-bg-elevated border border-border-subtle px-2.5 py-2 text-center">
+                        <p className="text-[9px] text-text-muted mb-0.5">{label}</p>
+                        <p className={`text-sm font-bold font-num ${color}`}>{value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* VaR Scenarios */}
+                  <div className="mb-4">
+                    <p className="text-[10px] text-text-muted mb-2 uppercase tracking-wider">Cenários de P&L (por contrato)</p>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {[
+                        { label: '−2σ (p10)', value: greeks.varScenarios.twoStdDown, badge: 'bg-red-500/15 border-red-500/30 text-red-300' },
+                        { label: '−1σ (p25)', value: greeks.varScenarios.oneStdDown, badge: 'bg-orange-500/15 border-orange-500/30 text-orange-300' },
+                        { label: '+1σ (p75)', value: greeks.varScenarios.oneStdUp, badge: 'bg-[#00ff88]/10 border-[#00ff88]/30 text-[#00ff88]' },
+                        { label: '+2σ (p90)', value: greeks.varScenarios.twoStdUp, badge: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' },
+                      ].map(({ label, value, badge }) => (
+                        <div key={label} className={`rounded border px-2 py-1.5 text-center ${badge}`}>
+                          <p className="text-[9px] opacity-70 mb-0.5">{label}</p>
+                          <p className="text-xs font-bold font-num">
+                            {value >= 0 ? '+' : ''}{value.toFixed(0)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[9px] text-text-muted mt-1">SPY ref: ${greeks.spy.toFixed(2)}</p>
+                  </div>
+
+                  {/* Per-position table */}
+                  {greeks.positions.length > 0 && (
+                    <div className="overflow-x-auto -mx-1">
+                      <table className="w-full text-left min-w-[400px]">
+                        <thead>
+                          <tr className="text-[9px] text-text-muted uppercase tracking-wider border-b border-border-subtle">
+                            <th className="pb-1.5 pr-3 font-medium">Estratégia</th>
+                            <th className="pb-1.5 pr-3 text-right">Δ neto</th>
+                            <th className="pb-1.5 pr-3 text-right">Θ $/dia</th>
+                            <th className="pb-1.5 pr-3 text-right">Risco Máx</th>
+                            <th className="pb-1.5 text-right">Breakeven</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {greeks.positions.map((pg) => (
+                            <tr key={pg.positionId} className="border-b border-border-subtle last:border-0">
+                              <td className="py-1.5 pr-3 text-xs text-text-primary">{pg.strategy}</td>
+                              <td className={`py-1.5 pr-3 text-right text-xs font-num ${pg.netDelta >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
+                                {pg.netDelta >= 0 ? '+' : ''}{pg.netDelta.toFixed(2)}
+                              </td>
+                              <td className={`py-1.5 pr-3 text-right text-xs font-num ${pg.netTheta >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
+                                {pg.netTheta >= 0 ? '+' : ''}${pg.netTheta.toFixed(2)}
+                              </td>
+                              <td className="py-1.5 pr-3 text-right text-xs font-num text-red-400">
+                                -${pg.maxRisk.toFixed(0)}
+                              </td>
+                              <td className="py-1.5 text-right text-xs font-num text-text-muted">
+                                ${pg.breakeven.toFixed(2)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
         </>

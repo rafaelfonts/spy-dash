@@ -249,6 +249,14 @@ export interface DANData {
   callDominancePct: number
 }
 
+export interface RVOLData {
+  todayVolume: number
+  avg20dVolume: number
+  rvol: number
+  rvolBias: 'accumulation' | 'distribution' | 'neutral'
+  capturedAt: string
+}
+
 // Live regime preview — computed every SSE tick, available before first AI analysis
 export interface RegimePreviewData {
   score: number
@@ -361,6 +369,7 @@ interface MarketStore {
   lastScheduledSignal: TradeSignalPayload | null
   noTrade: NoTradeData | null
   dan: DANData | null
+  rvol: RVOLData | null
   skewByDTE: SkewByDTE | null
   regimePreview: RegimePreviewData | null
   marketOpen: boolean | null  // null = SSE snapshot ainda não recebido
@@ -383,6 +392,7 @@ interface MarketStore {
   setLastScheduledSignal: (data: TradeSignalPayload | null) => void
   setNoTrade: (data: NoTradeData | null) => void
   setDAN: (data: DANData | null) => void
+  setRVOL: (data: RVOLData | null) => void
   setSkewByDTE: (data: SkewByDTE | null) => void
   setRegimePreview: (data: RegimePreviewData | null) => void
   setMarketOpen: (open: boolean) => void
@@ -451,6 +461,7 @@ export const useMarketStore = create<MarketStore>()(
     lastScheduledSignal: null,
     noTrade: null,
     dan: null,
+    rvol: null,
     skewByDTE: null,
     regimePreview: null,
     marketOpen: null,
@@ -504,6 +515,7 @@ export const useMarketStore = create<MarketStore>()(
     setLastScheduledSignal: (data) => set({ lastScheduledSignal: data }),
     setNoTrade: (data) => set({ noTrade: data }),
     setDAN: (data) => set({ dan: data }),
+    setRVOL: (data) => set({ rvol: data }),
     setSkewByDTE: (data) => set({ skewByDTE: data }),
     setRegimePreview: (data) => set({ regimePreview: data }),
     setMarketOpen: (open) => set({ marketOpen: open }),

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import {
+  computePortfolioGreeks,
   deletePortfolioPosition,
   getPortfolioSnapshot,
   insertPortfolioPosition,
@@ -34,6 +35,21 @@ export async function registerPortfolio(app: FastifyInstance): Promise<void> {
       positions: snapshot.positions,
       capturedAt: new Date(snapshot.capturedAt).toISOString(),
     })
+  })
+
+  app.get('/api/portfolio/greeks', async (_req, reply) => {
+    try {
+      const result = await computePortfolioGreeks()
+      if (!result) {
+        return reply.code(204).send()
+      }
+      return reply.send(result)
+    } catch (err) {
+      return reply.code(503).send({
+        error: 'Falha ao calcular Greeks do portfólio.',
+        detail: (err as Error).message,
+      })
+    }
   })
 
   app.post('/api/portfolio/analyze', async (_req, reply) => {

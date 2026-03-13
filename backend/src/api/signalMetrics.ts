@@ -9,7 +9,7 @@
  */
 
 import type { FastifyInstance } from 'fastify'
-import { computeSignalMetrics } from '../data/signalLogger'
+import { computeSignalMetrics, calibrateRegimeWeights } from '../data/signalLogger'
 
 export async function registerSignalMetrics(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { days?: string } }>('/api/signal-metrics', async (request, reply) => {
@@ -23,5 +23,14 @@ export async function registerSignalMetrics(app: FastifyInstance): Promise<void>
     }
 
     return metrics
+  })
+
+  app.get('/api/signal-metrics/calibration', async (_request, reply) => {
+    const result = await calibrateRegimeWeights()
+    if (!result) {
+      reply.code(204)
+      return null
+    }
+    return result
   })
 }

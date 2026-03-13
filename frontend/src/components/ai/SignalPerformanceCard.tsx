@@ -43,6 +43,18 @@ interface SignalMetrics {
   recentSignals: RecentSignal[]
 }
 
+interface CalibrationResult {
+  n: number
+  regimeScoreCoeff: number
+  regimeScoreTStat: number
+  r2: number
+  interpretation: string
+  suggestedAdjustment: {
+    direction: 'increase_threshold' | 'decrease_threshold' | 'ok'
+    reason: string
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -100,6 +112,31 @@ export function SignalPerformanceCard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
+  const [calibration, setCalibration] = useState<CalibrationResult | null>(null)
+  const [calibOpen, setCalibOpen] = useState(false)
+  const [calibLoading, setCalibLoading] = useState(false)
+
+  const fetchCalibration = useCallback(async () => {
+    setCalibLoading(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) return
+      const res = await fetch(`${getApiBase()}/api/signal-metrics/calibration`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      if (res.status === 204) { setCalibration(null); return }
+      if (!res.ok) return
+      setCalibration(await res.json())
+    } finally {
+      setCalibLoading(false)
+    }
+  }, [])
+
+  const handleCalibToggle = useCallback(() => {
+    const opening = !calibOpen
+    setCalibOpen(opening)
+    if (opening && !calibration) fetchCalibration()
+  }, [calibOpen, calibration, fetchCalibration])
 
   const fetchMetrics = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -273,6 +310,67 @@ export function SignalPerformanceCard() {
               </div>
             </div>
           )}
+
+          {/* Calibração OLS — collapsible */}
+          <div className="border-t border-border-subtle pt-3">
+            <button
+              type="button"
+              onClick={handleCalibToggle}
+              className="w-full flex items-center justify-between text-[10px] uppercase tracking-wide text-text-muted hover:text-text-secondary transition-colors"
+            >
+              <span>Calibração OLS (regime_score)</span>
+              <span>{calibOpen ? '▲' : '▼'}</span>
+            </button>
+
+            {calibOpen && (
+              <div className="mt-2">
+                {calibLoading && !calibration ? (
+                  <p className="text-[10px] text-text-muted">Calculando OLS...</p>
+                ) : !calibration ? (
+                  <p className="text-[10px] text-text-muted">
+                    Dados insuficientes — mínimo 30 sinais resolvidos (trade: profit/loss).
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        {
+                          label: 'β(regime_score)',
+                          value: (calibration.regimeScoreCoeff >= 0 ? '+' : '') + calibration.regimeScoreCoeff.toFixed(4),
+                          color: calibration.regimeScoreCoeff > 0 ? 'text-[#00ff88]' : 'text-red-400',
+                        },
+                        {
+                          label: 't-stat',
+                          value: (calibration.regimeScoreTStat >= 0 ? '+' : '') + calibration.regimeScoreTStat.toFixed(2)
+                            + (Math.abs(calibration.regimeScoreTStat) >= 1.96 ? '*' : ''),
+                          color: Math.abs(calibration.regimeScoreTStat) >= 1.96 ? 'text-[#00ff88]' : 'text-yellow-400',
+                        },
+                        {
+                          label: 'R²',
+                          value: calibration.r2.toFixed(3),
+                          color: calibration.r2 >= 0.1 ? 'text-text-secondary' : 'text-text-muted',
+                        },
+                      ].map(({ label, value, color }) => (
+                        <div key={label} className="rounded bg-bg-elevated border border-border-subtle px-2 py-1.5 text-center">
+                          <p className="text-[8px] text-text-muted mb-0.5">{label}</p>
+                          <p className={`text-xs font-bold font-num ${color}`}>{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-text-secondary leading-relaxed">
+                      {calibration.interpretation}
+                    </p>
+                    {calibration.suggestedAdjustment.direction !== 'ok' && (
+                      <p className="text-[10px] text-yellow-400 bg-yellow-500/5 border border-yellow-500/20 rounded px-2 py-1.5 leading-relaxed">
+                        ⚠ {calibration.suggestedAdjustment.reason}
+                      </p>
+                    )}
+                    <p className="text-[9px] text-text-muted">n={calibration.n} sinais (trade: profit/loss)</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

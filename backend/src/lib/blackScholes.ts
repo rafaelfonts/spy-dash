@@ -152,6 +152,27 @@ export function calcCharm(
 }
 
 /**
+ * BSM option price.
+ *   Call: S·Φ(d1) − K·e^(−rT)·Φ(d2)
+ *   Put:  K·e^(−rT)·Φ(−d2) − S·Φ(−d1)
+ * Returns intrinsic value when T=0 or inputs are invalid.
+ */
+export function calcOptionPrice(
+  S: number, K: number, T: number, r: number, sigma: number,
+  type: 'call' | 'put',
+): number {
+  const dd = d1d2(S, K, T, r, sigma)
+  if (!dd) {
+    return type === 'call' ? Math.max(0, S - K) : Math.max(0, K - S)
+  }
+  const disc = K * Math.exp(-r * T)
+  if (type === 'call') {
+    return S * normCdf(dd.d1) - disc * normCdf(dd.d2)
+  }
+  return disc * normCdf(-dd.d2) - S * normCdf(-dd.d1)
+}
+
+/**
  * Risk-neutral probability that spot finishes above K at expiry (short put expires OTM).
  * Returns N(d2). Use for POP (Probability of Profit) of a sold put: POP = P(S > K) = N(d2).
  * S, K, T, r, sigma: same conventions as other BSM functions; sigma in decimal (e.g. 0.18 for 18%).

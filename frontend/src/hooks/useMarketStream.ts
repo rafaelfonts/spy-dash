@@ -22,6 +22,7 @@ export function useMarketStream(): void {
   const setGEXDynamic = useMarketStore((s) => s.setGEXDynamic)
   const setNoTrade = useMarketStore((s) => s.setNoTrade)
   const setDAN = useMarketStore((s) => s.setDAN)
+  const setRVOL = useMarketStore((s) => s.setRVOL)
   const setSkewByDTE = useMarketStore((s) => s.setSkewByDTE)
   const setRegimePreview = useMarketStore((s) => s.setRegimePreview)
   const setMarketOpen = useMarketStore((s) => s.setMarketOpen)
@@ -275,6 +276,16 @@ export function useMarketStream(): void {
           }
           if (typeof (data as any).marketOpen === 'boolean') {
             setMarketOpen((data as any).marketOpen)
+          }
+          if ((data as any).rvol) {
+            const rv = (data as any).rvol
+            setRVOL({
+              todayVolume: rv.todayVolume,
+              avg20dVolume: rv.avg20dVolume,
+              rvol: rv.rvol,
+              rvolBias: rv.rvolBias,
+              capturedAt: rv.capturedAt,
+            })
           }
         } catch (err) {
           console.warn('[SSE] advanced-metrics parse error:', (err as Error).message)

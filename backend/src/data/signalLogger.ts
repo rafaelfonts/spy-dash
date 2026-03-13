@@ -374,6 +374,152 @@ export async function computeSignalMetrics(days = 30): Promise<SignalMetrics | n
 }
 
 // ---------------------------------------------------------------------------
+// 5.3 — OLS calibration of regime score weights
+// ---------------------------------------------------------------------------
+
+export interface CalibrationResult {
+  n: number
+  regimeScoreCoeff: number        // β₁ — positive = predictive
+  regimeScoreTStat: number        // |t| > 1.96 → significant at 95%
+  r2: number                      // 0–1 model fit quality
+  interpretation: string
+  suggestedAdjustment: {
+    direction: 'increase_threshold' | 'decrease_threshold' | 'ok'
+    reason: string
+  }
+}
+
+/** Multiply matrix A (m×k) by B (k×n) — returns m×n result. */
+function matMul(A: number[][], B: number[][]): number[][] {
+  const m = A.length, k = A[0].length, n = B[0].length
+  const C = Array.from({ length: m }, () => new Array<number>(n).fill(0))
+  for (let i = 0; i < m; i++)
+    for (let j = 0; j < n; j++)
+      for (let l = 0; l < k; l++)
+        C[i][j] += A[i][l] * B[l][j]
+  return C
+}
+
+/** Invert a square matrix via Gauss–Jordan elimination (partial pivoting). Returns null if singular. */
+function matInv(M: number[][]): number[][] | null {
+  const n = M.length
+  // Augmented [M | I]
+  const A = M.map((row, i) => [...row, ...Array.from({ length: n }, (_, j) => (i === j ? 1 : 0))])
+  for (let col = 0; col < n; col++) {
+    // Partial pivot
+    let maxRow = col
+    for (let row = col + 1; row < n; row++)
+      if (Math.abs(A[row][col]) > Math.abs(A[maxRow][col])) maxRow = row
+    ;[A[col], A[maxRow]] = [A[maxRow], A[col]]
+    if (Math.abs(A[col][col]) < 1e-12) return null  // singular
+    const pivot = A[col][col]
+    for (let j = 0; j < 2 * n; j++) A[col][j] /= pivot
+    for (let row = 0; row < n; row++) {
+      if (row === col) continue
+      const factor = A[row][col]
+      for (let j = 0; j < 2 * n; j++) A[row][j] -= factor * A[col][j]
+    }
+  }
+  return A.map((row) => row.slice(n))
+}
+
+/**
+ * OLS calibration of regime score weights.
+ * Returns null when < 30 resolved signals (profit or loss) are available.
+ *
+ * Model: P(profit) ≈ β₀ + β₁·regime_score + β₂·vix + β₃·ivr + β₄·gex_total
+ *        where Y=1 (profit) or Y=0 (loss), trade_signal = 'trade' only.
+ */
+export async function calibrateRegimeWeights(): Promise<CalibrationResult | null> {
+  const { data: rows, error } = await supabase
+    .from('signal_outcomes')
+    .select('regime_score,vix_at_signal,ivr_at_signal,gex_total_at_signal,outcome')
+    .eq('trade_signal', 'trade')
+    .in('outcome', ['profit', 'loss'])
+
+  if (error) {
+    console.error('[SignalLogger] calibrateRegimeWeights error:', error.message)
+    return null
+  }
+  if (!rows || rows.length < 30) return null
+
+  const valid = (rows as Array<{
+    regime_score: number
+    vix_at_signal: number | null
+    ivr_at_signal: number | null
+    gex_total_at_signal: number | null
+    outcome: string
+  }>).filter((r) =>
+    r.regime_score != null &&
+    r.vix_at_signal != null &&
+    r.ivr_at_signal != null &&
+    r.gex_total_at_signal != null,
+  )
+
+  if (valid.length < 30) return null
+
+  const n = valid.length
+  const k = 5  // intercept + 4 regressors
+
+  // Build X (n×k) and y (n×1)
+  const X: number[][] = valid.map((r) => [
+    1,
+    r.regime_score,
+    r.vix_at_signal!,
+    r.ivr_at_signal!,
+    r.gex_total_at_signal!,
+  ])
+  const yVec: number[] = valid.map((r) => (r.outcome === 'profit' ? 1 : 0))
+
+  // β = (X'X)⁻¹ X'y
+  const Xt = X[0].map((_, j) => X.map((row) => row[j]))  // k×n transpose
+  const XtX = matMul(Xt, X)  // k×k
+  const inv = matInv(XtX)
+  if (!inv) return null
+
+  const yMat = yVec.map((v) => [v])      // n×1
+  const Xty = matMul(Xt, yMat)           // k×1
+  const beta = matMul(inv, Xty).map((r) => r[0])  // k
+
+  // Residuals and R²
+  const yHat = X.map((row) => row.reduce((s, x, j) => s + x * beta[j], 0))
+  const yMean = yVec.reduce((s, v) => s + v, 0) / n
+  const ssRes = yVec.reduce((s, y, i) => s + (y - yHat[i]) ** 2, 0)
+  const ssTot = yVec.reduce((s, y) => s + (y - yMean) ** 2, 0)
+  const r2 = ssTot > 0 ? Math.max(0, 1 - ssRes / ssTot) : 0
+
+  // t-stat for β[1] (regime_score)
+  const sigma2 = ssRes / Math.max(n - k, 1)
+  const se1 = Math.sqrt(sigma2 * inv[1][1])
+  const tStat = se1 > 0 ? beta[1] / se1 : 0
+
+  const coeff = parseFloat(beta[1].toFixed(4))
+  const tRound = parseFloat(tStat.toFixed(2))
+  const r2Round = parseFloat(r2.toFixed(3))
+
+  const significant = Math.abs(tStat) >= 1.96
+  const predictive = coeff > 0.01
+
+  const interpretation = significant && predictive
+    ? `Regime score é preditivo (t=${tRound}, p<0.05) — pesos atuais validados empiricamente (n=${n})`
+    : significant && !predictive
+      ? `Regime score tem efeito negativo (t=${tRound}) — verificar lógica de veto (n=${n})`
+      : `Regime score não significativo (t=${tRound}, p>0.05) — dados insuficientes ou pesos a calibrar (n=${n})`
+
+  let direction: CalibrationResult['suggestedAdjustment']['direction'] = 'ok'
+  let reason = 'Pesos atuais são preditivos — nenhum ajuste necessário.'
+  if (!significant || coeff < 0.01) {
+    direction = 'increase_threshold'
+    reason = 'Considere elevar o limiar mínimo de regime_score para sinalizar trade (ex: ≥8 em vez de ≥7).'
+  } else if (coeff > 0.15 && tRound > 2.5) {
+    direction = 'decrease_threshold'
+    reason = 'Regime score tem forte poder preditivo — pode-se considerar limiar levemente mais baixo (ex: ≥6).'
+  }
+
+  return { n, regimeScoreCoeff: coeff, regimeScoreTStat: tRound, r2: r2Round, interpretation, suggestedAdjustment: { direction, reason } }
+}
+
+// ---------------------------------------------------------------------------
 // 4.2d — Outcome filler scheduler (16:30 ET)
 // ---------------------------------------------------------------------------
 

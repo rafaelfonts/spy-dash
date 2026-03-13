@@ -12,11 +12,20 @@ import {
   buildPortfolioPayload,
   callGestorRisco,
 } from './portfolioLifecycleAgent'
+import { marketState } from './marketState'
+import { getOptionChainSnapshot } from './optionChain'
+import { buildSurfaceFromChain, getSmileIV } from '../lib/volSurface'
+import {
+  calcDelta, calcGamma, calcTheta, calcVega, calcVanna, calcCharm, calcOptionPrice,
+} from '../lib/blackScholes'
+import { getAdvancedMetricsSnapshot } from './advancedMetricsState'
 import type {
   EnrichedPosition,
   GestorRiscoAlert,
   InsertPositionPayload,
   PortfolioPositionRow,
+  SpreadGreeks,
+  PortfolioGreeks,
 } from '../types/portfolio'
 
 // ---------------------------------------------------------------------------
@@ -328,4 +337,162 @@ export function startPortfolioTrackerScheduler(): void {
   }, 60_000)
 
   console.log('[PortfolioTracker] Scheduler started (check every 60s, run at 16:00 ET)')
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio Greeks + VaR computation (on-demand, called by GET /api/portfolio/greeks)
+// ---------------------------------------------------------------------------
+
+const RISK_FREE_RATE = 0.053  // 5.3% — updated periodically
+
+/**
+ * Reprice a put spread at a given spot scenario using BS.
+ * Returns P&L: credit_received - max(0, shortValue - longValue).
+ */
+function repriceSpread(
+  scenarioSpot: number,
+  shortStrike: number,
+  longStrike: number,
+  dteYears: number,
+  shortIV: number,
+  longIV: number,
+  creditReceived: number,
+  type: 'call' | 'put',
+): number {
+  const shortVal = calcOptionPrice(scenarioSpot, shortStrike, dteYears, RISK_FREE_RATE, shortIV, type)
+  const longVal  = calcOptionPrice(scenarioSpot, longStrike,  dteYears, RISK_FREE_RATE, longIV,  type)
+  const spreadVal = Math.max(0, shortVal - longVal)
+  return creditReceived - spreadVal
+}
+
+/**
+ * Computes portfolio-level Greeks and VaR scenarios for all OPEN positions.
+ * Uses the vol surface (5.1) to get strike-specific IV when available.
+ * Falls back to ATM IV from marketState.ivRank.value / 100 when surface unavailable.
+ */
+export async function computePortfolioGreeks(): Promise<PortfolioGreeks | null> {
+  const spy = marketState.spy.last
+  if (!spy || spy <= 0) return null
+
+  const rows = await getOpenPositions()
+  if (rows.length === 0) {
+    return {
+      totalDelta: 0, totalGamma: 0, totalTheta: 0, totalVega: 0,
+      positions: [],
+      varScenarios: { oneStdDown: 0, twoStdDown: 0, oneStdUp: 0, twoStdUp: 0 },
+      spy,
+      capturedAt: new Date().toISOString(),
+    }
+  }
+
+  // Build vol surface once for all positions
+  const chain = getOptionChainSnapshot()
+  const smiles = chain && chain.length > 0 ? buildSurfaceFromChain(chain, spy) : []
+  const fallbackIV = (marketState.ivRank.value ?? 20) / 100  // IVR as rough ATM proxy
+
+  // Get price distribution scenarios from the regime scorer (already computed each tick)
+  const advSnap = getAdvancedMetricsSnapshot()
+  const dist = advSnap?.regimePreview?.priceDistribution ?? null
+
+  const positions: SpreadGreeks[] = []
+  let totalDelta = 0, totalGamma = 0, totalTheta = 0, totalVega = 0
+
+  // VaR: cumulative P&L at each scenario across all positions
+  let pnl1Down = 0, pnl2Down = 0, pnl1Up = 0, pnl2Up = 0
+
+  const todayET = getETNow()
+
+  for (const row of rows) {
+    const expDate = parseExpirationET(row.expiration_date)
+    const dteDays = diasCorridosEntre(todayET, expDate)
+    const dteYears = Math.max(dteDays / 365, 0.5 / 365)  // min 0.5 day
+
+    const optionType: 'call' | 'put' = row.strategy_type === 'CALL_SPREAD' ? 'call' : 'put'
+
+    // IV from surface if available; otherwise fall back
+    const shortIV = smiles.length > 0
+      ? getSmileIV(spy, row.short_strike, dteYears, smiles, fallbackIV)
+      : fallbackIV
+    const longIV = smiles.length > 0
+      ? getSmileIV(spy, row.long_strike, dteYears, smiles, fallbackIV)
+      : fallbackIV
+
+    // Greeks — short spread = SOLD short_strike + BOUGHT long_strike
+    // Convention: "−" for the sold leg, "+" for the bought leg
+    const shortDelta = calcDelta(spy, row.short_strike, dteYears, RISK_FREE_RATE, shortIV, optionType)
+    const longDelta  = calcDelta(spy, row.long_strike,  dteYears, RISK_FREE_RATE, longIV,  optionType)
+    const shortGamma = calcGamma(spy, row.short_strike, dteYears, RISK_FREE_RATE, shortIV)
+    const longGamma  = calcGamma(spy, row.long_strike,  dteYears, RISK_FREE_RATE, longIV)
+    const shortTheta = calcTheta(spy, row.short_strike, dteYears, RISK_FREE_RATE, shortIV, optionType)
+    const longTheta  = calcTheta(spy, row.long_strike,  dteYears, RISK_FREE_RATE, longIV,  optionType)
+    const shortVega  = calcVega( spy, row.short_strike, dteYears, RISK_FREE_RATE, shortIV)
+    const longVega   = calcVega( spy, row.long_strike,  dteYears, RISK_FREE_RATE, longIV)
+    const shortVanna = calcVanna(spy, row.short_strike, dteYears, RISK_FREE_RATE, shortIV)
+    const longVanna  = calcVanna(spy, row.long_strike,  dteYears, RISK_FREE_RATE, longIV)
+    const shortCharm = calcCharm(spy, row.short_strike, dteYears, RISK_FREE_RATE, shortIV)
+    const longCharm  = calcCharm(spy, row.long_strike,  dteYears, RISK_FREE_RATE, longIV)
+
+    // Net = −shortLeg + longLeg  (multiplier 100 for $ per spread contract)
+    const netDelta = (-shortDelta + longDelta) * 100
+    const netGamma = (-shortGamma + longGamma) * 100
+    const netTheta = (-shortTheta + longTheta) * 100  // $/day — positive for short spread
+    const netVega  = (-shortVega  + longVega)  * 100
+    const netVanna = (-shortVanna + longVanna) * 100
+    const netCharm = (-shortCharm + longCharm) * 100
+
+    const spreadWidth = Math.abs(row.short_strike - row.long_strike)
+    const maxRisk     = (spreadWidth - row.credit_received) * 100
+    const breakeven   = optionType === 'put'
+      ? row.short_strike - row.credit_received
+      : row.short_strike + row.credit_received
+
+    totalDelta += netDelta
+    totalGamma += netGamma
+    totalTheta += netTheta
+    totalVega  += netVega
+
+    // VaR scenarios — reprice at p10/p25/p75/p90 (or ±2%/±4% if dist unavailable)
+    const s2Down = dist?.p10 ?? spy * 0.96
+    const s1Down = dist?.p25 ?? spy * 0.98
+    const s1Up   = dist?.p75 ?? spy * 1.02
+    const s2Up   = dist?.p90 ?? spy * 1.04
+
+    pnl2Down += repriceSpread(s2Down, row.short_strike, row.long_strike, dteYears, shortIV, longIV, row.credit_received, optionType)
+    pnl1Down += repriceSpread(s1Down, row.short_strike, row.long_strike, dteYears, shortIV, longIV, row.credit_received, optionType)
+    pnl1Up   += repriceSpread(s1Up,   row.short_strike, row.long_strike, dteYears, shortIV, longIV, row.credit_received, optionType)
+    pnl2Up   += repriceSpread(s2Up,   row.short_strike, row.long_strike, dteYears, shortIV, longIV, row.credit_received, optionType)
+
+    const strategyLabel = optionType === 'put'
+      ? `Put Spread ${row.short_strike}/${row.long_strike}`
+      : `Call Spread ${row.short_strike}/${row.long_strike}`
+
+    positions.push({
+      positionId: row.id,
+      strategy: strategyLabel,
+      netDelta: parseFloat(netDelta.toFixed(4)),
+      netGamma: parseFloat(netGamma.toFixed(6)),
+      netTheta: parseFloat(netTheta.toFixed(4)),
+      netVega:  parseFloat(netVega.toFixed(4)),
+      netVanna: parseFloat(netVanna.toFixed(6)),
+      netCharm: parseFloat(netCharm.toFixed(6)),
+      maxRisk:  parseFloat(maxRisk.toFixed(2)),
+      breakeven: parseFloat(breakeven.toFixed(2)),
+    })
+  }
+
+  return {
+    totalDelta: parseFloat(totalDelta.toFixed(4)),
+    totalGamma: parseFloat(totalGamma.toFixed(6)),
+    totalTheta: parseFloat(totalTheta.toFixed(4)),
+    totalVega:  parseFloat(totalVega.toFixed(4)),
+    positions,
+    varScenarios: {
+      oneStdDown:  parseFloat((pnl1Down * 100).toFixed(2)),
+      twoStdDown:  parseFloat((pnl2Down * 100).toFixed(2)),
+      oneStdUp:    parseFloat((pnl1Up   * 100).toFixed(2)),
+      twoStdUp:    parseFloat((pnl2Up   * 100).toFixed(2)),
+    },
+    spy,
+    capturedAt: new Date().toISOString(),
+  }
 }

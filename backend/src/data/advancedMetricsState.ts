@@ -11,10 +11,12 @@ import { emitter } from './marketState'
 import type { GEXDynamic } from './gexService'
 import type { NoTradeResult, GexComparison, PriceDistribution, SurfaceQuality } from './regimeScorer'
 import type { DANResult } from '../lib/danCalculator'
+import type { RVOLSnapshot } from './rvolPoller'
 
 export type { GEXDynamic }
 export type { NoTradeResult }
 export type { DANResult }
+export type { RVOLSnapshot }
 
 // ---------------------------------------------------------------------------
 // SSE payload shape (what the frontend receives)
@@ -68,6 +70,8 @@ export interface AdvancedMetricsPayload {
   } | null
   /** Whether US equity markets are currently open (09:30–16:00 ET, Mon–Fri). */
   marketOpen: boolean
+  /** Relative Volume — SPY institutional flow proxy (todayVol / avg20dVol). */
+  rvol: RVOLSnapshot | null
 }
 
 // ---------------------------------------------------------------------------

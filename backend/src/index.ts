@@ -23,6 +23,7 @@ import { startCBOEPCRScheduler } from './data/cboePCRPoller'
 import { startApeWisdomPoller } from './data/apeWisdomPoller'
 import { startMacroDigestScheduler, restoreMacroDigestFromCache } from './data/macroDigestService'
 import { startOutcomeFiller } from './data/signalLogger'
+import { startRVOLPoller } from './data/rvolPoller'
 import { startCftcCotPoller } from './data/cftcCotPoller'
 import { startTreasuryPoller } from './data/treasuryPoller'
 import { startEiaOilPoller } from './data/eiaOilPoller'
@@ -199,6 +200,7 @@ async function bootstrap(): Promise<void> {
     startApeWisdomPoller()
     startMacroDigestScheduler()
     startOutcomeFiller()
+    startRVOLPoller()
   }).catch(console.error)
 }
 
