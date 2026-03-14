@@ -382,3 +382,21 @@ export interface AnalysisStructuredOutput {
   /** Comparação do GEX total de hoje vs ontem */
   gex_vs_yesterday: 'stronger_positive' | 'weaker_positive' | 'unchanged' | 'weaker_negative' | 'stronger_negative' | null
 }
+
+// =============================================================================
+// Multi-Expiration Put/Call Ratio
+// =============================================================================
+
+export interface PutCallRatioEntry {
+  tier: '0DTE' | 'Semanal' | 'Mensal'
+  expiration: string // YYYY-MM-DD
+  ratio: number
+  putVolume: number
+  callVolume: number
+  sentimentLabel: 'bearish' | 'neutral' | 'bullish'
+}
+
+export interface PutCallRatioMulti {
+  entries: PutCallRatioEntry[]
+  lastUpdated: number
+}
