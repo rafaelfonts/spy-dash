@@ -1,13 +1,75 @@
 // frontend/src/components/equity/EquityAIAnalysis.tsx
-// Stub — full implementation in a future task
+import { useMarketStore } from '../../store/marketStore'
+
 interface Props { onRegisterTrade: () => void }
 
+const confidenceColor = {
+  ALTA: 'text-[#00ff88]',
+  MÉDIA: 'text-yellow-500',
+  BAIXA: 'text-red-400',
+}
+
 export function EquityAIAnalysis({ onRegisterTrade }: Props) {
+  const { equityAnalysis, equityAnalysisLoading, setEquityAnalysis } = useMarketStore()
+
+  if (equityAnalysisLoading) {
+    return (
+      <div id="equity-ai-analysis" className="bg-[#0d0d1a] border border-[#2a1f5e] rounded-xl p-4 text-sm text-gray-400 animate-pulse">
+        🤖 Analisando...
+      </div>
+    )
+  }
+
+  if (!equityAnalysis) return null
+
   return (
-    <div id="equity-ai-analysis" className="bg-[#111] border border-[#222] rounded-xl p-4">
-      <div className="text-xs text-gray-500 uppercase tracking-wide mb-3">Análise IA</div>
-      <div className="text-sm text-gray-600 text-center py-6">Em construção</div>
-      <button onClick={onRegisterTrade} className="hidden" />
+    <div id="equity-ai-analysis" className="bg-[#0d0d1a] border border-[#2a1f5e] rounded-xl p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-xs text-purple-400 uppercase tracking-wide">🤖 Análise IA</span>
+        <span className="font-bold text-white">{equityAnalysis.symbol}</span>
+        <span className={`text-xs font-bold ml-1 ${confidenceColor[equityAnalysis.confidence]}`}>
+          {equityAnalysis.confidence}
+        </span>
+        <div className="flex-1" />
+        <button onClick={() => setEquityAnalysis(null)} className="text-gray-600 hover:text-gray-400 text-sm">✕</button>
+      </div>
+
+      <p className="text-sm text-gray-300 leading-relaxed mb-3">{equityAnalysis.setup}</p>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+        {[
+          { label: 'Entrada', value: equityAnalysis.entry_range, color: 'text-white' },
+          { label: 'Alvo', value: equityAnalysis.target, color: 'text-[#00ff88]' },
+          { label: 'Stop', value: equityAnalysis.stop, color: 'text-red-400' },
+          { label: 'R/R', value: equityAnalysis.risk_reward, color: 'text-yellow-400' },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="bg-[#111] rounded-lg p-2 text-center">
+            <div className="text-[10px] text-gray-500 uppercase">{label}</div>
+            <div className={`text-sm font-bold ${color}`}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {equityAnalysis.warning && (
+        <div className="text-xs text-yellow-500 bg-yellow-500/5 border border-yellow-500/20 rounded px-3 py-2 mb-3">
+          ⚠ {equityAnalysis.warning}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <button
+          onClick={onRegisterTrade}
+          className="px-4 py-1.5 bg-[#00ff88] text-black font-bold rounded-lg text-xs hover:bg-[#00cc6e] transition-colors"
+        >
+          ✓ Registrar compra
+        </button>
+        <button
+          onClick={() => setEquityAnalysis(null)}
+          className="px-3 py-1.5 bg-[#1a1a1a] text-gray-500 rounded-lg text-xs hover:bg-[#222]"
+        >
+          Descartar
+        </button>
+      </div>
     </div>
   )
 }
