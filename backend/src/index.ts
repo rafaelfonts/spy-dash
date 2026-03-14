@@ -25,6 +25,7 @@ import { startMacroDigestScheduler, restoreMacroDigestFromCache } from './data/m
 import { startOutcomeFiller } from './data/signalLogger'
 import { startRVOLPoller } from './data/rvolPoller'
 import { startCftcCotPoller } from './data/cftcCotPoller'
+import { startEquityScreenerPoller } from './data/equityScreenerPoller.js'
 import { startTreasuryPoller } from './data/treasuryPoller'
 import { startEiaOilPoller } from './data/eiaOilPoller'
 import { startFinraDarkPoolPoller } from './data/finraDarkPoolPoller'
@@ -201,6 +202,7 @@ async function bootstrap(): Promise<void> {
     startMacroDigestScheduler()
     startOutcomeFiller()
     startRVOLPoller()
+    startEquityScreenerPoller().catch((e) => console.warn('[startup] equityScreenerPoller failed:', e))
   }).catch(console.error)
 }
 
