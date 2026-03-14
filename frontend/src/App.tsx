@@ -20,6 +20,7 @@ import { TechnicalIndicatorsCard } from './components/cards/TechnicalIndicatorsC
 import { VolSurfaceChart } from './components/charts/VolSurfaceChart'
 import { NewsFeedPanel } from './components/news/NewsFeedPanel'
 import { AlertOverlay } from './components/ui/AlertOverlay'
+import { EquityTab } from './components/equity/EquityTab'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -68,6 +69,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         {activeTab === 'portfolio' && (
           <PortfolioPanel />
         )}
+
+        {activeTab === 'acoes' && <EquityTab />}
       </main>
 
       <footer className="text-center py-4 text-[10px] text-text-muted border-t border-border-subtle mt-8">
