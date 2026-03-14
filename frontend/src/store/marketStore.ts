@@ -261,6 +261,54 @@ export interface RVOLData {
   capturedAt: string
 }
 
+// Equity Screener types
+export interface EquityCandidate {
+  symbol: string
+  price: number
+  change: number
+  volume: number
+  rvol: number
+  hasCatalyst: boolean
+  lastUpdated: number
+}
+
+export interface WatchlistEntry {
+  id: string
+  symbol: string
+  alert_price: number | null
+  alert_direction: 'above' | 'below' | null
+}
+
+export interface EquityTrade {
+  id: string
+  symbol: string
+  entry_date: string
+  exit_date: string | null
+  entry_price: number
+  exit_price: number | null
+  quantity: number
+  pnl: number | null
+  status: 'open' | 'closed'
+  notes: string | null
+}
+
+export interface EquityAnalysis {
+  symbol: string
+  setup: string
+  entry_range: string
+  target: string
+  stop: string
+  risk_reward: string
+  confidence: 'ALTA' | 'MÉDIA' | 'BAIXA'
+  warning: string | null
+}
+
+export interface EquityScreenerPayload {
+  candidates: EquityCandidate[]
+  marketOpen: boolean
+  capturedAt: number
+}
+
 // Live regime preview — computed every SSE tick, available before first AI analysis
 export interface RegimePreviewData {
   score: number
@@ -400,6 +448,20 @@ interface MarketStore {
   setSkewByDTE: (data: SkewByDTE | null) => void
   setRegimePreview: (data: RegimePreviewData | null) => void
   setMarketOpen: (open: boolean) => void
+
+  // Equity Screener state
+  equityCandidates: EquityCandidate[]
+  equityMarketOpen: boolean
+  equityWatchlist: WatchlistEntry[]
+  equityTrades: EquityTrade[]
+  equityAnalysis: EquityAnalysis | null
+  equityAnalysisLoading: boolean
+  setEquityCandidates: (candidates: EquityCandidate[], marketOpen: boolean) => void
+  setEquityWatchlist: (w: WatchlistEntry[]) => void
+  setEquityTrades: (t: EquityTrade[]) => void
+  setEquityAnalysis: (a: EquityAnalysis | null) => void
+  setEquityAnalysisLoading: (v: boolean) => void
+
   alerts: AlertToast[]
   addAlert: (alert: AlertToast) => void
   dismissAlert: (id: string) => void
@@ -523,6 +585,20 @@ export const useMarketStore = create<MarketStore>()(
     setSkewByDTE: (data) => set({ skewByDTE: data }),
     setRegimePreview: (data) => set({ regimePreview: data }),
     setMarketOpen: (open) => set({ marketOpen: open }),
+
+    // Equity Screener state
+    equityCandidates: [] as EquityCandidate[],
+    equityMarketOpen: false,
+    equityWatchlist: [] as WatchlistEntry[],
+    equityTrades: [] as EquityTrade[],
+    equityAnalysis: null as EquityAnalysis | null,
+    equityAnalysisLoading: false,
+    setEquityCandidates: (candidates, marketOpen) =>
+      set({ equityCandidates: candidates, equityMarketOpen: marketOpen }),
+    setEquityWatchlist: (w) => set({ equityWatchlist: w }),
+    setEquityTrades: (t) => set({ equityTrades: t }),
+    setEquityAnalysis: (a) => set({ equityAnalysis: a }),
+    setEquityAnalysisLoading: (v) => set({ equityAnalysisLoading: v }),
 
     isDataReady: () => {
       return get().spy.last !== null
