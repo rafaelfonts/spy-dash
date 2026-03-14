@@ -14,7 +14,7 @@
 import { calculateDailyGex, calculateDynamicGex } from './gexService'
 import type { GEXDynamic } from './gexService'
 import { buildVolumeProfile } from './volumeProfileService'
-import { calculatePutCallRatio } from './putCallRatio'
+import { calculateMultiExpirationPCR } from './putCallRatio'
 import { publishAdvancedMetrics } from './advancedMetricsState'
 import type { AdvancedMetricsPayload } from './advancedMetricsState'
 import { isMarketOpen } from '../lib/time'
@@ -41,7 +41,7 @@ async function tick(): Promise<void> {
   const [gexResult, profileResult, pcResult, gexDynamicResult] = await Promise.allSettled([
     calculateDailyGex(SYMBOL),
     buildVolumeProfile(SYMBOL),
-    calculatePutCallRatio(SYMBOL),
+    calculateMultiExpirationPCR(SYMBOL),
     calculateDynamicGex(SYMBOL),
   ])
 
@@ -159,15 +159,7 @@ async function tick(): Promise<void> {
           barsProcessed: profile.barsProcessed,
         }
       : null,
-    putCallRatio: pc
-      ? {
-          ratio: pc.ratio,
-          putVolume: pc.putVolume,
-          callVolume: pc.callVolume,
-          label: pc.label,
-          expiration: pc.expiration,
-        }
-      : null,
+    putCallRatio: pc ?? null,
     gexDynamic: serializedGexDynamic.length > 0 ? serializedGexDynamic : null,
     timestamp: new Date().toISOString(),
     noTrade: computeNoTradeScore(serializedGexDynamic.length > 0 ? serializedGexDynamic : null),
@@ -233,7 +225,7 @@ async function tick(): Promise<void> {
     `[AdvancedMetrics] Published: ` +
     `GEX=${gex ? `$${gex.totalNetGamma}M ${gex.regime}` : 'unavailable'} ` +
     `POC=${profile ? profile.poc : 'unavailable'} ` +
-    `P/C=${pc ? `${pc.ratio} (${pc.label})` : 'unavailable'}`,
+    `P/C=${pc && pc.entries.length > 0 ? `${pc.entries[0].ratio} (${pc.entries[0].sentimentLabel})` : 'unavailable'}`,
   )
 }
 

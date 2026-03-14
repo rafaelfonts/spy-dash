@@ -12,6 +12,7 @@ import type { GEXDynamic } from './gexService'
 import type { NoTradeResult, GexComparison, PriceDistribution, SurfaceQuality } from './regimeScorer'
 import type { DANResult } from '../lib/danCalculator'
 import type { RVOLSnapshot } from './rvolPoller'
+import type { PutCallRatioMulti } from '../types/market'
 
 export type { GEXDynamic }
 export type { NoTradeResult }
@@ -46,13 +47,7 @@ export interface AdvancedMetricsPayload {
     totalVolume: number
     barsProcessed: number
   } | null
-  putCallRatio: {
-    ratio: number
-    putVolume: number
-    callVolume: number
-    label: 'bearish' | 'neutral' | 'bullish'
-    expiration: string
-  } | null
+  putCallRatio: PutCallRatioMulti | null
   gexDynamic: GEXDynamic | null  // dynamic term structure: array of GEXExpirationEntry sorted by DTE (0–60 DTE)
   timestamp: string         // ISO 8601 of last successful calculation
   /** Unified operability signal aggregating all structural vetos. */

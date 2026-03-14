@@ -1943,8 +1943,9 @@ export async function runAnalysisForPayload(
   const gexMultiBlock = advancedSnapshot?.gexDynamic && advancedSnapshot.gexDynamic.length > 0
     ? buildGexMultiDTEBlock(advancedSnapshot.gexDynamic)
     : null
-  const pcBlock = advancedSnapshot?.putCallRatio
-    ? buildPutCallRatioBlock(advancedSnapshot.putCallRatio)
+  const _pcFirst = advancedSnapshot?.putCallRatio?.entries[0]
+  const pcBlock = _pcFirst
+    ? buildPutCallRatioBlock({ ratio: _pcFirst.ratio, putVolume: _pcFirst.putVolume, callVolume: _pcFirst.callVolume, label: _pcFirst.sentimentLabel, expiration: _pcFirst.expiration })
     : null
 
   const techSnapshot = getTechnicalSnapshot()
@@ -2381,8 +2382,9 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const gexMultiBlock = advancedSnapshot?.gexDynamic && advancedSnapshot.gexDynamic.length > 0
       ? buildGexMultiDTEBlock(advancedSnapshot.gexDynamic)
       : null
-    const pcBlock = advancedSnapshot?.putCallRatio
-      ? buildPutCallRatioBlock(advancedSnapshot.putCallRatio)
+    const _pcFirst2 = advancedSnapshot?.putCallRatio?.entries[0]
+    const pcBlock = _pcFirst2
+      ? buildPutCallRatioBlock({ ratio: _pcFirst2.ratio, putVolume: _pcFirst2.putVolume, callVolume: _pcFirst2.callVolume, label: _pcFirst2.sentimentLabel, expiration: _pcFirst2.expiration })
       : null
 
     const techSnapshot = getTechnicalSnapshot()
