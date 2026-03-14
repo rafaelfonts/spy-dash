@@ -8,8 +8,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
   { auth: { autoRefreshToken: false, persistSession: false } }
 );
-const WATCHLIST_CACHE_TTL = 60 * 1000; // 60s
-
 function getUserId(request: any): string {
   return request.user?.id ?? '';
 }
@@ -20,10 +18,8 @@ async function invalidateWatchlistCache(): Promise<void> {
 }
 
 export async function registerEquityWatchlistRoutes(app: FastifyInstance): Promise<void> {
-  const auth = [(app as any).requireAuth];
-
   // GET /api/equity/watchlist
-  app.get('/api/equity/watchlist', { preHandler: auth }, async (request, reply) => {
+  app.get('/api/equity/watchlist', async (request, reply) => {
     const userId = getUserId(request);
     const { data, error } = await supabase
       .from('equity_watchlist')
@@ -35,7 +31,7 @@ export async function registerEquityWatchlistRoutes(app: FastifyInstance): Promi
   });
 
   // POST /api/equity/watchlist
-  app.post('/api/equity/watchlist', { preHandler: auth }, async (request, reply) => {
+  app.post('/api/equity/watchlist', async (request, reply) => {
     const userId = getUserId(request);
     const body = request.body as {
       symbol: string;
@@ -67,7 +63,7 @@ export async function registerEquityWatchlistRoutes(app: FastifyInstance): Promi
   });
 
   // DELETE /api/equity/watchlist/:symbol
-  app.delete('/api/equity/watchlist/:symbol', { preHandler: auth }, async (request, reply) => {
+  app.delete('/api/equity/watchlist/:symbol', async (request, reply) => {
     const userId = getUserId(request);
     const { symbol } = request.params as { symbol: string };
     const { error } = await supabase

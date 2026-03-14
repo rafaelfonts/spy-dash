@@ -14,10 +14,8 @@ function getUserId(request: any): string {
 }
 
 export async function registerEquityTradesRoutes(app: FastifyInstance): Promise<void> {
-  const auth = [(app as any).requireAuth];
-
   // GET /api/equity/trades?month=YYYY-MM
-  app.get('/api/equity/trades', { preHandler: auth }, async (request, reply) => {
+  app.get('/api/equity/trades', async (request, reply) => {
     const userId = getUserId(request);
     const { month } = request.query as { month?: string };
 
@@ -40,7 +38,7 @@ export async function registerEquityTradesRoutes(app: FastifyInstance): Promise<
   });
 
   // POST /api/equity/trades
-  app.post('/api/equity/trades', { preHandler: auth }, async (request, reply) => {
+  app.post('/api/equity/trades', async (request, reply) => {
     const userId = getUserId(request);
     const body = request.body as {
       symbol: string;
@@ -82,7 +80,7 @@ export async function registerEquityTradesRoutes(app: FastifyInstance): Promise<
   });
 
   // PATCH /api/equity/trades/:id — registrar saída + calcular P&L
-  app.patch('/api/equity/trades/:id', { preHandler: auth }, async (request, reply) => {
+  app.patch('/api/equity/trades/:id', async (request, reply) => {
     const userId = getUserId(request);
     const { id } = request.params as { id: string };
     const body = request.body as { exit_date: string; exit_price: number };
@@ -134,7 +132,7 @@ export async function registerEquityTradesRoutes(app: FastifyInstance): Promise<
   });
 
   // DELETE /api/equity/trades/:id
-  app.delete('/api/equity/trades/:id', { preHandler: auth }, async (request, reply) => {
+  app.delete('/api/equity/trades/:id', async (request, reply) => {
     const userId = getUserId(request);
     const { id } = request.params as { id: string };
 

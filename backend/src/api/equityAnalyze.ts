@@ -70,9 +70,7 @@ Forneça análise concisa. setup deve ter no máximo 2 frases em pt-BR. entry_ra
 }
 
 export async function registerEquityAnalyzeRoute(app: FastifyInstance): Promise<void> {
-  app.post('/api/equity/analyze', {
-    preHandler: [(app as any).requireAuth],
-  }, async (request, reply) => {
+  app.post('/api/equity/analyze', async (request, reply) => {
     const { symbol } = request.body as { symbol?: string };
     if (!symbol || typeof symbol !== 'string' || !/^[A-Z]{1,5}$/.test(symbol.trim().toUpperCase())) {
       return reply.status(400).send({ error: 'symbol inválido' });
