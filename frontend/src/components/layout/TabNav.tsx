@@ -13,7 +13,7 @@ const TABS: { id: TabId; label: string; Icon: LucideIcon }[] = [
   { id: 'mercado', label: 'Mercado', Icon: BarChart2 },
   { id: 'macro', label: 'Macro & News', Icon: Globe },
   { id: 'portfolio', label: 'Portfolio', Icon: Briefcase },
-  { id: 'acoes' as TabId, label: '⚡ Ações', Icon: TrendingUp },
+  { id: 'acoes' as TabId, label: 'Ações', Icon: TrendingUp },
 ]
 
 export function TabNav({ active, onChange }: TabNavProps) {

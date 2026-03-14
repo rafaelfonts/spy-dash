@@ -38,9 +38,11 @@ Thumbs.db
 *.swp
 *.swo
 
-# Claude Code
+# Claude Code / Superpowers
 .claude/
 CLAUDE.md
+.superpowers/
+docs/superpowers/
 
 # Misc
 coverage/
