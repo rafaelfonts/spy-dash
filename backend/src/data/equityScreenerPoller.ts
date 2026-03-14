@@ -82,11 +82,9 @@ export async function startEquityScreenerPoller(): Promise<void> {
   if (initialUniverse) universeRef.tickers = initialUniverse.tickers;
   await startEquityCatalystPoller(() => universeRef.tickers);
 
-  let interval: ReturnType<typeof setTimeout>;
-
   function scheduleNext(): void {
     const delay = isMarketOpen() ? POLL_MS : OFFHOURS_MS;
-    interval = setTimeout(async () => {
+    setTimeout(async () => {
       await tick().catch((e) => console.warn('[equityScreener] Tick failed:', e));
       scheduleNext();
     }, delay);

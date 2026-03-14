@@ -18,8 +18,6 @@ function isMarketHours(): boolean {
 }
 
 async function fetchCatalystsFromFinnhub(tickers: string[]): Promise<Set<string>> {
-  const today = new Date();
-  const from = today.toISOString().split('T')[0];
   const result = new Set<string>();
 
   // Finnhub company-news: scan for mentioned tickers in today's news
@@ -72,7 +70,15 @@ export async function startEquityCatalystPoller(getUniverse: () => string[]): Pr
     console.log(`[equityCatalyst] Found ${catalysts.size} tickers with catalysts today`);
   }
 
-  // Initial run
+  // Restore cache on startup (regardless of market hours)
+  const restoreKey = getTodayKey();
+  const restored = await cacheGet<string[]>(restoreKey).catch(() => null);
+  if (restored) {
+    catalystTickersCache = new Set(restored);
+    console.log(`[equityCatalyst] Restored ${restored.length} catalyst tickers from cache`);
+  }
+
+  // Initial tick (only runs during market hours)
   await tick().catch((e) => console.warn('[equityCatalyst] Initial tick failed:', e));
   setInterval(() => tick().catch((e) => console.warn('[equityCatalyst] Tick failed:', e)), POLL_INTERVAL);
 }
