@@ -44,6 +44,7 @@ export const CONFIG = {
     webhookBriefings: process.env.DISCORD_WEBHOOK_BRIEFINGS ?? '',
     webhookSinais: process.env.DISCORD_WEBHOOK_SINAIS ?? '',
     webhookCarteira: process.env.DISCORD_WEBHOOK_CARTEIRA ?? '',
+    webhookAcoes: process.env.DISCORD_WEBHOOK_ACOES ?? '',
   },
 } as const
 
