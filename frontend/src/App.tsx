@@ -1,12 +1,13 @@
+import { useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useAuth } from './hooks/useAuth'
 import { useMarketStream } from './hooks/useMarketStream'
 import { useOptionChain } from './hooks/useOptionChain'
 import { LoginPage } from './components/auth/LoginPage'
 import { Header } from './components/layout/Header'
-import { SPYCard } from './components/cards/SPYCard'
-import { IVRankCard } from './components/cards/IVRankCard'
-import { VIXCard } from './components/cards/VIXCard'
+import { TabNav, type TabId } from './components/layout/TabNav'
+import { BottomNav } from './components/layout/BottomNav'
+import { TickerStrip } from './components/layout/TickerStrip'
 import { AIPanel } from './components/ai/AIPanel'
 import { RegimeDashboard } from './components/ai/RegimeDashboard'
 import { PreMarketBriefing } from './components/ai/PreMarketBriefing'
@@ -29,28 +30,44 @@ const queryClient = new QueryClient({
 function Dashboard({ onLogout }: { onLogout: () => void }) {
   useMarketStream()
   useOptionChain()
+  const [activeTab, setActiveTab] = useState<TabId>('dashboard')
 
   return (
     <div className="min-h-screen bg-bg-base">
-      <Header onLogout={onLogout} />
+      {/* Sticky header group */}
+      <div className="sticky top-0 z-50">
+        <Header onLogout={onLogout} />
+        <TickerStrip />
+        <TabNav active={activeTab} onChange={setActiveTab} />
+      </div>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <SPYCard />
-          <IVRankCard />
-          <VIXCard />
-        </div>
-        <PreMarketBriefing />
-        <LastScheduledSignal />
-        <PortfolioPanel />
-        <SignalPerformanceCard />
-        <RegimeDashboard />
-        <AIPanel />
-        <GEXPanel />
-        <VolSurfaceChart />
-        <TechnicalIndicatorsCard />
-        <OptionChainPanel />
-        <NewsFeedPanel />
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-4 pb-20 md:pb-6">
+        {activeTab === 'dashboard' && (
+          <>
+            <PreMarketBriefing />
+            <LastScheduledSignal />
+            <SignalPerformanceCard />
+            <RegimeDashboard />
+            <AIPanel />
+          </>
+        )}
+
+        {activeTab === 'mercado' && (
+          <>
+            <GEXPanel />
+            <VolSurfaceChart />
+            <TechnicalIndicatorsCard />
+            <OptionChainPanel />
+          </>
+        )}
+
+        {activeTab === 'macro' && (
+          <NewsFeedPanel />
+        )}
+
+        {activeTab === 'portfolio' && (
+          <PortfolioPanel />
+        )}
       </main>
 
       <footer className="text-center py-4 text-[10px] text-text-muted border-t border-border-subtle mt-8">
@@ -58,6 +75,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       </footer>
 
       <AlertOverlay />
+      <BottomNav active={activeTab} onChange={setActiveTab} />
     </div>
   )
 }
