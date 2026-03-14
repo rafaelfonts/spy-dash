@@ -80,19 +80,29 @@ export async function registerEquityAnalyzeRoute(app: FastifyInstance): Promise<
 
     const prompt = await buildEquityPrompt(symbol.toUpperCase());
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      messages: [{ role: 'user', content: prompt }],
-      response_format: {
-        type: 'json_schema',
-        json_schema: EQUITY_ANALYSIS_SCHEMA,
-      },
-      max_tokens: 400,
-    });
+    let response;
+    try {
+      response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: prompt }],
+        response_format: {
+          type: 'json_schema',
+          json_schema: EQUITY_ANALYSIS_SCHEMA,
+        },
+        max_tokens: 400,
+      });
+    } catch (e) {
+      console.error('[equityAnalyze] OpenAI error:', e);
+      return reply.status(500).send({ error: 'Falha na análise IA' });
+    }
 
     const content = response.choices[0]?.message?.content;
     if (!content) return reply.status(500).send({ error: 'IA sem resposta' });
 
-    return reply.send(JSON.parse(content));
+    try {
+      return reply.send(JSON.parse(content));
+    } catch {
+      return reply.status(500).send({ error: 'Resposta da IA inválida' });
+    }
   });
 }

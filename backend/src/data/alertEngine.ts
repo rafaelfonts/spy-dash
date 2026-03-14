@@ -200,8 +200,8 @@ export async function checkEquityAlerts(
       direction: entry.alert_direction,
     })
 
-    // TODO: remove cast when Phase 4 adds 'acoes' to DiscordChannel type
-    sendEmbed('acoes' as any, {
+    // Phase 4 will add webhookAcoes to CONFIG.discord; until then fallback to feed
+    sendEmbed('acoes', {
       title: `🔔 Alerta: ${entry.symbol} ${direction} $${entry.alert_price}`,
       description: `Preço atual: **$${candidate.price.toFixed(2)}**\nNível configurado: $${entry.alert_price} ${direction}`,
       color: 0xFFAA00,
