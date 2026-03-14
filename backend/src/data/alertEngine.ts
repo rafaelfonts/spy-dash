@@ -1,7 +1,8 @@
 import type { AnalysisStructuredOutput } from '../types/market'
 import { broadcastToUser } from '../api/sse'
-import { redis } from '../lib/cacheStore'
+import { redis, cacheGet, cacheSet } from '../lib/cacheStore'
 import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
+import { createClient } from '@supabase/supabase-js'
 
 const PROXIMITY_WARN = 0.002   // 0.2% — nível próximo (approaching)
 const PROXIMITY_TEST = 0.0005  // 0.05% — nível sendo testado (testing)
@@ -127,4 +128,84 @@ function isMarketHours(): boolean {
   if (day === 0 || day === 6) return false  // weekend
   const minutes = utcH * 60 + utcM
   return minutes >= 13 * 60 + 30 && minutes < 20 * 60  // NYSE 09:30–16:00 ET
+}
+
+// ── Equity Watchlist Alerts ──────────────────────────────────────────────────
+
+const EQUITY_ALERT_DEBOUNCE_MS = 5 * 60 * 1000 // 300s
+const equityAlertDebounce = new Map<string, number>() // `userId:symbol` → lastFiredAt
+
+interface WatchlistRow {
+  user_id: string
+  symbol: string
+  alert_price: number | null
+  alert_direction: 'above' | 'below' | null
+}
+
+async function getWatchlistEntries(): Promise<WatchlistRow[]> {
+  const cached = await cacheGet<WatchlistRow[]>('equity:watchlist:all')
+  if (cached) return cached
+
+  const supabase = createClient(
+    process.env.SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  )
+  const { data } = await supabase
+    .from('equity_watchlist')
+    .select('user_id, symbol, alert_price, alert_direction')
+    .not('alert_price', 'is', null)
+
+  const entries = (data ?? []) as WatchlistRow[]
+  // Cache por 60s — invalidado por POST/DELETE na watchlist
+  await cacheSet('equity:watchlist:all', entries, 60_000, 'alertEngine')
+  return entries
+}
+
+export async function checkEquityAlerts(
+  candidates: Array<{ symbol: string; price: number }>,
+): Promise<void> {
+  if (candidates.length === 0) return
+
+  let entries: WatchlistRow[]
+  try {
+    entries = await getWatchlistEntries()
+  } catch {
+    return
+  }
+
+  for (const entry of entries) {
+    if (!entry.alert_price || !entry.alert_direction) continue
+
+    const candidate = candidates.find((c) => c.symbol === entry.symbol)
+    if (!candidate) continue
+
+    const triggered =
+      (entry.alert_direction === 'above' && candidate.price >= entry.alert_price) ||
+      (entry.alert_direction === 'below' && candidate.price <= entry.alert_price)
+
+    if (!triggered) continue
+
+    const key = `${entry.user_id}:${entry.symbol}`
+    const lastFired = equityAlertDebounce.get(key) ?? 0
+    if (Date.now() - lastFired < EQUITY_ALERT_DEBOUNCE_MS) continue
+
+    equityAlertDebounce.set(key, Date.now())
+
+    const direction = entry.alert_direction === 'above' ? '↑' : '↓'
+    broadcastToUser(entry.user_id, 'equity-alert', {
+      symbol: entry.symbol,
+      price: candidate.price,
+      alert_price: entry.alert_price,
+      direction: entry.alert_direction,
+    })
+
+    // TODO: remove cast when Phase 4 adds 'acoes' to DiscordChannel type
+    sendEmbed('acoes' as any, {
+      title: `🔔 Alerta: ${entry.symbol} ${direction} $${entry.alert_price}`,
+      description: `Preço atual: **$${candidate.price.toFixed(2)}**\nNível configurado: $${entry.alert_price} ${direction}`,
+      color: 0xFFAA00,
+      timestamp: new Date().toISOString(),
+    }).catch(() => {})
+  }
 }
