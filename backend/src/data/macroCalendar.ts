@@ -78,21 +78,30 @@ async function pollMacroCalendar(): Promise<void> {
 
   const rawEvents = parsed.data.economicCalendar ?? []
 
-  // Filter: US only, high/medium impact, not yet released or released today
-  const now = new Date()
-  const todayStr = now.toISOString().slice(0, 10)
+  // Filter: US only, high/medium impact, within the next 48 hours
+  const nowMs = Date.now()
+  const cutoffMs = nowMs + 48 * 60 * 60 * 1000
 
+  type RawMacroEvent = (typeof rawEvents)[number]
   const filtered = rawEvents
-    .filter((e) => {
+    .filter((e: RawMacroEvent) => {
       if (e.country !== 'US') return false
       const impact = parseImpact(e.impact)
       if (impact === 'low') return false
-      const eventDate = e.time ? e.time.slice(0, 10) : null
-      return eventDate !== null && eventDate >= todayStr
+      if (!e.time) return false
+      // Handle 'YYYY-MM-DD HH:MM:SS' and 'YYYY-MM-DD' (date-only) from Finnhub
+      const normalized = e.time.includes(' ')
+        ? e.time.replace(' ', 'T') + 'Z'
+        : e.time + 'T00:00:00Z'
+      const eventMs = new Date(normalized).getTime()
+      if (isNaN(eventMs)) return false
+      return eventMs >= nowMs && eventMs <= cutoffMs
     })
     .slice(0, 20) // cap at 20 events
 
-  console.log(`[MacroCalendar] Raw events: ${rawEvents.length} | após filtro US/impact/data: ${filtered.length}`)
+  console.log(
+    `[MacroCalendar] raw: ${rawEvents.length} | após filtro US/high+medium/48h: ${filtered.length}`,
+  )
 
   const items: MacroEvent[] = filtered.map((e) => ({
     event: e.event ?? 'Unknown',
