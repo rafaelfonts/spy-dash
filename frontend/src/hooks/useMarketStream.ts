@@ -184,11 +184,7 @@ export function useMarketStream(): void {
               volatilityTrigger?: number
             } | null
             putCallRatio: {
-              ratio: number
-              putVolume: number
-              callVolume: number
-              label: 'bearish' | 'neutral' | 'bullish'
-              expiration: string
+              entries: Array<{ tier: '0DTE' | 'Semanal' | 'Mensal'; expiration: string; ratio: number; putVolume: number; callVolume: number; sentimentLabel: 'bearish' | 'neutral' | 'bullish' }>
             } | null
             timestamp: string
           }
@@ -211,11 +207,7 @@ export function useMarketStream(): void {
           }
           if (data.putCallRatio) {
             setPutCallRatio({
-              ratio: data.putCallRatio.ratio,
-              putVolume: data.putCallRatio.putVolume,
-              callVolume: data.putCallRatio.callVolume,
-              label: data.putCallRatio.label,
-              expiration: data.putCallRatio.expiration,
+              entries: data.putCallRatio.entries ?? [],
               lastUpdated: Date.now(),
             })
           }
