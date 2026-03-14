@@ -8,7 +8,7 @@ import { createBreaker } from '../lib/circuitBreaker'
 import type { OptionExpiry } from '../data/optionChain'
 import { getOptionChainCapturedAt, getOptionChainSnapshot } from '../data/optionChain'
 import { humanizeAge, isMarketOpen } from '../lib/time'
-import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem, AnalysisStructuredOutput, PricePoint, FinraDarkPoolSnapshot, Sec8KEvent, Sec13FPositionSummary, CftcCotSnapshot } from '../types/market'
+import type { MacroDataItem, FearGreedData, MacroEvent, EarningsItem, AnalysisStructuredOutput, PricePoint, FinraDarkPoolSnapshot, Sec8KEvent, Sec13FPositionSummary, CftcCotSnapshot, PutCallRatioMulti } from '../types/market'
 import { saveAnalysis, buildMemoryBlock } from '../data/analysisMemory'
 import { getLastVwap } from '../data/priceHistory'
 import type { DailyGexResult, GEXDynamic } from '../data/gexService'
@@ -853,23 +853,33 @@ function buildMacroDigestBlock(digest: { text: string; capturedAt: string }): st
   return block
 }
 
-function buildPutCallRatioBlock(pc: {
-  ratio: number
-  putVolume: number
-  callVolume: number
-  label: string
-  expiration: string
-}): string {
-  let block = `\n=== PUT/CALL RATIO SPY — ${pc.expiration} ===\n`
-  block += `P/C Ratio: ${pc.ratio} (${pc.label.toUpperCase()})\n`
-  block += `Volume: ${pc.putVolume.toLocaleString('en-US')} puts / ${pc.callVolume.toLocaleString('en-US')} calls\n`
+function buildPutCallRatioBlock(pc: PutCallRatioMulti): string {
+  if (!pc.entries || pc.entries.length === 0) return ''
+
+  // Use entry with highest total volume as primary signal
+  const primary = pc.entries.reduce((best, e) =>
+    e.putVolume + e.callVolume > best.putVolume + best.callVolume ? e : best,
+  )
+
+  let block = `\n=== PUT/CALL RATIO SPY — ${primary.tier} (${primary.expiration}) ===\n`
+  block += `P/C Ratio: ${primary.ratio} (${primary.sentimentLabel.toUpperCase()})\n`
+  block += `Volume: ${primary.putVolume.toLocaleString('en-US')} puts / ${primary.callVolume.toLocaleString('en-US')} calls\n`
+
   const interp =
-    pc.label === 'bearish'
+    primary.sentimentLabel === 'bearish'
       ? 'Hedge pesado — traders comprando proteção. Sinal de cautela.'
-      : pc.label === 'bullish'
-      ? 'Calls dominam — positioning bullish, risco de complacência.'
-      : 'Balanceado — sem sinal direcional forte no fluxo.'
+      : primary.sentimentLabel === 'bullish'
+        ? 'Calls dominam — positioning bullish, risco de complacência.'
+        : 'Balanceado — sem sinal direcional forte no fluxo.'
   block += `Interpretação: ${interp}\n`
+
+  // Note divergence between 0DTE and monthly if significant
+  const dte = pc.entries.find((e) => e.tier === '0DTE')
+  const monthly = pc.entries.find((e) => e.tier === 'Mensal')
+  if (dte && monthly && dte.sentimentLabel !== monthly.sentimentLabel) {
+    block += `Divergência: 0DTE ${dte.sentimentLabel} (${dte.ratio}) vs Mensal ${monthly.sentimentLabel} (${monthly.ratio}) — estrutura de prazo divergente.\n`
+  }
+
   return block
 }
 
@@ -1943,10 +1953,7 @@ export async function runAnalysisForPayload(
   const gexMultiBlock = advancedSnapshot?.gexDynamic && advancedSnapshot.gexDynamic.length > 0
     ? buildGexMultiDTEBlock(advancedSnapshot.gexDynamic)
     : null
-  const _pcFirst = advancedSnapshot?.putCallRatio?.entries[0]
-  const pcBlock = _pcFirst
-    ? buildPutCallRatioBlock({ ratio: _pcFirst.ratio, putVolume: _pcFirst.putVolume, callVolume: _pcFirst.callVolume, label: _pcFirst.sentimentLabel, expiration: _pcFirst.expiration })
-    : null
+  const pcBlock = advancedSnapshot?.putCallRatio ? buildPutCallRatioBlock(advancedSnapshot.putCallRatio) : null
 
   const techSnapshot = getTechnicalSnapshot()
   const breakerStatuses = getBreakerStatuses()
@@ -2382,10 +2389,7 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     const gexMultiBlock = advancedSnapshot?.gexDynamic && advancedSnapshot.gexDynamic.length > 0
       ? buildGexMultiDTEBlock(advancedSnapshot.gexDynamic)
       : null
-    const _pcFirst2 = advancedSnapshot?.putCallRatio?.entries[0]
-    const pcBlock = _pcFirst2
-      ? buildPutCallRatioBlock({ ratio: _pcFirst2.ratio, putVolume: _pcFirst2.putVolume, callVolume: _pcFirst2.callVolume, label: _pcFirst2.sentimentLabel, expiration: _pcFirst2.expiration })
-      : null
+    const pcBlock = advancedSnapshot?.putCallRatio ? buildPutCallRatioBlock(advancedSnapshot.putCallRatio) : null
 
     const techSnapshot = getTechnicalSnapshot()
 
