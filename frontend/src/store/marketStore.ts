@@ -157,6 +157,20 @@ export interface PutCallRatioData {
   lastUpdated: number
 }
 
+export interface PutCallRatioEntry {
+  tier: '0DTE' | 'Semanal' | 'Mensal'
+  expiration: string
+  ratio: number
+  putVolume: number
+  callVolume: number
+  sentimentLabel: 'bearish' | 'neutral' | 'bullish'
+}
+
+export interface PutCallRatioMulti {
+  entries: PutCallRatioEntry[]
+  lastUpdated: number
+}
+
 // GEX types (mirrored from backend gexCalculator)
 export interface StrikeGEX {
   strike: number
@@ -362,7 +376,7 @@ interface MarketStore {
   gexProfile: GEXProfile | null
   gexDynamic: GEXExpirationEntry[] | null
   lastAnalysisOutput: AnalysisStructuredOutput | null
-  putCallRatio: PutCallRatioData | null
+  putCallRatio: PutCallRatioMulti | null
   vixTermStructure: VIXTermStructureData | null
   technicalIndicators: TechnicalIndicatorsData | null
   preMarketBriefing: PreMarketBriefing | null
@@ -385,7 +399,7 @@ interface MarketStore {
   setGEXProfile: (gex: GEXProfile | null) => void
   setGEXDynamic: (data: GEXExpirationEntry[] | null) => void
   setLastAnalysisOutput: (output: AnalysisStructuredOutput | null) => void
-  setPutCallRatio: (data: PutCallRatioData | null) => void
+  setPutCallRatio: (data: PutCallRatioMulti) => void
   setVIXTermStructure: (data: VIXTermStructureData | null) => void
   setTechnicalIndicators: (data: TechnicalIndicatorsData | null) => void
   setPreMarketBriefing: (data: PreMarketBriefing | null) => void
