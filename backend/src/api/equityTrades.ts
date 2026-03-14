@@ -1,6 +1,7 @@
 // backend/src/api/equityTrades.ts
 import type { FastifyInstance } from 'fastify';
 import { createClient } from '@supabase/supabase-js';
+import { sendEmbed } from '../lib/discordClient.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -68,6 +69,15 @@ export async function registerEquityTradesRoutes(app: FastifyInstance): Promise<
       .single();
 
     if (error) return reply.status(500).send({ error: error.message });
+
+    // Notificar Discord — fire and forget
+    sendEmbed('acoes', {
+      title: `📥 Trade Registrado: ${data.symbol}`,
+      description: `**Entrada:** $${data.entry_price} × ${data.quantity} ações\n**Capital:** ~$${(data.entry_price * data.quantity).toFixed(2)}\n**Data:** ${data.entry_date}`,
+      color: 0x3498DB,
+      timestamp: new Date().toISOString(),
+    }).catch(() => {});
+
     return reply.status(201).send(data);
   });
 
@@ -107,6 +117,19 @@ export async function registerEquityTradesRoutes(app: FastifyInstance): Promise<
       .single();
 
     if (error) return reply.status(500).send({ error: error.message });
+
+    // Notificar Discord — fire and forget
+    const pnlFormatted = data.pnl >= 0 ? `+$${data.pnl.toFixed(2)}` : `-$${Math.abs(data.pnl).toFixed(2)}`;
+    const durationDays = data.exit_date && data.entry_date
+      ? Math.round((new Date(data.exit_date).getTime() - new Date(data.entry_date).getTime()) / 86400000)
+      : 1;
+    sendEmbed('acoes', {
+      title: `${data.pnl >= 0 ? '✅' : '❌'} Trade Fechado: ${data.symbol}`,
+      description: `**P&L:** ${pnlFormatted}\n**Entrada:** $${data.entry_price} → **Saída:** $${data.exit_price}\n**Duração:** ${durationDays} dia(s) | **Quantidade:** ${data.quantity}`,
+      color: data.pnl >= 0 ? 0x00CC66 : 0xE74C3C,
+      timestamp: new Date().toISOString(),
+    }).catch(() => {});
+
     return reply.send(data);
   });
 
