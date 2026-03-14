@@ -28,13 +28,11 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 export function NewsFeedPanel() {
   const newsFeed = useMarketStore((s) => s.newsFeed)
-  const putCallRatio = useMarketStore((s) => s.putCallRatio)
   const [activeTab, setActiveTab] = useState<MobileTab>('macro')
 
   const hasMacro = newsFeed.macro.length > 0
   const hasBls = newsFeed.bls.length > 0
   const hasMacroEvents = newsFeed.macroEvents.length > 0
-  const hasHeadlines = newsFeed.headlines.length > 0
   const isLoading = newsFeed.lastUpdated === 0
   const hasStale = Object.values(newsFeed.staleFlags).some(Boolean)
 
@@ -111,10 +109,10 @@ export function NewsFeedPanel() {
         {activeTab === 'sentimento' && (
           <div>
             <SectionTitle>Sentimento do Mercado</SectionTitle>
-            <FearGreedGauge fearGreed={newsFeed.fearGreed} />
+            <FearGreedGauge />
             <div className="mt-5 border-t border-border-subtle pt-4">
               <SectionTitle>Put/Call Ratio</SectionTitle>
-              <PutCallRatioCard data={putCallRatio} />
+              <PutCallRatioCard />
             </div>
           </div>
         )}
@@ -130,10 +128,7 @@ export function NewsFeedPanel() {
         {activeTab === 'headlines' && (
           <div>
             <SectionTitle>Headlines</SectionTitle>
-            <NewsHeadlines
-              headlines={newsFeed.headlines}
-              loading={isLoading && !hasHeadlines}
-            />
+            <NewsHeadlines />
           </div>
         )}
       </div>
@@ -153,33 +148,28 @@ export function NewsFeedPanel() {
 
           <div className="border-l border-border-subtle pl-4">
             <SectionTitle>Sentimento do Mercado</SectionTitle>
-            <FearGreedGauge fearGreed={newsFeed.fearGreed} />
+            <FearGreedGauge />
           </div>
 
           <div className="border-l border-border-subtle pl-4">
             <SectionTitle>Put/Call Ratio</SectionTitle>
-            <PutCallRatioCard data={putCallRatio} />
+            <PutCallRatioCard />
           </div>
         </div>
 
         <div className="border-t border-border-subtle mb-5" />
 
-        {/* Row 2: Macro Events (1 col) + Headlines (2 cols) */}
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <SectionTitle>Eventos Macro — Próximas 48h</SectionTitle>
-            <MacroCalendar
-              events={newsFeed.macroEvents}
-              loading={isLoading && !hasMacroEvents}
-            />
-          </div>
-
-          <div className="border-l border-border-subtle pl-4 col-span-2">
+        {/* Row 2: Macro Events (conditional) + Headlines */}
+        <div className={`grid gap-4 ${hasMacroEvents ? 'grid-cols-3' : 'grid-cols-1'}`}>
+          {hasMacroEvents && (
+            <div className="col-span-1">
+              <SectionTitle>Eventos Macro — Próximas 48h</SectionTitle>
+              <MacroCalendar events={newsFeed.macroEvents} loading={false} />
+            </div>
+          )}
+          <div className={hasMacroEvents ? 'col-span-2 border-l border-border-subtle pl-4' : 'col-span-1'}>
             <SectionTitle>Headlines</SectionTitle>
-            <NewsHeadlines
-              headlines={newsFeed.headlines}
-              loading={isLoading && !hasHeadlines}
-            />
+            <NewsHeadlines />
           </div>
         </div>
       </div>
