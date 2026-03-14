@@ -80,35 +80,37 @@ export function TickerStrip() {
   ]
 
   return (
-    <div className="flex items-center justify-center gap-0 bg-[#0d0d0d] border-b border-border-subtle h-[34px] overflow-x-auto">
-      {items.map((item, i) => (
-        <div key={item.label} className="flex items-center">
-          {i > 0 && (
-            <div className="w-px h-[14px] bg-[#222] mx-0 flex-shrink-0" />
-          )}
-          <div className="flex items-center gap-[5px] px-3 whitespace-nowrap">
-            <span className="text-[9px] text-text-muted uppercase tracking-[0.8px] font-display font-semibold">
-              {item.label}
-            </span>
-            <span className="text-[12px] font-bold font-mono text-text-primary">
-              {item.value}
-            </span>
-            {item.change && (
-              <span
-                className={`text-[9px] font-mono ${
-                  item.changePositive === true
-                    ? 'text-[#00ff88]'
-                    : item.changePositive === false
-                      ? 'text-[#ff4f4f]'
-                      : 'text-text-muted'
-                }`}
-              >
-                {item.change}
-              </span>
+    <div className="bg-[#0d0d0d] border-b border-border-subtle h-[34px] overflow-x-auto">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 flex items-center h-full gap-0">
+        {items.map((item, i) => (
+          <div key={item.label} className="flex items-center">
+            {i > 0 && (
+              <div className="w-px h-[14px] bg-[#222] mx-0 flex-shrink-0" />
             )}
+            <div className="flex items-center gap-[5px] px-3 whitespace-nowrap">
+              <span className="text-[9px] text-text-muted uppercase tracking-[0.8px] font-display font-semibold">
+                {item.label}
+              </span>
+              <span className="text-[12px] font-bold font-mono text-text-primary">
+                {item.value}
+              </span>
+              {item.change && (
+                <span
+                  className={`text-[9px] font-mono ${
+                    item.changePositive === true
+                      ? 'text-[#00ff88]'
+                      : item.changePositive === false
+                        ? 'text-[#ff4f4f]'
+                        : 'text-text-muted'
+                  }`}
+                >
+                  {item.change}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   )
 }

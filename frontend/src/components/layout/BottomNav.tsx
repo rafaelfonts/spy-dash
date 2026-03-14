@@ -1,3 +1,5 @@
+import { LayoutDashboard, BarChart2, Globe, Briefcase } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import type { TabId } from './TabNav'
 
 interface BottomNavProps {
@@ -5,11 +7,11 @@ interface BottomNavProps {
   onChange: (tab: TabId) => void
 }
 
-const TABS: { id: TabId; icon: string; label: string }[] = [
-  { id: 'dashboard', icon: '🏠', label: 'Dashboard' },
-  { id: 'mercado', icon: '📊', label: 'Mercado' },
-  { id: 'macro', icon: '🌍', label: 'Macro' },
-  { id: 'portfolio', icon: '💼', label: 'Portfolio' },
+const TABS: { id: TabId; Icon: LucideIcon; label: string }[] = [
+  { id: 'dashboard', Icon: LayoutDashboard, label: 'Dashboard' },
+  { id: 'mercado', Icon: BarChart2, label: 'Mercado' },
+  { id: 'macro', Icon: Globe, label: 'Macro' },
+  { id: 'portfolio', Icon: Briefcase, label: 'Portfolio' },
 ]
 
 export function BottomNav({ active, onChange }: BottomNavProps) {
@@ -23,7 +25,7 @@ export function BottomNav({ active, onChange }: BottomNavProps) {
             active === tab.id ? 'text-[#00ff88]' : 'text-text-muted'
           }`}
         >
-          <span className="text-[17px] leading-none">{tab.icon}</span>
+          <tab.Icon size={17} strokeWidth={active === tab.id ? 2.5 : 1.8} />
           <span>{tab.label}</span>
         </button>
       ))}

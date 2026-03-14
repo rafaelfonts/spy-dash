@@ -135,8 +135,8 @@ export function NewsFeedPanel() {
 
       {/* ── DESKTOP: grid layout completo ── */}
       <div className="hidden md:block">
-        {/* Row 1: Macro FRED/BLS + Sentimento + P/C Ratio */}
-        <div className="grid grid-cols-3 gap-4 mb-5">
+        {/* Row 1: Macro FRED/BLS + Sentimento & P/C Ratio empilhados */}
+        <div className="grid grid-cols-2 gap-4 mb-5">
           <div>
             <SectionTitle>Dados Macro — FRED / BLS</SectionTitle>
             <MacroData
@@ -146,14 +146,15 @@ export function NewsFeedPanel() {
             />
           </div>
 
-          <div className="border-l border-border-subtle pl-4">
-            <SectionTitle>Sentimento do Mercado</SectionTitle>
-            <FearGreedGauge />
-          </div>
-
-          <div className="border-l border-border-subtle pl-4">
-            <SectionTitle>Put/Call Ratio</SectionTitle>
-            <PutCallRatioCard />
+          <div className="border-l border-border-subtle pl-4 flex flex-col gap-5">
+            <div>
+              <SectionTitle>Sentimento do Mercado</SectionTitle>
+              <FearGreedGauge />
+            </div>
+            <div>
+              <SectionTitle>Put/Call Ratio</SectionTitle>
+              <PutCallRatioCard />
+            </div>
           </div>
         </div>
 
