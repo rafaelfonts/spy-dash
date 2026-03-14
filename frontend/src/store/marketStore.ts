@@ -147,16 +147,6 @@ export interface VIXTermStructureData {
   lastUpdated: number
 }
 
-// Put/Call Ratio type (mirrored from backend putCallRatio)
-export interface PutCallRatioData {
-  ratio: number
-  putVolume: number
-  callVolume: number
-  label: 'bearish' | 'neutral' | 'bullish'
-  expiration: string
-  lastUpdated: number
-}
-
 export interface PutCallRatioEntry {
   tier: '0DTE' | 'Semanal' | 'Mensal'
   expiration: string
