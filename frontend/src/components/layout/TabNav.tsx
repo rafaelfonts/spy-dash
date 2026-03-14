@@ -1,7 +1,7 @@
-import { LayoutDashboard, BarChart2, Globe, Briefcase } from 'lucide-react'
+import { LayoutDashboard, BarChart2, Globe, Briefcase, TrendingUp } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
-export type TabId = 'dashboard' | 'mercado' | 'macro' | 'portfolio'
+export type TabId = 'dashboard' | 'mercado' | 'macro' | 'portfolio' | 'acoes'
 
 interface TabNavProps {
   active: TabId
@@ -13,6 +13,7 @@ const TABS: { id: TabId; label: string; Icon: LucideIcon }[] = [
   { id: 'mercado', label: 'Mercado', Icon: BarChart2 },
   { id: 'macro', label: 'Macro & News', Icon: Globe },
   { id: 'portfolio', label: 'Portfolio', Icon: Briefcase },
+  { id: 'acoes' as TabId, label: '⚡ Ações', Icon: TrendingUp },
 ]
 
 export function TabNav({ active, onChange }: TabNavProps) {

@@ -1,4 +1,4 @@
-import { LayoutDashboard, BarChart2, Globe, Briefcase } from 'lucide-react'
+import { LayoutDashboard, BarChart2, Globe, Briefcase, TrendingUp } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { TabId } from './TabNav'
 
@@ -12,6 +12,7 @@ const TABS: { id: TabId; Icon: LucideIcon; label: string }[] = [
   { id: 'mercado', Icon: BarChart2, label: 'Mercado' },
   { id: 'macro', Icon: Globe, label: 'Macro' },
   { id: 'portfolio', Icon: Briefcase, label: 'Portfolio' },
+  { id: 'acoes' as TabId, Icon: TrendingUp, label: 'Ações' },
 ]
 
 export function BottomNav({ active, onChange }: BottomNavProps) {
