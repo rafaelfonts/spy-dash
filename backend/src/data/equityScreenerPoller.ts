@@ -5,6 +5,7 @@ import { getEquityUniverse, scheduleWeeklyUniverseRefresh } from './equityUniver
 import { startEquityCatalystPoller, getCatalystTickers } from './equityCatalystPoller.js';
 import { setEquityCandidates, DEFAULT_FILTERS } from './equityScreenerState.js';
 import type { EquityCandidate } from './equityTypes.js';
+import { checkEquityAlerts } from './alertEngine.js';
 
 const POLL_MS = 60_000;
 const OFFHOURS_MS = 5 * 60_000;
@@ -59,6 +60,10 @@ async function tick(): Promise<void> {
   const open = isMarketOpen();
   setEquityCandidates(candidates, open);
   emitter.emit('equity-screener', { candidates, filters: f, marketOpen: open, capturedAt: Date.now() });
+
+  // Verificar alertas da watchlist (non-blocking)
+  checkEquityAlerts(candidates.map((c) => ({ symbol: c.symbol, price: c.price })))
+    .catch((e) => console.warn('[equityScreener] checkEquityAlerts failed:', e));
 
   if (candidates.length > 0) {
     console.log(`[equityScreener] ${candidates.length} candidates | top: ${candidates[0].symbol} RVOL=${candidates[0].rvol}x`);
