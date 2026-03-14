@@ -14,6 +14,7 @@ import { getCftcCotSnapshot } from '../data/cftcCotState'
 import { getTreasuryTgaSnapshot } from '../data/treasuryState'
 import { getEiaOilSnapshot } from '../data/eiaOilState'
 import { getFinraDarkPoolSnapshot } from '../data/finraDarkPoolState'
+import { getEquityScreenerSnapshot } from '../data/equityScreenerState.js'
 import type { SSEClient } from '../types/market'
 import { SSEBatcher } from '../lib/sseBatcher'
 import { checkAlerts } from '../data/alertEngine'
@@ -79,6 +80,9 @@ emitter.on('cftc_cot', (data) => broadcast('cftc_cot', data))
 emitter.on('treasury_tga', (data) => broadcast('treasury_tga', data))
 emitter.on('eia_oil', (data) => broadcast('eia_oil', data))
 emitter.on('finra_darkpool', (data) => broadcast('finra_darkpool', data))
+emitter.on('equity-screener', (data: unknown) => {
+  broadcast('equity-screener', data);
+})
 emitter.on('quote', (data) => {
   if (data.last !== null) checkAlerts(data.last)
   broadcast('quote', {
@@ -235,6 +239,12 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     const finraSnapshot = getFinraDarkPoolSnapshot()
     if (finraSnapshot) {
       client.write('finra_darkpool', finraSnapshot)
+    }
+
+    // Send equity screener snapshot if available
+    const equitySnapshot = getEquityScreenerSnapshot()
+    if (equitySnapshot.capturedAt > 0) {
+      client.write('equity-screener', equitySnapshot)
     }
 
     // Send cached VIX term structure snapshot
