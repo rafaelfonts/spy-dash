@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { useMarketStore } from '../store/marketStore'
+import { useMarketStore, EquityCandidate } from '../store/marketStore'
 import { supabase } from '../lib/supabase'
 import { getApiBase } from '../lib/apiBase'
 
@@ -27,6 +27,7 @@ export function useMarketStream(): void {
   const setRegimePreview = useMarketStore((s) => s.setRegimePreview)
   const setMarketOpen = useMarketStore((s) => s.setMarketOpen)
   const addAlert = useMarketStore((s) => s.addAlert)
+  const setEquityCandidates = useMarketStore((s) => s.setEquityCandidates)
 
   const esRef = useRef<EventSource | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -351,6 +352,17 @@ export function useMarketStream(): void {
         } catch {
           // ignore
         }
+      })
+
+      es.addEventListener('equity-screener', (e) => {
+        try {
+          const payload = JSON.parse(e.data) as {
+            candidates: EquityCandidate[]
+            marketOpen: boolean
+            capturedAt: number
+          }
+          setEquityCandidates(payload.candidates, payload.marketOpen)
+        } catch { /* ignora */ }
       })
 
       es.addEventListener('ping', () => {
