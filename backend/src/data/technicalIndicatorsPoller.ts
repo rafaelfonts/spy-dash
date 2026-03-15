@@ -12,83 +12,7 @@ import { marketState } from './marketState'
 import { publishTechnicalData } from './technicalIndicatorsState'
 import type { TechnicalData } from './technicalIndicatorsState'
 import { buildIVConeSnapshot } from './ivConeService'
-
-// ---------------------------------------------------------------------------
-// Pure calculation helpers
-// ---------------------------------------------------------------------------
-
-/**
- * RSI com suavização de Wilder (EMA fator 1/period).
- * Requer prices.length >= period*2 para warm-up correto.
- * Retorna 50 (neutro) quando série é muito curta ou completamente flat.
- */
-function calcRSI(prices: number[], period = 14): number {
-  if (prices.length < period * 2) return 50
-
-  // Fase 1: semente via média simples dos primeiros `period` deltas
-  let avgGain = 0
-  let avgLoss = 0
-  for (let i = 1; i <= period; i++) {
-    const diff = prices[i] - prices[i - 1]
-    if (diff > 0) avgGain += diff
-    else avgLoss += Math.abs(diff)
-  }
-  avgGain /= period
-  avgLoss /= period
-
-  // Fase 2: EMA de Wilder para o restante da série
-  for (let i = period + 1; i < prices.length; i++) {
-    const diff = prices[i] - prices[i - 1]
-    avgGain = (avgGain * (period - 1) + Math.max(0, diff)) / period
-    avgLoss = (avgLoss * (period - 1) + Math.max(0, -diff)) / period
-  }
-
-  if (avgGain === 0 && avgLoss === 0) return 50  // flat market (e.g. closed) → neutral
-  if (avgLoss === 0) return 100
-  return 100 - 100 / (1 + avgGain / avgLoss)
-}
-
-function calcEMA(prices: number[], period: number): number[] {
-  const k = 2 / (period + 1)
-  const ema: number[] = [prices[0]]
-  for (let i = 1; i < prices.length; i++) {
-    ema.push(prices[i] * k + ema[i - 1] * (1 - k))
-  }
-  return ema
-}
-
-function calcMACD(prices: number[]): TechnicalData['macd'] {
-  if (prices.length < 35) {
-    return { macd: 0, signal: 0, histogram: 0, crossover: 'none' }
-  }
-  const ema12 = calcEMA(prices, 12)
-  const ema26 = calcEMA(prices, 26)
-  const macdLine = ema12.map((v, i) => v - ema26[i])
-  const signalLine = calcEMA(macdLine, 9)
-  const macd = macdLine[macdLine.length - 1]
-  const signal = signalLine[signalLine.length - 1]
-  const histNow = macd - signal
-  const histPrev =
-    macdLine[macdLine.length - 2] - signalLine[signalLine.length - 2]
-  const crossover: TechnicalData['macd']['crossover'] =
-    histPrev <= 0 && histNow > 0
-      ? 'bullish'
-      : histPrev >= 0 && histNow < 0
-        ? 'bearish'
-        : 'none'
-  return { macd, signal, histogram: histNow, crossover }
-}
-
-function calcBBands(prices: number[], period = 20): TechnicalData['bbands'] {
-  const slice = prices.slice(-period)
-  if (slice.length < period) {
-    return { upper: 0, middle: 0, lower: 0, position: 'middle' }
-  }
-  const middle = slice.reduce((a, b) => a + b, 0) / period
-  const variance = slice.reduce((acc, p) => acc + (p - middle) ** 2, 0) / period
-  const stdDev = Math.sqrt(variance)
-  return { upper: middle + 2 * stdDev, middle, lower: middle - 2 * stdDev, position: 'middle' }
-}
+import { calcRSI, calcMACD, calcBBands } from '../lib/technicalCalcs.js'
 
 // ---------------------------------------------------------------------------
 // BB position helper — exported for use in openai.ts at analysis time
@@ -128,8 +52,20 @@ function tick(): void {
   }
 
   const rsi14 = calcRSI(prices)
-  const macd = calcMACD(prices)
-  const bbands = calcBBands(prices)
+  // calcMACD retorna { value, signal, histogram, crossover } — adapta para TechnicalData['macd']
+  const macdResult = calcMACD(prices)
+  const macd: TechnicalData['macd'] = macdResult
+    ? { macd: macdResult.value, signal: macdResult.signal, histogram: macdResult.histogram, crossover: macdResult.crossover }
+    : { macd: 0, signal: 0, histogram: 0, crossover: 'none' }
+
+  // resultado cru de technicalCalcs.ts (sem position, pode ser null)
+  const bbResult = calcBBands(prices)
+  const bbFlat = !bbResult || bbResult.upper === bbResult.lower
+
+  // objeto TechnicalData['bbands'] exigido por publishTechnicalData (nunca null, tem position)
+  const bbands: TechnicalData['bbands'] = bbResult
+    ? { upper: bbResult.upper, middle: bbResult.middle, lower: bbResult.lower, position: 'middle' }
+    : { upper: 0, middle: 0, lower: 0, position: 'middle' }
 
   // Pre-compute BB position using current live price
   const currentPrice = marketState.spy.last
@@ -137,12 +73,10 @@ function tick(): void {
     bbands.position = deriveBBPosition(currentPrice, bbands)
   }
 
-  // BB %B and Bandwidth — requires non-flat bands (stdDev > 0)
-  const bbFlat = bbands.upper === bbands.lower
+  // bbPercentB e bbBandwidth vêm do bbResult (não do bbands que não tem esses campos)
   const bbPercentB =
-    bbFlat || currentPrice == null
-      ? null
-      : (currentPrice - bbands.lower) / (bbands.upper - bbands.lower)
+    bbFlat || currentPrice == null ? null
+    : (currentPrice - bbands.lower) / (bbands.upper - bbands.lower)
   const bbBandwidth = bbFlat ? null : (bbands.upper - bbands.lower) / bbands.middle * 100
 
   // IV Cone snapshot — piggybacking on 5-min tick (uses same priceHistory)
