@@ -42,14 +42,14 @@ export function EquityWatchlist() {
 
   return (
     <div className="bg-[#111] border border-[#222] rounded-xl p-4">
-      <div className="text-xs text-gray-500 uppercase tracking-wide mb-3">Watchlist</div>
+      <div className="text-xs text-text-muted uppercase tracking-wide mb-3">Watchlist</div>
 
       {equityWatchlist.length === 0 && !adding ? (
-        <div className="text-sm text-gray-600 text-center py-4">Nenhuma ação monitorada</div>
+        <div className="text-sm text-text-muted text-center py-4">Nenhuma ação monitorada</div>
       ) : (
         <table className="w-full text-xs mb-2">
           <thead>
-            <tr className="text-gray-600 uppercase text-[10px]">
+            <tr className="text-text-muted uppercase text-[10px]">
               <td className="pb-2">Ticker</td>
               <td className="pb-2">Preço</td>
               <td className="pb-2">Var%</td>
@@ -62,8 +62,8 @@ export function EquityWatchlist() {
               const live = getPriceForSymbol(w.symbol)
               return (
                 <tr key={w.symbol} className="border-t border-[#1e1e1e]">
-                  <td className="py-2 font-bold text-white">{w.symbol}</td>
-                  <td className="py-2 text-gray-300">{live ? `$${live.price.toFixed(2)}` : '—'}</td>
+                  <td className="py-2 font-bold text-text-primary">{w.symbol}</td>
+                  <td className="py-2 text-text-secondary">{live ? `$${live.price.toFixed(2)}` : '—'}</td>
                   <td className={`py-2 ${live && live.change >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
                     {live ? `${live.change >= 0 ? '+' : ''}${live.change.toFixed(1)}%` : '—'}
                   </td>
@@ -71,7 +71,7 @@ export function EquityWatchlist() {
                     {w.alert_price ? `$${w.alert_price} ${w.alert_direction === 'above' ? '↑' : '↓'}` : '—'}
                   </td>
                   <td className="py-2">
-                    <button onClick={() => handleRemove(w.symbol)} className="text-gray-600 hover:text-red-400 text-[11px]">✕</button>
+                    <button onClick={() => handleRemove(w.symbol)} className="text-text-muted hover:text-red-400 text-[11px]">✕</button>
                   </td>
                 </tr>
               )
@@ -87,11 +87,11 @@ export function EquityWatchlist() {
             onChange={(e) => setNewSymbol(e.target.value.toUpperCase())}
             placeholder="Ex: SOUN"
             maxLength={5}
-            className="flex-1 bg-[#1a1a1a] border border-[#333] rounded px-2 py-1 text-xs text-white uppercase"
+            className="flex-1 bg-[#1a1a1a] border border-[#333] rounded px-2 py-1 text-xs text-text-primary uppercase"
             onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
           />
           <button onClick={handleAdd} className="text-xs bg-[#00ff88] text-black px-3 py-1 rounded font-bold">OK</button>
-          <button onClick={() => setAdding(false)} className="text-xs text-gray-500 px-2">✕</button>
+          <button onClick={() => setAdding(false)} className="text-xs text-text-muted px-2">✕</button>
         </div>
       ) : (
         <button onClick={() => setAdding(true)} className="text-xs text-[#00ff88] mt-1 hover:underline">

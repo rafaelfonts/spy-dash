@@ -18,7 +18,7 @@ const TABS: { id: TabId; label: string; Icon: LucideIcon }[] = [
 
 export function TabNav({ active, onChange }: TabNavProps) {
   return (
-    <div className="hidden md:flex border-b border-border-subtle bg-[#0d0d0d]">
+    <div className="hidden md:block border-b border-border-subtle bg-[#0d0d0d] w-full">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 flex gap-0">
         {TABS.map((tab) => (
           <button

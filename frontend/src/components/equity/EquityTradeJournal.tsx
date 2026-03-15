@@ -43,21 +43,21 @@ export function EquityTradeJournal({ selectedMonth, onMonthChange, onRefresh }: 
   return (
     <div className="bg-[#111] border border-[#222] rounded-xl p-4">
       <div className="flex items-center gap-3 mb-3">
-        <div className="text-xs text-gray-500 uppercase tracking-wide">Diário de Operações</div>
+        <div className="text-xs text-text-muted uppercase tracking-wide">Diário de Operações</div>
         <input
           type="month"
           value={selectedMonth}
           onChange={(e) => onMonthChange(e.target.value)}
-          className="ml-auto bg-[#1a1a1a] border border-[#333] rounded px-2 py-0.5 text-xs text-gray-300"
+          className="ml-auto bg-[#1a1a1a] border border-[#333] rounded px-2 py-0.5 text-xs text-text-secondary"
         />
       </div>
 
       {equityTrades.length === 0 ? (
-        <div className="text-sm text-gray-600 text-center py-6">Nenhuma operação registrada neste mês</div>
+        <div className="text-sm text-text-muted text-center py-6">Nenhuma operação registrada neste mês</div>
       ) : (
         <table className="w-full text-xs">
           <thead>
-            <tr className="text-gray-600 uppercase text-[10px]">
+            <tr className="text-text-muted uppercase text-[10px]">
               <td className="pb-2">Data</td>
               <td className="pb-2">Ticker</td>
               <td className="pb-2">Entrada</td>
@@ -71,12 +71,12 @@ export function EquityTradeJournal({ selectedMonth, onMonthChange, onRefresh }: 
           <tbody>
             {equityTrades.map((t) => (
               <tr key={t.id} className="border-t border-[#1e1e1e]">
-                <td className="py-2 text-gray-500">{t.entry_date}</td>
-                <td className="py-2 font-bold text-white">{t.symbol}</td>
-                <td className="py-2 text-gray-300">${t.entry_price.toFixed(2)}</td>
-                <td className="py-2 text-gray-300">{t.exit_price ? `$${t.exit_price.toFixed(2)}` : '—'}</td>
-                <td className="py-2 text-gray-500">{t.quantity}</td>
-                <td className={`py-2 font-bold ${t.pnl == null ? 'text-gray-600' : t.pnl >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
+                <td className="py-2 text-text-muted">{t.entry_date}</td>
+                <td className="py-2 font-bold text-text-primary">{t.symbol}</td>
+                <td className="py-2 text-text-secondary">${t.entry_price.toFixed(2)}</td>
+                <td className="py-2 text-text-secondary">{t.exit_price ? `$${t.exit_price.toFixed(2)}` : '—'}</td>
+                <td className="py-2 text-text-muted">{t.quantity}</td>
+                <td className={`py-2 font-bold ${t.pnl == null ? 'text-text-muted' : t.pnl >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
                   {t.pnl == null ? '—' : `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}`}
                 </td>
                 <td className="py-2">
@@ -92,7 +92,7 @@ export function EquityTradeJournal({ selectedMonth, onMonthChange, onRefresh }: 
                   {t.status === 'open' && (
                     <button onClick={() => handleClose(t)} className="text-[10px] text-[#00ff88] hover:underline">Fechar</button>
                   )}
-                  <button onClick={() => handleDelete(t.id)} className="text-[10px] text-gray-600 hover:text-red-400 ml-1">✕</button>
+                  <button onClick={() => handleDelete(t.id)} className="text-[10px] text-text-muted hover:text-red-400 ml-1">✕</button>
                 </td>
               </tr>
             ))}

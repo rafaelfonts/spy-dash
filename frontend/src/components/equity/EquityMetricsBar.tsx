@@ -22,10 +22,10 @@ export function EquityMetricsBar({ onAddTrade }: Props) {
     <div className="bg-[#111] border border-[#222] rounded-xl p-4 flex flex-wrap items-center gap-6">
       {/* Operações / Meta */}
       <div className="text-center">
-        <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Operações/Mês</div>
+        <div className="text-xs text-text-muted uppercase tracking-wide mb-1">Operações/Mês</div>
         <div className="text-3xl font-bold text-[#00ff88]">
           {closedTrades.length}
-          <span className="text-base text-gray-600">/{metaCount}</span>
+          <span className="text-base text-text-muted">/{metaCount}</span>
         </div>
         {metaReached ? (
           <div className="text-xs text-[#00ff88] mt-0.5">✅ Meta atingida</div>
@@ -38,27 +38,27 @@ export function EquityMetricsBar({ onAddTrade }: Props) {
 
       {/* P&L */}
       <div className="text-center">
-        <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">P&L Mês</div>
+        <div className="text-xs text-text-muted uppercase tracking-wide mb-1">P&L Mês</div>
         <div className={`text-2xl font-bold ${pnlTotal >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
           {pnlTotal >= 0 ? '+' : ''}${pnlTotal.toFixed(2)}
         </div>
-        <div className="text-xs text-gray-500 mt-0.5">Win rate: {winRate}%</div>
+        <div className="text-xs text-text-muted mt-0.5">Win rate: {winRate}%</div>
       </div>
 
       <div className="w-px h-10 bg-[#333]" />
 
       {/* Melhor trade */}
       <div className="text-center">
-        <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Melhor Trade</div>
+        <div className="text-xs text-text-muted uppercase tracking-wide mb-1">Melhor Trade</div>
         {bestTrade ? (
           <>
-            <div className="text-base font-bold text-white">
+            <div className="text-base font-bold text-text-primary">
               {bestTrade.symbol} <span className="text-[#00ff88]">+${(bestTrade.pnl ?? 0).toFixed(2)}</span>
             </div>
-            <div className="text-xs text-gray-500 mt-0.5">{bestTrade.exit_date ?? bestTrade.entry_date}</div>
+            <div className="text-xs text-text-muted mt-0.5">{bestTrade.exit_date ?? bestTrade.entry_date}</div>
           </>
         ) : (
-          <div className="text-sm text-gray-600">—</div>
+          <div className="text-sm text-text-muted">—</div>
         )}
       </div>
 

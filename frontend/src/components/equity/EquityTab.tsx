@@ -56,7 +56,7 @@ export function EquityTab() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-4 space-y-4">
+    <div className="space-y-4">
       <EquityMetricsBar onAddTrade={() => setShowAddModal(true)} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
