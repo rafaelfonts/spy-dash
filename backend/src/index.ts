@@ -21,6 +21,8 @@ import { startScheduledSignalScheduler } from './data/scheduledSignalService'
 import { startPortfolioTrackerScheduler, refreshPortfolioSnapshot } from './data/portfolioTrackerService'
 import { startCBOEPCRScheduler } from './data/cboePCRPoller'
 import { startApeWisdomPoller } from './data/apeWisdomPoller'
+import { startRedditSentimentPoller } from './data/redditSentimentPoller'
+import { startRedditPostsPoller } from './data/redditPostsPoller'
 import { startMacroDigestScheduler, restoreMacroDigestFromCache } from './data/macroDigestService'
 import { startOutcomeFiller } from './data/signalLogger'
 import { startRVOLPoller } from './data/rvolPoller'
@@ -205,7 +207,8 @@ async function bootstrap(): Promise<void> {
     startScheduledSignalScheduler()
     startPortfolioTrackerScheduler()
     startCBOEPCRScheduler()
-    startApeWisdomPoller()
+    startRedditSentimentPoller()
+    startRedditPostsPoller()
     startMacroDigestScheduler()
     startOutcomeFiller()
     startRVOLPoller()
