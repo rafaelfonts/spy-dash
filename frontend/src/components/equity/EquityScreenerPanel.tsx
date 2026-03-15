@@ -78,9 +78,9 @@ export function EquityScreenerPanel() {
                   <button
                     onClick={() => handleAnalyze(c.symbol)}
                     disabled={equityAnalysisLoading}
-                    className="text-[10px] bg-[#00ff88]/10 text-[#00ff88] px-2 py-0.5 rounded hover:bg-[#00ff88]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 bg-[#00ff88]/10 border border-[#00ff88]/30 text-[#00ff88] hover:bg-[#00ff88]/20 hover:border-[#00ff88]/50 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {equityAnalysisLoading ? '...' : '🤖 Analisar'}
+                    {equityAnalysisLoading ? '...' : 'Analisar'}
                   </button>
                 </td>
               </tr>

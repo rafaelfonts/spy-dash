@@ -66,7 +66,7 @@ export function EquityMetricsBar({ onAddTrade }: Props) {
 
       <button
         onClick={onAddTrade}
-        className="px-4 py-2 bg-[#00ff88] text-black font-bold rounded-lg text-sm hover:bg-[#00cc6e] transition-colors"
+        className="px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 bg-[#00ff88]/10 border border-[#00ff88]/30 text-[#00ff88] hover:bg-[#00ff88]/20 hover:border-[#00ff88]/50 active:scale-95"
       >
         + Registrar Trade
       </button>

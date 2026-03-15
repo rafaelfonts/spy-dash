@@ -59,13 +59,13 @@ export function EquityAIAnalysis({ onRegisterTrade }: Props) {
       <div className="flex gap-2">
         <button
           onClick={onRegisterTrade}
-          className="px-4 py-1.5 bg-[#00ff88] text-black font-bold rounded-lg text-xs hover:bg-[#00cc6e] transition-colors"
+          className="px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 bg-[#00ff88]/10 border border-[#00ff88]/30 text-[#00ff88] hover:bg-[#00ff88]/20 hover:border-[#00ff88]/50 active:scale-95"
         >
           ✓ Registrar compra
         </button>
         <button
           onClick={() => setEquityAnalysis(null)}
-          className="px-3 py-1.5 bg-bg-elevated text-text-muted rounded-lg text-xs hover:bg-bg-elevated/80"
+          className="px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 bg-bg-elevated border border-border-subtle text-text-secondary hover:bg-border-subtle hover:text-text-primary"
         >
           Descartar
         </button>
