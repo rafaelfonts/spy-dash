@@ -45,6 +45,18 @@ export const CONFIG = {
     webhookSinais: process.env.DISCORD_WEBHOOK_SINAIS ?? '',
     webhookCarteira: process.env.DISCORD_WEBHOOK_CARTEIRA ?? '',
     webhookAcoes: process.env.DISCORD_WEBHOOK_ACOES ?? '',
+    webhookThread: process.env.DISCORD_WEBHOOK_THREAD ?? '',
+  },
+  reddit: {
+    clientId: process.env.REDDIT_CLIENT_ID ?? '',
+    clientSecret: process.env.REDDIT_CLIENT_SECRET ?? '',
+    userAgent: process.env.REDDIT_USER_AGENT ?? 'SPYDash/1.0',
+    subreddits: process.env.REDDIT_SUBREDDITS
+      ?.split(',').map((s) => s.trim())
+      ?? [
+        'wallstreetbets', 'options', 'stocks', 'investing', 'SecurityAnalysis',
+        'StockMarket', 'SPACs', 'pennystocks', 'dividends', 'thetagang',
+      ],
   },
 } as const
 

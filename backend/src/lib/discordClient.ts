@@ -1,6 +1,6 @@
 import { CONFIG } from '../config'
 
-export type DiscordChannel = 'feed' | 'briefings' | 'sinais' | 'carteira' | 'acoes'
+export type DiscordChannel = 'feed' | 'briefings' | 'sinais' | 'carteira' | 'acoes' | 'thread'
 
 export interface DiscordEmbed {
   title: string
@@ -17,6 +17,7 @@ const WEBHOOK_MAP: Record<DiscordChannel, () => string> = {
   sinais: () => CONFIG.discord.webhookSinais,
   carteira: () => CONFIG.discord.webhookCarteira,
   acoes: () => CONFIG.discord.webhookAcoes,
+  thread: () => CONFIG.discord.webhookThread,
 }
 
 // Paleta de cores por canal e tipo de evento
