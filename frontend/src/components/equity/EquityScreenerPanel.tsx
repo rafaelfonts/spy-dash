@@ -57,6 +57,7 @@ export function EquityScreenerPanel() {
               <td className="pb-2">Preço</td>
               <td className="pb-2">Var%</td>
               <td className="pb-2">RVOL</td>
+              <td className="pb-2">Score</td>
               <td className="pb-2"></td>
             </tr>
           </thead>
@@ -64,8 +65,15 @@ export function EquityScreenerPanel() {
             {equityCandidates.map((c) => (
               <tr key={c.symbol} className="border-t border-border-subtle">
                 <td className="py-2 font-bold text-text-primary">
-                  {c.symbol}
-                  {c.hasCatalyst && <span className="ml-1 text-[9px] text-yellow-500">📰</span>}
+                  <span className="flex items-center gap-1.5">
+                    {c.symbol}
+                    {c.hasCatalyst && <span className="text-[9px] text-yellow-500">📰</span>}
+                    {c.isTopSetup && (
+                      <span className="text-[9px] bg-amber-500/20 border border-amber-500/40 text-amber-400 px-1 py-0.5 rounded font-semibold">
+                        ⭐ Top
+                      </span>
+                    )}
+                  </span>
                 </td>
                 <td className="py-2 text-text-secondary">${c.price.toFixed(2)}</td>
                 <td className={`py-2 font-medium ${c.change >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
@@ -73,6 +81,13 @@ export function EquityScreenerPanel() {
                 </td>
                 <td className={`py-2 ${c.rvol >= 4 ? 'text-red-400' : c.rvol >= 2 ? 'text-yellow-500' : 'text-text-secondary'}`}>
                   {c.rvol}x
+                </td>
+                <td className={`py-2 font-semibold tabular-nums ${
+                  c.equityScore >= 70 ? 'text-[#00ff88]' :
+                  c.equityScore >= 40 ? 'text-yellow-400' :
+                  'text-text-muted'
+                }`}>
+                  {c.equityScore}
                 </td>
                 <td className="py-2">
                   <button
