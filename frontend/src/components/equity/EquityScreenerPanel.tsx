@@ -30,18 +30,18 @@ export function EquityScreenerPanel() {
   }
 
   return (
-    <div className="bg-[#111] border border-[#222] rounded-xl p-4">
+    <div className="card">
       <div className="flex items-center justify-between mb-3">
-        <div className="text-xs text-text-muted uppercase tracking-wide">Screener — Candidatos Hoje</div>
+        <div className="text-sm font-display font-bold text-text-primary">Screener — Candidatos Hoje</div>
         {!equityMarketOpen && (
-          <span className="text-xs text-text-muted bg-[#1a1a1a] px-2 py-0.5 rounded">Mercado fechado</span>
+          <span className="text-xs text-text-muted bg-bg-elevated px-2 py-0.5 rounded">Mercado fechado</span>
         )}
       </div>
 
       {/* Filtros ativos */}
       <div className="flex gap-1.5 flex-wrap mb-3">
         {['$2–$20', 'RVOL >2x', 'Vol >300k', 'Var >3%'].map((f) => (
-          <span key={f} className="text-[10px] bg-[#222] text-text-secondary px-2 py-0.5 rounded">{f}</span>
+          <span key={f} className="text-[10px] bg-bg-elevated text-text-secondary px-2 py-0.5 rounded">{f}</span>
         ))}
       </div>
 
@@ -62,7 +62,7 @@ export function EquityScreenerPanel() {
           </thead>
           <tbody>
             {equityCandidates.map((c) => (
-              <tr key={c.symbol} className="border-t border-[#1e1e1e]">
+              <tr key={c.symbol} className="border-t border-border-subtle">
                 <td className="py-2 font-bold text-text-primary">
                   {c.symbol}
                   {c.hasCatalyst && <span className="ml-1 text-[9px] text-yellow-500">📰</span>}

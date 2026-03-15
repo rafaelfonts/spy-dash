@@ -14,7 +14,7 @@ export function EquityAIAnalysis({ onRegisterTrade }: Props) {
 
   if (equityAnalysisLoading) {
     return (
-      <div id="equity-ai-analysis" className="bg-[#0d0d1a] border border-[#2a1f5e] rounded-xl p-4 text-sm text-text-secondary animate-pulse">
+      <div id="equity-ai-analysis" className="card border-[#2a1f5e] text-sm text-text-secondary animate-pulse">
         🤖 Analisando...
       </div>
     )
@@ -23,7 +23,7 @@ export function EquityAIAnalysis({ onRegisterTrade }: Props) {
   if (!equityAnalysis) return null
 
   return (
-    <div id="equity-ai-analysis" className="bg-[#0d0d1a] border border-[#2a1f5e] rounded-xl p-4">
+    <div id="equity-ai-analysis" className="card border-[#2a1f5e]">
       <div className="flex items-center gap-2 mb-3">
         <span className="text-xs text-purple-400 uppercase tracking-wide">🤖 Análise IA</span>
         <span className="font-bold text-text-primary">{equityAnalysis.symbol}</span>
@@ -43,7 +43,7 @@ export function EquityAIAnalysis({ onRegisterTrade }: Props) {
           { label: 'Stop', value: equityAnalysis.stop, color: 'text-red-400' },
           { label: 'R/R', value: equityAnalysis.risk_reward, color: 'text-yellow-400' },
         ].map(({ label, value, color }) => (
-          <div key={label} className="bg-[#111] rounded-lg p-2 text-center">
+          <div key={label} className="bg-bg-elevated rounded-lg p-2 text-center">
             <div className="text-[10px] text-text-muted uppercase">{label}</div>
             <div className={`text-sm font-bold ${color}`}>{value}</div>
           </div>
@@ -65,7 +65,7 @@ export function EquityAIAnalysis({ onRegisterTrade }: Props) {
         </button>
         <button
           onClick={() => setEquityAnalysis(null)}
-          className="px-3 py-1.5 bg-[#1a1a1a] text-text-muted rounded-lg text-xs hover:bg-[#222]"
+          className="px-3 py-1.5 bg-bg-elevated text-text-muted rounded-lg text-xs hover:bg-bg-elevated/80"
         >
           Descartar
         </button>

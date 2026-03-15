@@ -50,9 +50,9 @@ export function AddEquityTradeModal({ onClose, onSuccess }: Props) {
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-[#111] border border-[#333] rounded-xl p-6 w-full max-w-md">
+      <div className="bg-bg-card border border-border-subtle rounded-xl p-6 w-full max-w-md">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-bold text-text-primary">Registrar Trade</h3>
+          <h3 className="font-display font-bold text-text-primary">Registrar Trade</h3>
           <button onClick={onClose} className="text-text-muted hover:text-text-primary">✕</button>
         </div>
 
@@ -71,7 +71,7 @@ export function AddEquityTradeModal({ onClose, onSuccess }: Props) {
                 value={(form as Record<string, string>)[key]}
                 placeholder={placeholder}
                 onChange={(e) => setForm({ ...form, [key]: upper ? e.target.value.toUpperCase() : e.target.value })}
-                className="w-full bg-[#1a1a1a] border border-[#333] rounded px-3 py-2 text-sm text-text-primary"
+                className="w-full bg-bg-elevated border border-border-subtle rounded px-3 py-2 text-sm text-text-primary"
               />
             </div>
           ))}
@@ -87,7 +87,7 @@ export function AddEquityTradeModal({ onClose, onSuccess }: Props) {
           >
             {loading ? 'Registrando...' : 'Registrar'}
           </button>
-          <button onClick={onClose} className="px-4 py-2 bg-[#1a1a1a] text-text-secondary rounded-lg text-sm">Cancelar</button>
+          <button onClick={onClose} className="px-4 py-2 bg-bg-elevated text-text-secondary rounded-lg text-sm">Cancelar</button>
         </div>
       </div>
     </div>

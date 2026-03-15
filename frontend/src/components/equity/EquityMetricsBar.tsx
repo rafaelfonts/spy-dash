@@ -19,11 +19,11 @@ export function EquityMetricsBar({ onAddTrade }: Props) {
   const metaReached = closedTrades.length >= metaCount
 
   return (
-    <div className="bg-[#111] border border-[#222] rounded-xl p-4 flex flex-wrap items-center gap-6">
+    <div className="card flex flex-wrap items-center gap-6">
       {/* Operações / Meta */}
       <div className="text-center">
         <div className="text-xs text-text-muted uppercase tracking-wide mb-1">Operações/Mês</div>
-        <div className="text-3xl font-bold text-[#00ff88]">
+        <div className="text-3xl font-bold text-[#00ff88] font-num">
           {closedTrades.length}
           <span className="text-base text-text-muted">/{metaCount}</span>
         </div>
@@ -34,18 +34,18 @@ export function EquityMetricsBar({ onAddTrade }: Props) {
         )}
       </div>
 
-      <div className="w-px h-10 bg-[#333]" />
+      <div className="w-px h-10 bg-border-subtle" />
 
       {/* P&L */}
       <div className="text-center">
         <div className="text-xs text-text-muted uppercase tracking-wide mb-1">P&L Mês</div>
-        <div className={`text-2xl font-bold ${pnlTotal >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
+        <div className={`text-2xl font-bold font-num ${pnlTotal >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
           {pnlTotal >= 0 ? '+' : ''}${pnlTotal.toFixed(2)}
         </div>
         <div className="text-xs text-text-muted mt-0.5">Win rate: {winRate}%</div>
       </div>
 
-      <div className="w-px h-10 bg-[#333]" />
+      <div className="w-px h-10 bg-border-subtle" />
 
       {/* Melhor trade */}
       <div className="text-center">

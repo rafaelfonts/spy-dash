@@ -41,8 +41,8 @@ export function EquityWatchlist() {
   }
 
   return (
-    <div className="bg-[#111] border border-[#222] rounded-xl p-4">
-      <div className="text-xs text-text-muted uppercase tracking-wide mb-3">Watchlist</div>
+    <div className="card">
+      <div className="text-sm font-display font-bold text-text-primary mb-3">Watchlist</div>
 
       {equityWatchlist.length === 0 && !adding ? (
         <div className="text-sm text-text-muted text-center py-4">Nenhuma ação monitorada</div>
@@ -61,7 +61,7 @@ export function EquityWatchlist() {
             {equityWatchlist.map((w) => {
               const live = getPriceForSymbol(w.symbol)
               return (
-                <tr key={w.symbol} className="border-t border-[#1e1e1e]">
+                <tr key={w.symbol} className="border-t border-border-subtle">
                   <td className="py-2 font-bold text-text-primary">{w.symbol}</td>
                   <td className="py-2 text-text-secondary">{live ? `$${live.price.toFixed(2)}` : '—'}</td>
                   <td className={`py-2 ${live && live.change >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
@@ -87,7 +87,7 @@ export function EquityWatchlist() {
             onChange={(e) => setNewSymbol(e.target.value.toUpperCase())}
             placeholder="Ex: SOUN"
             maxLength={5}
-            className="flex-1 bg-[#1a1a1a] border border-[#333] rounded px-2 py-1 text-xs text-text-primary uppercase"
+            className="flex-1 bg-bg-elevated border border-border-subtle rounded px-2 py-1 text-xs text-text-primary uppercase"
             onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
           />
           <button onClick={handleAdd} className="text-xs bg-[#00ff88] text-black px-3 py-1 rounded font-bold">OK</button>

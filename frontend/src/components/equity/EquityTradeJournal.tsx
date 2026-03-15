@@ -41,14 +41,14 @@ export function EquityTradeJournal({ selectedMonth, onMonthChange, onRefresh }: 
   }
 
   return (
-    <div className="bg-[#111] border border-[#222] rounded-xl p-4">
+    <div className="card">
       <div className="flex items-center gap-3 mb-3">
-        <div className="text-xs text-text-muted uppercase tracking-wide">Diário de Operações</div>
+        <div className="text-sm font-display font-bold text-text-primary">Diário de Operações</div>
         <input
           type="month"
           value={selectedMonth}
           onChange={(e) => onMonthChange(e.target.value)}
-          className="ml-auto bg-[#1a1a1a] border border-[#333] rounded px-2 py-0.5 text-xs text-text-secondary"
+          className="ml-auto bg-bg-elevated border border-border-subtle rounded px-2 py-0.5 text-xs text-text-secondary"
         />
       </div>
 
@@ -70,13 +70,13 @@ export function EquityTradeJournal({ selectedMonth, onMonthChange, onRefresh }: 
           </thead>
           <tbody>
             {equityTrades.map((t) => (
-              <tr key={t.id} className="border-t border-[#1e1e1e]">
+              <tr key={t.id} className="border-t border-border-subtle">
                 <td className="py-2 text-text-muted">{t.entry_date}</td>
                 <td className="py-2 font-bold text-text-primary">{t.symbol}</td>
                 <td className="py-2 text-text-secondary">${t.entry_price.toFixed(2)}</td>
                 <td className="py-2 text-text-secondary">{t.exit_price ? `$${t.exit_price.toFixed(2)}` : '—'}</td>
                 <td className="py-2 text-text-muted">{t.quantity}</td>
-                <td className={`py-2 font-bold ${t.pnl == null ? 'text-text-muted' : t.pnl >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
+                <td className={`py-2 font-bold font-num ${t.pnl == null ? 'text-text-muted' : t.pnl >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
                   {t.pnl == null ? '—' : `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}`}
                 </td>
                 <td className="py-2">
