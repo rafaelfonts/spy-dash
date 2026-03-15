@@ -400,3 +400,46 @@ export interface PutCallRatioMulti {
   entries: PutCallRatioEntry[]
   lastUpdated: number
 }
+
+// ---------- Equity Analysis ----------
+
+export interface EquityTechnicals {
+  rsi: number | null
+  rsiZone: 'oversold' | 'neutral' | 'overbought'
+  macd: { value: number; signal: number; histogram: number } | null
+  macdCross: 'bullish' | 'bearish' | 'none'
+  bb: { upper: number; middle: number; lower: number } | null
+  bbPercentB: number | null
+  bbBandwidth: number | null
+  vwap: number | null
+  trend: 'uptrend' | 'downtrend' | 'sideways'
+}
+
+export interface EquityRegimeComponents {
+  rsi: number        // 0–2
+  macd: number       // 0–2
+  bb: number         // 0–2
+  catalyst: number   // 0–2
+  spyAlignment: number // 0–2
+}
+
+export interface AnalysisStructuredEquity {
+  symbol: string
+  setup: string
+  entry_range: string
+  target: string
+  stop: string
+  risk_reward: string
+  confidence: 'ALTA' | 'MÉDIA' | 'BAIXA'
+  warning: string | null
+  // Quantitative additions
+  equity_regime_score: number             // 0–10, integer
+  rsi_zone: 'oversold' | 'neutral' | 'overbought'
+  trend: 'uptrend' | 'downtrend' | 'sideways'
+  catalyst_confirmed: boolean
+  timeframe: '1d' | '2d' | '3-5d'
+  invalidation_level: number | null
+  key_levels: { support: number[]; resistance: number[] }
+  trade_signal: 'trade' | 'wait' | 'avoid'
+  no_trade_reasons: string[]
+}
