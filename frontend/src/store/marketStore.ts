@@ -292,7 +292,7 @@ export interface EquityTrade {
   notes: string | null
 }
 
-export interface EquityAnalysis {
+export interface AnalysisStructuredEquity {
   symbol: string
   setup: string
   entry_range: string
@@ -301,6 +301,15 @@ export interface EquityAnalysis {
   risk_reward: string
   confidence: 'ALTA' | 'MÉDIA' | 'BAIXA'
   warning: string | null
+  equity_regime_score: number
+  rsi_zone: 'oversold' | 'neutral' | 'overbought'
+  trend: 'uptrend' | 'downtrend' | 'sideways'
+  catalyst_confirmed: boolean
+  timeframe: '1d' | '2d' | '3-5d'
+  invalidation_level: number | null
+  key_levels: { support: number[]; resistance: number[] }
+  trade_signal: 'trade' | 'wait' | 'avoid'
+  no_trade_reasons: string[]
 }
 
 export interface EquityScreenerPayload {
@@ -454,12 +463,12 @@ interface MarketStore {
   equityMarketOpen: boolean
   equityWatchlist: WatchlistEntry[]
   equityTrades: EquityTrade[]
-  equityAnalysis: EquityAnalysis | null
+  equityAnalysis: AnalysisStructuredEquity | null
   equityAnalysisLoading: boolean
   setEquityCandidates: (candidates: EquityCandidate[], marketOpen: boolean) => void
   setEquityWatchlist: (w: WatchlistEntry[]) => void
   setEquityTrades: (t: EquityTrade[]) => void
-  setEquityAnalysis: (a: EquityAnalysis | null) => void
+  setEquityAnalysis: (a: AnalysisStructuredEquity | null) => void
   setEquityAnalysisLoading: (v: boolean) => void
 
   alerts: AlertToast[]
@@ -591,7 +600,7 @@ export const useMarketStore = create<MarketStore>()(
     equityMarketOpen: false,
     equityWatchlist: [] as WatchlistEntry[],
     equityTrades: [] as EquityTrade[],
-    equityAnalysis: null as EquityAnalysis | null,
+    equityAnalysis: null as AnalysisStructuredEquity | null,
     equityAnalysisLoading: false,
     setEquityCandidates: (candidates, marketOpen) =>
       set({ equityCandidates: candidates, equityMarketOpen: marketOpen }),
