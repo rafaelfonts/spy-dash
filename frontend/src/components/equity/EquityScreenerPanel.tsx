@@ -2,7 +2,7 @@
 import { useMarketStore } from '../../store/marketStore'
 import { supabase } from '../../lib/supabase'
 import { getApiBase } from '../../lib/apiBase'
-import type { EquityAnalysis } from '../../store/marketStore'
+import type { AnalysisStructuredEquity as EquityAnalysis } from '../../store/marketStore'
 
 export function EquityScreenerPanel() {
   const { equityCandidates, equityMarketOpen, equityAnalysisLoading, setEquityAnalysis, setEquityAnalysisLoading } = useMarketStore()

@@ -270,6 +270,8 @@ export interface EquityCandidate {
   rvol: number
   hasCatalyst: boolean
   lastUpdated: number
+  equityScore: number   // 0–100 composite score
+  isTopSetup: boolean   // true for top 3 by equityScore
 }
 
 export interface WatchlistEntry {

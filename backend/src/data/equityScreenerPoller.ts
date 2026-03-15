@@ -6,6 +6,7 @@ import { startEquityCatalystPoller, getCatalystTickers } from './equityCatalystP
 import { setEquityCandidates, DEFAULT_FILTERS } from './equityScreenerState.js';
 import type { EquityCandidate } from './equityTypes.js';
 import { checkEquityAlerts } from './alertEngine.js';
+import { calcRSI } from '../lib/technicalCalcs.js';
 
 const POLL_MS = 60_000;
 const OFFHOURS_MS = 5 * 60_000;
@@ -29,7 +30,7 @@ async function tick(): Promise<void> {
   const catalysts = getCatalystTickers();
   const f = DEFAULT_FILTERS;
 
-  const candidates: EquityCandidate[] = quotes
+  const rawCandidates = quotes
     .filter((q) => {
       const price = q.last ?? q.close ?? 0;
       const change = q.change_percentage ?? 0;
@@ -48,14 +49,38 @@ async function tick(): Promise<void> {
     .map((q) => ({
       symbol: q.symbol,
       price: q.last ?? q.close ?? 0,
-      change: q.change_percentage ?? 0,
+      changePct: q.change_percentage ?? 0,
       volume: q.volume ?? 0,
       rvol: Math.round(((q.volume ?? 0) / (q.average_volume ?? 1)) * 10) / 10,
       hasCatalyst: catalysts.has(q.symbol),
-      lastUpdated: Date.now(),
-    }))
-    .sort((a, b) => b.rvol - a.rvol)
-    .slice(0, 20); // máx 20 candidatos exibidos
+    }));
+
+  // Compute equityScore for each candidate (no extra API calls — rsiMacroScore = 0 fallback)
+  const candidates: EquityCandidate[] = rawCandidates
+    .map((c) => {
+      // RSI not available without timesales fetch — use 0 as fallback per spec
+      const rsiMacroScore = 0;
+      const equityScore = Math.round(
+        Math.min(c.rvol / 5, 1) * 30 +
+        Math.min(Math.abs(c.changePct) / 10, 1) * 25 +
+        (c.hasCatalyst ? 1 : 0) * 25 +
+        rsiMacroScore * 20
+      );
+      return {
+        symbol: c.symbol,
+        price: c.price,
+        change: c.changePct,
+        volume: c.volume,
+        rvol: c.rvol,
+        hasCatalyst: c.hasCatalyst,
+        lastUpdated: Date.now(),
+        equityScore,
+        isTopSetup: false, // set after sorting
+      };
+    })
+    .sort((a, b) => b.equityScore - a.equityScore)
+    .slice(0, 20) // máx 20 candidatos exibidos
+    .map((c, idx) => ({ ...c, isTopSetup: idx < 3 }));
 
   const open = isMarketOpen();
   setEquityCandidates(candidates, open);

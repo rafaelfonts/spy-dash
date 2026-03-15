@@ -13,6 +13,8 @@ export interface EquityCandidate {
   rvol: number          // quote.volume / quote.average_volume
   hasCatalyst: boolean  // notícia Finnhub no dia
   lastUpdated: number   // epoch ms
+  equityScore: number   // 0–100 composite score
+  isTopSetup: boolean   // true for top 3 by equityScore
 }
 
 export interface ScreenerFilters {
