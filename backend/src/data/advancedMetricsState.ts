@@ -13,6 +13,8 @@ import type { NoTradeResult, GexComparison, PriceDistribution, SurfaceQuality } 
 import type { DANResult } from '../lib/danCalculator'
 import type { RVOLSnapshot } from './rvolPoller'
 import type { PutCallRatioMulti } from '../types/market'
+import type { CompositeRegimeResult } from '../lib/compositeRegimeScorer'
+export type { CompositeRegimeResult }
 
 export type { GEXDynamic }
 export type { NoTradeResult }
@@ -67,6 +69,11 @@ export interface AdvancedMetricsPayload {
   marketOpen: boolean
   /** Relative Volume — SPY institutional flow proxy (todayVol / avg20dVol). */
   rvol: RVOLSnapshot | null
+  /** Phase 2: deterministic 0–100 composite regime score (rule-based weighted average). */
+  compositeRegime: (CompositeRegimeResult & {
+    gexSign: 'positive' | 'negative' | 'unknown'
+    ivHvSpread: number | null
+  }) | null
 }
 
 // ---------------------------------------------------------------------------

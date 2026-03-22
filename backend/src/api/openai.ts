@@ -643,23 +643,29 @@ function buildRegimeContextBlock(gexDynamic: GEXDynamic | null): string {
   // CBOE SKEW index
   const skewValue = skewSnap?.value ?? null
 
-  // Regime label
+  // Regime label (Phase 1: semantic from VIX + GEX)
   const regimeLabelResult = computeRegimeLabel(gexDynamic)
 
   // Day type
   const dayType = computeDayTypeFromState(gexDynamic)
 
+  // Phase 2: composite regime from advancedMetrics state (already computed every 60s)
+  const compositeRegime = getAdvancedMetricsSnapshot()?.compositeRegime ?? null
+
   // Build the JSON object (null fields shown as null for transparency)
   const regimeContextObj = {
     regime: {
-      label: regimeLabelResult.label,
-      confidence: regimeLabelResult.confidence,
+      label:            regimeLabelResult.label,       // semantic: elevated_vol_mean_reverting etc.
+      confidence:       regimeLabelResult.confidence,
+      composite_score:  compositeRegime?.compositeScore  ?? null,  // 0–100 (Phase 2)
+      composite_label:  compositeRegime?.regimeLabel     ?? null,  // LOW_VOL/NORMAL/ELEVATED/HIGH_VOL
+      method:           compositeRegime != null ? 'rule-based' : null,
     },
     volatility: {
-      iv_rank:       ivRankVal  != null ? Math.round(ivRankVal * 10) / 10 : null,
-      iv_percentile: ivPercVal  != null ? Math.round(ivPercVal * 10) / 10 : null,
-      iv_hv_spread:  ivHvSpread,
-      vix:           vixLast    != null ? Math.round(vixLast * 100) / 100 : null,
+      iv_rank:        ivRankVal  != null ? Math.round(ivRankVal * 10) / 10 : null,
+      iv_percentile:  ivPercVal  != null ? Math.round(ivPercVal * 10) / 10 : null,
+      iv_hv_spread:   ivHvSpread,
+      vix:            vixLast    != null ? Math.round(vixLast * 100) / 100 : null,
       vix_term_slope: vixTermSlope != null ? Math.round(vixTermSlope * 10) / 10 : null,
     },
     positioning: {
@@ -678,9 +684,10 @@ function buildRegimeContextBlock(gexDynamic: GEXDynamic | null): string {
     JSON.stringify(regimeContextObj, null, 2),
     'INSTRUÇÕES DE USO OBRIGATÓRIO:',
     '(1) CITE pelo menos 3 campos numéricos deste bloco em cada recomendação.',
-    '(2) Analise EM SEQUÊNCIA antes de recomendar: regime.label → tipo de mercado; volatility.iv_hv_spread → edge de venda presente (>3pp = rico, <0pp = NÃO vender); positioning.gex_sign → supressão ou amplificação; positioning.skew → custo de cauda adequado.',
+    '(2) Analise EM SEQUÊNCIA antes de recomendar: regime.composite_score → intensidade do regime (>50=risco elevado); regime.composite_label → classificação; volatility.iv_hv_spread → edge de venda (>3pp = rico, <0pp = NÃO vender); positioning.gex_sign → supressão ou amplificação; positioning.skew → custo de cauda adequado.',
     '(3) NÃO recalcule estes campos — use os valores literalmente.',
     '(4) Se day_type.label = "trending": veto implícito para novas posições vendidas curtas (0–7 DTE).',
+    '(5) composite_label: LOW_VOL=<25 (ideal seller); NORMAL=25-50 (bom com IVR>30); ELEVATED=50-75 (edge máxima se iv_hv_spread>3); HIGH_VOL=>75 (evitar, aguardar normalização).',
     '',
   ]
 

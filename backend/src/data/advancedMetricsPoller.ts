@@ -20,6 +20,7 @@ import type { AdvancedMetricsPayload } from './advancedMetricsState'
 import { isMarketOpen } from '../lib/time'
 import { updateGexHistory, updateRegimeHistory, computeNoTradeScore, computeRegimeScore, getGexVsYesterday } from './regimeScorer'
 import { saveGEXDailySnapshot } from './gexHistoryService'
+import { computeAndSaveRegimeSnapshot } from './regimeHistoryService'
 import type { GEXDailySnapshot } from './gexHistoryService'
 import { cacheGet } from '../lib/cacheStore'
 import { fetchTodayVolumeSnapshot, saveVolumeSnapshot } from './volumeAnomalyService'
@@ -148,6 +149,27 @@ async function tick(): Promise<void> {
   const regimeLive = computeRegimeScore(serializedGexDynamic.length > 0 ? serializedGexDynamic : null)
   const gexVsYesterday = currentTotal !== null ? getGexVsYesterday(currentTotal) : null
 
+  // Phase 2: composite regime score + persist to Redis + Supabase (fire-and-forget)
+  const compositeSnap = await computeAndSaveRegimeSnapshot(
+    serializedGexDynamic.length > 0 ? serializedGexDynamic : null,
+    pc ?? null,
+  ).catch((err) => {
+    console.warn('[AdvancedMetrics] Composite regime computation failed:', (err as Error).message)
+    return null
+  })
+
+  const compositeRegime = compositeSnap
+    ? {
+        compositeScore:        compositeSnap.compositeScore,
+        regimeLabel:           compositeSnap.regimeLabel,
+        confidence:            compositeSnap.confidence,
+        componentsAvailable:   compositeSnap.componentsAvailable,
+        components:            compositeSnap.components,
+        gexSign:               compositeSnap.gexSign,
+        ivHvSpread:            compositeSnap.ivHvSpread,
+      }
+    : null
+
   const payload: AdvancedMetricsPayload = {
     gex: serializeGexBucket(gex),
     profile: profile
@@ -174,6 +196,7 @@ async function tick(): Promise<void> {
     },
     marketOpen: isMarketOpen(),
     rvol: getRVOLSnapshot(),
+    compositeRegime,
   }
 
   publishAdvancedMetrics(payload)
