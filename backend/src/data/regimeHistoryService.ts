@@ -18,6 +18,14 @@ import { createClient } from '@supabase/supabase-js'
 import { cacheGet, cacheSet } from '../lib/cacheStore'
 import { computeCompositeRegime } from '../lib/compositeRegimeScorer'
 import type { CompositeRegimeResult, CompositeRegimeInputs } from '../lib/compositeRegimeScorer'
+import {
+  extractFeatureVector,
+  addToBuffer,
+  classifyCurrentRegime,
+  isTransitionDetected,
+  getBufferSize,
+} from '../lib/kmeansRegimeClassifier'
+import type { KMeansRegimeResult } from '../lib/kmeansRegimeClassifier'
 import { marketState } from './marketState'
 import { getVIXTermStructureSnapshot } from './vixTermStructureState'
 import type { GEXDynamic } from './gexService'
@@ -51,6 +59,9 @@ export interface RegimeSnapshot extends CompositeRegimeResult {
   etDate: string         // YYYY-MM-DD (ET timezone)
   ivHvSpread: number | null  // IVx% − HV30% in pp (not a component but stored for reference)
   gexSign: 'positive' | 'negative' | 'unknown'
+  // Phase 3: K-means validation
+  kmeans: KMeansRegimeResult | null
+  transitionDetected: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -134,12 +145,29 @@ export async function computeAndSaveRegimeSnapshot(
   const now    = new Date()
   const etDate = getETDateString()
 
+  // Phase 3: K-means — feed current feature vector into rolling buffer, then classify
+  const featureVec = extractFeatureVector(result.components)
+  if (featureVec != null) addToBuffer(featureVec)
+  const kmeansResult = classifyCurrentRegime()
+  const transitionDetected = kmeansResult != null
+    ? isTransitionDetected(kmeansResult.label, result.compositeScore)
+    : false
+
+  if (transitionDetected) {
+    console.log(
+      `[RegimeHistory] ⚠️ TRANSITION DETECTED: kmeans=${kmeansResult?.label} ` +
+      `vs rule-based=${result.regimeLabel} (score=${result.compositeScore})`,
+    )
+  }
+
   const snapshot: RegimeSnapshot = {
     ...result,
     capturedAt: now.toISOString(),
     etDate,
     ivHvSpread,
     gexSign,
+    kmeans: kmeansResult,
+    transitionDetected,
   }
 
   // 1. Redis: latest snapshot (always overwrite, short TTL)
@@ -222,8 +250,13 @@ function persistToSupabase(
       comp_iv_percentile: snapshot.components.ivPercentile,
       comp_gex:          snapshot.components.gex,
       comp_pcr:          snapshot.components.putCallRatio,
-      // pgvector feature array for similarity search (Phase 3+)
+      // pgvector feature array for similarity search
       features: features ? JSON.stringify(features) : null,
+      // Phase 3: K-means validation fields
+      kmeans_label:       snapshot.kmeans?.label ?? null,
+      transition_detected: snapshot.transitionDetected,
+      kmeans_buffer_size: snapshot.kmeans?.bufferSize ?? getBufferSize(),
+      kmeans_converged:   snapshot.kmeans?.converged ?? null,
     })
     .then(({ error }: { error: { message: string } | null }) => {
       if (error && !error.message.includes('duplicate')) {

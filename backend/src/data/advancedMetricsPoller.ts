@@ -167,6 +167,10 @@ async function tick(): Promise<void> {
         components:            compositeSnap.components,
         gexSign:               compositeSnap.gexSign,
         ivHvSpread:            compositeSnap.ivHvSpread,
+        // Phase 3: K-means fields
+        kmeansLabel:           compositeSnap.kmeans?.label ?? null,
+        transitionDetected:    compositeSnap.transitionDetected,
+        kmeansBufferSize:      compositeSnap.kmeans?.bufferSize ?? 0,
       }
     : null
 

@@ -655,11 +655,15 @@ function buildRegimeContextBlock(gexDynamic: GEXDynamic | null): string {
   // Build the JSON object (null fields shown as null for transparency)
   const regimeContextObj = {
     regime: {
-      label:            regimeLabelResult.label,       // semantic: elevated_vol_mean_reverting etc.
-      confidence:       regimeLabelResult.confidence,
-      composite_score:  compositeRegime?.compositeScore  ?? null,  // 0–100 (Phase 2)
-      composite_label:  compositeRegime?.regimeLabel     ?? null,  // LOW_VOL/NORMAL/ELEVATED/HIGH_VOL
-      method:           compositeRegime != null ? 'rule-based' : null,
+      label:              regimeLabelResult.label,       // semantic: elevated_vol_mean_reverting etc.
+      confidence:         regimeLabelResult.confidence,
+      composite_score:    compositeRegime?.compositeScore  ?? null,  // 0–100 (Phase 2)
+      composite_label:    compositeRegime?.regimeLabel     ?? null,  // LOW_VOL/NORMAL/ELEVATED/HIGH_VOL
+      method:             compositeRegime != null ? 'rule-based+kmeans' : null,
+      // Phase 3: K-means validation
+      kmeans_label:       compositeRegime?.kmeansLabel    ?? null,  // low/medium/high (null until buffer fills)
+      transition_detected: compositeRegime?.transitionDetected ?? false,  // true = highest-risk scenario
+      kmeans_buffer_size: compositeRegime?.kmeansBufferSize  ?? 0,   // data quality indicator (max 252)
     },
     volatility: {
       iv_rank:        ivRankVal  != null ? Math.round(ivRankVal * 10) / 10 : null,
@@ -688,6 +692,7 @@ function buildRegimeContextBlock(gexDynamic: GEXDynamic | null): string {
     '(3) NÃO recalcule estes campos — use os valores literalmente.',
     '(4) Se day_type.label = "trending": veto implícito para novas posições vendidas curtas (0–7 DTE).',
     '(5) composite_label: LOW_VOL=<25 (ideal seller); NORMAL=25-50 (bom com IVR>30); ELEVATED=50-75 (edge máxima se iv_hv_spread>3); HIGH_VOL=>75 (evitar, aguardar normalização).',
+    '(6) ALERTA DE TRANSIÇÃO (Phase 3 — K-means): se transition_detected=true → regime em transição (K-means discorda do rule-based). RISCO MÁXIMO para vendedores de prêmio: reduza tamanho de posição em 50% ou evite novas entradas. Se kmeans_buffer_size<15: K-means ainda sem dados suficientes (ignorar kmeans_label). Se kmeans_label e composite_label concordam: sinal de regime estável (confiança elevada).',
     '',
   ]
 
@@ -2010,6 +2015,12 @@ const STATIC_SYSTEM_PROMPT =
   '    "range_bound": ideal para iron condors e short straddles. ' +
   '    "trending": VETO implícito para 0–7 DTE; para 21–45 DTE, mencionar como risco. ' +
   '    "neutral" ou "unknown": usar outros sinais para decisão. ' +
+  '(G) regime.transition_detected (Phase 3 — K-means): validação estatística do regime via K-means rolling. ' +
+  '    false + kmeans_label concorda com composite_label → regime ESTÁVEL — maior confiança na análise. ' +
+  '    true → REGIME EM TRANSIÇÃO (K-means e rule-based discordam) — cenário de RISCO MÁXIMO. ' +
+  '      ⚠️ Quando transition_detected=true: OBRIGATÓRIO reduzir tamanho de posição em 50% OU evitar novas entradas. ' +
+  '      Mencionar explicitamente na resposta: "Alerta: regime em transição detectado (K-means vs rule-based)." ' +
+  '    kmeans_buffer_size < 15: buffer insuficiente — ignorar kmeans_label (servidor recém-reiniciado). ' +
   'CITAÇÃO OBRIGATÓRIA: cada recomendação de estratégia DEVE citar pelo menos 3 campos do REGIME_CONTEXT com seus valores numéricos. ' +
   'Exemplo correto: "Com iv_hv_spread=4.3pp, gex_sign=positive e vix_term_slope=1.8% (contango), a edge para put spread é confirmada." ' +
   'Exemplo ERRADO: "O ambiente de vol está favorável" (sem citar campos numéricos).'

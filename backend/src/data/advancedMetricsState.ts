@@ -69,10 +69,16 @@ export interface AdvancedMetricsPayload {
   marketOpen: boolean
   /** Relative Volume — SPY institutional flow proxy (todayVol / avg20dVol). */
   rvol: RVOLSnapshot | null
-  /** Phase 2: deterministic 0–100 composite regime score (rule-based weighted average). */
+  /** Phase 2+3: composite regime score (rule-based) + K-means validation. */
   compositeRegime: (CompositeRegimeResult & {
     gexSign: 'positive' | 'negative' | 'unknown'
     ivHvSpread: number | null
+    /** Phase 3: K-means label for current tick ('low'|'medium'|'high'). null until buffer fills. */
+    kmeansLabel: 'low' | 'medium' | 'high' | null
+    /** Phase 3: true when K-means and rule-based disagree — highest-risk scenario. */
+    transitionDetected: boolean
+    /** Phase 3: number of points in the rolling buffer (grows to 252 over first 4h). */
+    kmeansBufferSize: number
   }) | null
 }
 
