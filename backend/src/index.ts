@@ -32,6 +32,7 @@ import { startEquityNotificationsScheduler } from './data/equityNotificationsSch
 import { startTreasuryPoller } from './data/treasuryPoller'
 import { startEiaOilPoller } from './data/eiaOilPoller'
 import { startFinraDarkPoolPoller } from './data/finraDarkPoolPoller'
+import { startSKEWIndexPoller } from './data/skewIndexPoller'
 import { registerSSE } from './api/sse'
 import { registerOpenAI } from './api/openai'
 import { registerRiskReview } from './api/riskReview'
@@ -188,6 +189,7 @@ async function bootstrap(): Promise<void> {
       startVIXPoller()
       startVIXTermStructurePoller()
       startSkewPoller()
+      startSKEWIndexPoller().catch(console.error)
       startIVRankPoller()
       startEarningsCalendar()
       startFredPoller()

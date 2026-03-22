@@ -18,10 +18,28 @@ import type { VolSmile, SurfaceQuality } from '../lib/volSurface'
 import type { GEXDynamic } from './gexService'
 import { GEX_THRESHOLDS } from '../lib/gexThresholds'
 import { getRVOLSnapshot } from './rvolPoller'
+import { classifyDayType } from '../lib/dayTypeClassifier'
+import type { DayTypeResult } from '../lib/dayTypeClassifier'
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
+
+export type RegimeLabel =
+  | 'low_vol_suppressed'
+  | 'normal_mean_reverting'
+  | 'normal_amplifying'
+  | 'elevated_vol_mean_reverting'
+  | 'elevated_vol_amplifying'
+  | 'high_vol_stress'
+  | 'unknown'
+
+export interface RegimeLabelResult {
+  label: RegimeLabel
+  confidence: number  // 0–1
+}
+
+export type { DayTypeResult }
 
 export interface PriceDistribution {
   p10: number
@@ -282,6 +300,110 @@ function computePriceDistribution(
   }
 
   return { dist, smiles, surfaceQuality }
+}
+
+// ---------------------------------------------------------------------------
+// Regime label — semantic categorical classification from existing state
+// ---------------------------------------------------------------------------
+
+/**
+ * Derives a human-readable regime label + confidence from existing computed data.
+ * Phase 1: deterministic rules from VIX level + GEX sign.
+ * Phase 2 will replace this with the full 0–100 composite scoring.
+ *
+ * Confidence reflects how many indicators agree with the label:
+ *  - IV Rank confirms VIX level: +0.15
+ *  - Term structure consistent with GEX sign: +0.15
+ *  - IV/HV spread confirms seller edge: +0.10
+ */
+export function computeRegimeLabel(gexDynamic: GEXDynamic | null): RegimeLabelResult {
+  const vixLast = marketState.vix.last ?? null
+  const ivRank  = marketState.ivRank.value ?? null
+  const ivx     = marketState.ivRank.ivx ?? null
+  const hv30    = marketState.ivRank.hv30 ?? null
+  const termStructure = getVIXTermStructureSnapshot()
+
+  // Derive GEX sign from aggregated net gamma (all expirations)
+  const totalNetGamma = gexDynamic && gexDynamic.length > 0
+    ? gexDynamic.reduce((sum, e) => sum + e.gex.totalNetGamma, 0)
+    : null
+  const gexPositive = totalNetGamma != null ? totalNetGamma > 0 : null
+
+  // Base label from VIX level + GEX sign
+  let label: RegimeLabel = 'unknown'
+
+  if (vixLast != null) {
+    if (vixLast < 15) {
+      label = 'low_vol_suppressed'
+    } else if (vixLast < 20) {
+      label = gexPositive === false ? 'normal_amplifying' : 'normal_mean_reverting'
+    } else if (vixLast < 30) {
+      label = gexPositive === false ? 'elevated_vol_amplifying' : 'elevated_vol_mean_reverting'
+    } else {
+      label = 'high_vol_stress'
+    }
+  }
+
+  // Confidence — starts at 0.55, add alignment bonuses
+  let confidence = 0.55
+
+  // IV Rank aligns with VIX level
+  if (ivRank != null && vixLast != null) {
+    const highVolLabel = label === 'elevated_vol_amplifying' || label === 'elevated_vol_mean_reverting' || label === 'high_vol_stress'
+    const lowVolLabel  = label === 'low_vol_suppressed' || label === 'normal_mean_reverting'
+    if (highVolLabel && ivRank >= 40)  confidence += 0.15
+    if (lowVolLabel  && ivRank < 30)   confidence += 0.15
+    if (highVolLabel && ivRank < 20)   confidence -= 0.10  // contradiction
+  }
+
+  // Term structure consistent with GEX regime
+  if (termStructure?.structure != null) {
+    const ts = termStructure.structure
+    if (gexPositive === true  && ts === 'contango')      confidence += 0.10
+    if (gexPositive === false && ts === 'backwardation') confidence += 0.10
+    if (ts === 'humped')                                  confidence -= 0.05  // event uncertainty
+  }
+
+  // IV/HV spread confirms seller edge for elevated labels
+  if (ivx != null && hv30 != null && hv30 > 0) {
+    const spread = ivx - hv30
+    const sellerLabel = label === 'elevated_vol_mean_reverting' || label === 'normal_mean_reverting'
+    if (sellerLabel && spread > 3.0) confidence += 0.10
+    if (sellerLabel && spread < 0)   confidence -= 0.10
+  }
+
+  // Missing VIX: unknown label, low confidence
+  if (vixLast == null) {
+    confidence = 0.20
+  }
+
+  confidence = Math.max(0.15, Math.min(0.92, confidence))
+
+  return {
+    label,
+    confidence: Math.round(confidence * 100) / 100,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Day type from current market state
+// ---------------------------------------------------------------------------
+
+export function computeDayTypeFromState(gexDynamic: GEXDynamic | null): DayTypeResult {
+  const totalNetGamma = gexDynamic && gexDynamic.length > 0
+    ? gexDynamic.reduce((sum, e) => sum + e.gex.totalNetGamma, 0)
+    : null
+  const gexPositive = totalNetGamma != null ? totalNetGamma > 0 : null
+
+  return classifyDayType({
+    spyLast:      marketState.spy.last,
+    spyOpen:      marketState.spy.open,
+    spyPrevClose: marketState.spy.prevClose,
+    dayHigh:      marketState.spy.dayHigh,
+    dayLow:       marketState.spy.dayLow,
+    gexPositive,
+    vixChangePct: marketState.vix.changePct,
+  })
 }
 
 // ---------------------------------------------------------------------------
