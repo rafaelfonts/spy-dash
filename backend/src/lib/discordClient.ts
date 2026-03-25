@@ -1,6 +1,6 @@
 import { CONFIG } from '../config'
 
-export type DiscordChannel = 'feed' | 'briefings' | 'sinais' | 'carteira' | 'acoes' | 'thread'
+export type DiscordChannel = 'feed' | 'briefings' | 'sinais' | 'carteira' | 'acoes' | 'thread' | 'roteiro'
 
 export interface DiscordEmbed {
   title: string
@@ -18,6 +18,7 @@ const WEBHOOK_MAP: Record<DiscordChannel, () => string> = {
   carteira: () => CONFIG.discord.webhookCarteira,
   acoes: () => CONFIG.discord.webhookAcoes,
   thread: () => CONFIG.discord.webhookThread,
+  roteiro: () => CONFIG.discord.webhookRoteiro,
 }
 
 // Paleta de cores por canal e tipo de evento
@@ -51,6 +52,7 @@ export const DISCORD_COLORS = {
 
   // video script (Kasper)
   videoScript: 0x9B59B6,       // roxo — roteiro Kasper TikTok/Shorts
+  roteiro: 0x9B59B6,           // roxo — identidade visual Kasper no #roteiro
 } as const
 
 /**

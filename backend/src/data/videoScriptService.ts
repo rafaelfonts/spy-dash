@@ -64,7 +64,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Explaining negative/positive GEX to new audience; educational days',
     hook: 'Most traders see the chart. Market makers see the gamma.',
     loop: 'You just saw what most traders never look at. Use it.',
-    bridge: 'Here\'s what the gamma is showing right now.',
+    bridge: 'And most traders are still only watching the chart.',
     hasLevelPlaceholder: false,
   },
   {
@@ -72,7 +72,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'SPY flat intraday with Fear & Greed at extremes (below 25 or above 75)',
     hook: 'Extreme fear. SPY barely moved. Something is being held in place.',
     loop: 'When the pin breaks — and it will — you\'ll want to know which side.',
-    bridge: 'The fear is still at extreme levels.',
+    bridge: 'The fear is still at extreme levels. The pin is still holding.',
     hasLevelPlaceholder: false,
   },
   {
@@ -80,7 +80,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Clear binary setup day — imminent breakout or rejection at key level',
     hook: 'Bulls or bears? The data already voted. Most traders didn\'t see it.',
     loop: 'The vote is in. The market just hasn\'t announced the result yet.',
-    bridge: 'So what did the data actually say?',
+    bridge: 'So — what exactly did the data vote for?',
     hasLevelPlaceholder: false,
   },
   {
@@ -88,7 +88,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'OPEX week; pre-OPEX pin setups; IV Rank above 30 with dominant GEX',
     hook: 'This setup has a name. It has a history. And it\'s happening right now.',
     loop: 'Same setup. Different week. Now you know what to watch for.',
-    bridge: 'Let\'s run it back — because the setup is still active.',
+    bridge: 'The setup is still active. Let\'s name it again.',
     hasLevelPlaceholder: false,
   },
   {
@@ -96,7 +96,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Call Wall or Put Wall being tested; Zero Gamma Level near spot',
     hook: '$[LEVEL] is where the market decides. Not suggests. Decides.',
     loop: 'Market opens in minutes. That decision is being made right now.',
-    bridge: 'Watch that level one more time.',
+    bridge: 'Watch that level. The decision is still pending.',
     hasLevelPlaceholder: true,
   },
   {
@@ -104,7 +104,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Significant overnight move after flat close; futures diverging from close',
     hook: 'Yesterday looked quiet. Overnight changed the conversation entirely.',
     loop: 'Quiet closes don\'t mean quiet opens. Remember that tomorrow.',
-    bridge: 'It started the night before — just like this.',
+    bridge: 'Yesterday looked quiet too.',
     hasLevelPlaceholder: false,
   },
   {
@@ -112,7 +112,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'IV Rank crossing 30% threshold; premium selling regime opening',
     hook: 'IV Rank just crossed 30%. That number means something specific to options traders.',
     loop: 'You just learned the number that changes the strategy. Most never check it.',
-    bridge: 'Check it again — and this time, you\'ll see it differently.',
+    bridge: 'Most traders still haven\'t checked it.',
     hasLevelPlaceholder: false,
   },
   {
@@ -120,7 +120,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Rally in negative GEX context; moves that "shouldn\'t be happening"',
     hook: 'SPY is rallying. Gamma says it shouldn\'t be this easy right now.',
     loop: 'The chart says up. Gamma says fragile. Now you\'re watching both.',
-    bridge: 'So watch both — from the beginning.',
+    bridge: 'And gamma still says fragile.',
     hasLevelPlaceholder: false,
   },
   {
@@ -128,7 +128,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Fed decision day; CPI/NFP release; high-impact macro event',
     hook: 'One number drops in 90 minutes. SPY is already positioning for it.',
     loop: 'Ninety minutes. One print. Watch how fast the levels get retested.',
-    bridge: 'Miss the setup and you\'ll be watching the retest from the wrong side.',
+    bridge: 'SPY is still positioning. The clock is still running.',
     hasLevelPlaceholder: false,
   },
   {
@@ -136,7 +136,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'VIX above 20 with IV Rank in premium selling zone; classic Iron Condor setup',
     hook: 'High IV. Negative gamma. Spot at Max Pain. This pattern has a playbook.',
     loop: 'The pattern is set. The playbook exists. The question is who uses it.',
-    bridge: 'Are you using it — or just watching?',
+    bridge: 'The pattern is still set. The playbook is still there.',
     hasLevelPlaceholder: false,
   },
   {
@@ -144,7 +144,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Zero Gamma Level being defended; Flip Point as intraday support/resistance',
     hook: 'Zero Gamma is the line where market makers stop absorbing. Cross it and see.',
     loop: 'Most traders don\'t know this line exists. Now you can\'t unsee it.',
-    bridge: 'And it starts with understanding what happens at that line.',
+    bridge: 'You can\'t unsee it. And the line is still right there.',
     hasLevelPlaceholder: false,
   },
   {
@@ -152,7 +152,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Opening gap after flat close; futures diverging >0.5% from prior close',
     hook: 'Closed flat. Opened with a gap. The overnight narrative rewrote the day.',
     loop: 'Gap is already priced. What happens at the open is the real story.',
-    bridge: 'Here\'s how the story started.',
+    bridge: 'Here\'s how the overnight narrative started.',
     hasLevelPlaceholder: false,
   },
   {
@@ -160,7 +160,48 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Any day — generic fallback when context has no clear tension',
     hook: 'The market never moves randomly. There\'s always a structure. Here\'s today\'s.',
     loop: 'Structure changes daily. The principle doesn\'t. Come back tomorrow.',
-    bridge: 'But first — understand today\'s structure one more time.',
+    bridge: 'But understand today\'s structure first.',
+    hasLevelPlaceholder: false,
+  },
+  // --- New pairs added in v2.1 ---
+  {
+    id: 16, archetype: 2, loopType: 'C', mood: 'urgent',
+    trigger: 'SPY at or near major round number ($500, $550, $560, $580, $600) with high OI concentration',
+    hook: 'Round numbers aren\'t random. Options positioning makes them magnetic.',
+    loop: 'The magnet is active. Positioning is live. Watch what pulls harder.',
+    bridge: 'The round number is still right there — and so is the positioning.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 17, archetype: 1, loopType: 'A', mood: 'skeptical',
+    trigger: 'Unusual call/put ratio diverging from price direction; options flow contradicting trend',
+    hook: 'Options flow is pointing one way. Price is moving the other. One of them is wrong.',
+    loop: 'Flow doesn\'t lie. Price catches up eventually. Which side are you on?',
+    bridge: 'Flow is still pointing the same direction.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 18, archetype: 3, loopType: 'B', mood: 'teaching',
+    trigger: 'DAN (Delta-Adjusted Notional) heavily skewed call or put side; unusual notional imbalance',
+    hook: 'Dollar-weighted options exposure tells a different story than volume alone.',
+    loop: 'Now you read options flow the way institutions do. Most traders never get here.',
+    bridge: 'And the dollar-weighted story is still telling the same thing.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 19, archetype: 5, loopType: 'C', mood: 'decisive',
+    trigger: 'Fed decision day, CPI, or NFP with GEX regime confirming or contradicting macro consensus',
+    hook: 'The macro print and the gamma structure are pointing in opposite directions today.',
+    loop: 'One of those signals is going to be wrong by end of day. Watch which one blinks.',
+    bridge: 'The print is out. The gamma structure hasn\'t changed yet.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 20, archetype: 6, loopType: 'A', mood: 'analytical',
+    trigger: 'OPEX week with elevated IV Rank and strong Max Pain gravity; classic pin setup',
+    hook: 'Max Pain. High IV. OPEX week. The three conditions that make price act predictably.',
+    loop: 'Three conditions. One pattern. Not everyone knows when all three align.',
+    bridge: 'And all three are still aligned right now.',
     hasLevelPlaceholder: false,
   },
 ]
@@ -466,6 +507,7 @@ async function generateVideoScript(): Promise<void> {
       loop: scriptData.loop,
       bridge: curationData.selected_bridge,
       cta: scriptData.cta,
+      firstPinnedComment: curationData.first_pinned_comment ?? undefined,
       metadata: {
         youtubeTitle: scriptData.metadata.youtube_title,
         youtubeDescription: scriptData.metadata.youtube_description,
@@ -481,8 +523,8 @@ async function generateVideoScript(): Promise<void> {
     await cacheSet(cacheKey, script, SCRIPT_TTL_MS, 'video-script')
     todaysScript = script
 
-    // Discord — fire-and-forget (#briefings)
-    await sendEmbed('briefings', buildDiscordEmbed(script))
+    // Discord — fire-and-forget (#roteiro)
+    await sendEmbed('roteiro', buildDiscordEmbed(script))
 
     console.log('[VideoScript] Roteiro Kasper gerado com sucesso')
   } catch (err) {
@@ -593,6 +635,15 @@ Rules for selected_hook, selected_loop, and selected_bridge:
 - selected_loop must feel like a satisfying echo
 - selected_bridge must connect seamlessly from loop back to hook
 
+Rules for first_pinned_comment:
+- ≤200 characters total
+- A provocative question or bold statement using REAL data from today
+- Format: [single emoji] [data-driven question OR binary choice] [2–3 hashtags]
+- Must force a YES/NO response OR a choice between two positions
+- Good: "🤔 SPY at the Flip Point with VIX still elevated — does the level hold or break today? 👇 #SPY #OptionsFlow #GEX"
+- Bad: "What do you think about today's market? #SPY #Options" (too generic, no data)
+- Use specific numbers (SPY price, VIX level, IV Rank, key level) to anchor the question
+
 Return ONLY valid JSON. No preamble. No markdown. Schema:
 {
   "narrative_angle": "string",
@@ -606,7 +657,8 @@ Return ONLY valid JSON. No preamble. No markdown. Schema:
   "market_mood": "bullish|bearish|coiling|uncertain",
   "selected_hook": "string",
   "selected_loop": "string",
-  "selected_bridge": "string"
+  "selected_bridge": "string",
+  "first_pinned_comment": "string"
 }
 
 ---
@@ -647,9 +699,15 @@ CARTELA RULES:
 - SPY last price / VIX level / GEX regime label / Single most important level today
 - Key Level priority: Flip Point > Call Wall > Max Pain > Put Wall
 
-LOOP RULES:
+SEAMLESS LOOP RULES:
 - Use the selected_loop from Stage 1 EXACTLY. Do NOT rewrite it.
 - Max 15 words. Must NOT repeat hook verbatim.
+- The loop MUST be grammatically completable by the hook: imagine the hook is the opening sentence of a book and the loop is the closing sentence — the reader should naturally want to return to the beginning.
+- Loop Type A: deepen the tension from the hook. "What happens next?" — the hook answers.
+- Loop Type B: reinforce the identity the hook established. The viewer feels more informed watching again.
+- Loop Type C: restore time urgency. The viewer feels they are watching for the first time again.
+- The bridge (selected_bridge from Stage 1) is spoken AFTER the loop, BEFORE the hook plays again. It must flow as a natural continuation — never mention "again", "replay", or "rewatch".
+- Self-test: read loop → bridge → hook aloud. It must sound like a single unbroken thought.
 
 CTA RULES:
 - 1 question, ≤20 words, uses real data from today
@@ -871,40 +929,74 @@ function buildRegimeTags(d: RegimeTagsInput): string[] {
 // ---------------------------------------------------------------------------
 
 function buildDiscordEmbed(script: VideoScript) {
-  const bulletsText = script.kasperBullets.map((b, i) => `${i + 1}. ${b}`).join('\n')
-  const levelsLine = script.cartela.keyLevel ? ` | 🎯 ${script.cartela.keyLevel}` : ''
+  const dateStr = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/New_York', day: '2-digit', month: '2-digit' })
+  const timeStr = new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })
+  const archetypeName = getArchetypeName(script.hookArchetype)
+  const keyLevelStr = script.cartela.keyLevel ? ` | 🎯 Key: ${script.cartela.keyLevel}` : ''
+  const hashtags = script.metadata.youtubeTags.slice(0, 8).map((t) => t.startsWith('#') ? t : `#${t}`).join(' ')
 
-  const description = [
-    `**📐 Arquétipo:** ${getArchetypeName(script.hookArchetype)} (${script.hookArchetype}) | **Loop:** ${script.loopType}`,
+  // Cartela 1: market snapshot
+  const cartela1Text = `SPY ${script.cartela.spyPrice} | VIX ${script.cartela.vixLevel} | GEX ${script.cartela.gexRegime}${keyLevelStr}`
+  // Cartela 2: bullets 1+2
+  const cartela2Text = `${script.kasperBullets[0]}\n${script.kasperBullets[1]}`
+  // Cartela 3: bullet 3 + key level highlight
+  const cartela3Text = script.cartela.keyLevel
+    ? `${script.kasperBullets[2]}\n🎯 ${script.cartela.keyLevel}`
+    : script.kasperBullets[2]
+
+  const lines = [
+    `📐 **Arquétipo:** ${archetypeName} (${script.hookArchetype}) · **Loop:** ${script.loopType} · *"${script.narrativeAngle}"*`,
     '',
-    `**🎣 Hook**`,
-    `> ${script.hook}`,
+    '─────────────────────────────────',
+    '**📋 METADADOS**',
+    `▸ **YouTube:** \`${script.metadata.youtubeTitle}\``,
+    `▸ **TikTok:** ${script.metadata.tiktokCaption}`,
+    `▸ **Hashtags:** ${hashtags}`,
+  ]
+
+  if (script.firstPinnedComment) {
+    lines.push(`▸ **📌 Primeiro Comentário:** ${script.firstPinnedComment}`)
+  }
+
+  lines.push(
     '',
-    `**📊 Kasper Bullets**`,
-    bulletsText,
+    '─────────────────────────────────',
+    '**🎬 BLOCO 1 — INTRO (Casca + Hook)**',
+    `*Vídeo genérico Kasper 1*`,
+    `> "${script.hook}"`,
+    `⏱ est. 3s`,
     '',
-    `**🔄 Loop**`,
-    `> ${script.loop}`,
+    '─────────────────────────────────',
+    '**📊 BLOCO 2 — CARTELAS (Miolo + Bridge)**',
     '',
-    `**🌉 Bridge**`,
-    `> ${script.bridge}`,
+    `**Cartela 1** *(tela):* \`${cartela1Text}\``,
+    `*Voiceover:* ${script.voiceover.paragraph1}`,
     '',
-    `**❓ CTA**`,
-    script.cta,
+    `**Cartela 2** *(tela):*`,
+    `\`${cartela2Text}\``,
+    `*Voiceover:* ${script.voiceover.paragraph2}`,
     '',
-    `**📺 SPY ${script.cartela.spyPrice} | VIX ${script.cartela.vixLevel} | GEX ${script.cartela.gexRegime}${levelsLine}**`,
+    `**Cartela 3** *(tela):*`,
+    `\`${cartela3Text}\``,
+    `*Voiceover:* ${script.voiceover.paragraph3}`,
     '',
-    `**YouTube:** \`${script.metadata.youtubeTitle}\``,
-    `**TikTok:** ${script.metadata.tiktokCaption}`,
+    '─────────────────────────────────',
+    '**🔚 BLOCO 3 — OUTRO (Casca + CTA + Loop)**',
+    `*Vídeo genérico Kasper 2*`,
+    `❓ **CTA:** ${script.cta}`,
+    `🔄 **Loop:** > "${script.loop}"`,
+    `🌉 **Bridge:** > *"${script.bridge}"*`,
+    `⏱ est. 5s`,
     '',
-    `*${script.narrativeAngle}*`,
-  ].join('\n')
+    '─────────────────────────────────',
+    `⏱ **Duração Total Estimada:** ~30s`,
+  )
 
   return {
-    title: '🎬 Roteiro Kasper — ' + new Date().toLocaleDateString('pt-BR', { timeZone: 'America/New_York', day: '2-digit', month: '2-digit' }),
-    description,
-    color: DISCORD_COLORS.videoScript,
-    footer: { text: `Gerado via gpt-4o-mini às ${new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })}` },
+    title: `🎬 Roteiro Kasper — ${dateStr} — ${archetypeName} / Loop ${script.loopType}`,
+    description: lines.join('\n'),
+    color: DISCORD_COLORS.roteiro,
+    footer: { text: `Gerado via gpt-4o-mini às ${timeStr}` },
     timestamp: new Date().toISOString(),
   }
 }
@@ -959,6 +1051,7 @@ interface Stage1Output {
   selected_hook: string
   selected_loop: string
   selected_bridge: string
+  first_pinned_comment: string
 }
 
 interface Stage2Output {

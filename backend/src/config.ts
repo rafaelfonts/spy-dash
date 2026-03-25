@@ -46,6 +46,7 @@ export const CONFIG = {
     webhookCarteira: process.env.DISCORD_WEBHOOK_CARTEIRA ?? '',
     webhookAcoes: process.env.DISCORD_WEBHOOK_ACOES ?? '',
     webhookThread: process.env.DISCORD_WEBHOOK_THREAD ?? '',
+    webhookRoteiro: process.env.DISCORD_WEBHOOK_ROTEIRO ?? '',
   },
   reddit: {
     clientId: process.env.REDDIT_CLIENT_ID ?? '',

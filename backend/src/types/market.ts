@@ -354,6 +354,7 @@ export interface VideoScript {
   loop: string                 // ≤15 words — echo of hook, not a copy
   bridge: string               // transition phrase loop→hook for invisible replay
   cta: string                  // question ≤20 words using real data
+  firstPinnedComment?: string  // engagement bait for pinned comment (≤200 chars, data-driven)
   metadata: {
     youtubeTitle: string       // ≤100 chars with real numeric data
     youtubeDescription: string
