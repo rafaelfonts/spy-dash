@@ -361,7 +361,7 @@ async function generateVideoScript(): Promise<void> {
     const hasMacroEvent = newsSnapshot.macroEvents.some((e) => {
       const today = getTodayDateET()
       const dateStr = e.time?.split(' ')[0] ?? e.time?.split('T')[0] ?? ''
-      return dateStr === today && (e.impact === 'high' || e.impact === 'HIGH')
+      return dateStr === today && e.impact === 'high'
     })
     const stylePairs = selectRelevantPairs({
       gexRegime: gex?.regime ?? null,
