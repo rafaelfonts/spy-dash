@@ -27,6 +27,236 @@ const SCRIPT_TTL_MS = 14 * 60 * 60 * 1000  // 14h — survives overnight in Redi
 const MODEL = 'gpt-4o-mini'
 
 // ---------------------------------------------------------------------------
+// Hook/Loop Bank — 15 curated pairs for voice calibration
+// ---------------------------------------------------------------------------
+
+interface HookLoopPair {
+  id: number
+  archetype: number          // 1–6
+  loopType: 'A' | 'B' | 'C'
+  mood: string
+  trigger: string            // market context where this pair is most effective
+  hook: string
+  loop: string
+  hasLevelPlaceholder: boolean  // true for Par 07 which uses $[LEVEL]
+}
+
+const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
+  {
+    id: 1, archetype: 1, loopType: 'A', mood: 'skeptical',
+    trigger: 'VIX falling but GEX negative; market rising with low Fear & Greed',
+    hook: 'VIX is dropping. Gamma is negative. Those two don\'t usually agree.',
+    loop: 'When VIX and gamma stop disagreeing — that\'s when the real move happens.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 2, archetype: 2, loopType: 'C', mood: 'focused',
+    trigger: 'SPY within $3 of Call Wall; OPEX approaching; clear directional setup',
+    hook: 'One level separates a normal day from a very fast move.',
+    loop: 'The level is set. The clock is running. Watch what happens next.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 3, archetype: 3, loopType: 'B', mood: 'authoritative',
+    trigger: 'Explaining negative/positive GEX to new audience; educational days',
+    hook: 'Most traders see the chart. Market makers see the gamma.',
+    loop: 'You just saw what most traders never look at. Use it.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 4, archetype: 1, loopType: 'A', mood: 'tense',
+    trigger: 'SPY flat intraday with Fear & Greed at extremes (below 25 or above 75)',
+    hook: 'Extreme fear. SPY barely moved. Something is being held in place.',
+    loop: 'When the pin breaks — and it will — you\'ll want to know which side.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 5, archetype: 5, loopType: 'A', mood: 'curious',
+    trigger: 'Clear binary setup day — imminent breakout or rejection at key level',
+    hook: 'Bulls or bears? The data already voted. Most traders didn\'t see it.',
+    loop: 'The vote is in. The market just hasn\'t announced the result yet.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 6, archetype: 6, loopType: 'B', mood: 'calm, analytical',
+    trigger: 'OPEX week; pre-OPEX pin setups; IV Rank above 30 with dominant GEX',
+    hook: 'This setup has a name. It has a history. And it\'s happening right now.',
+    loop: 'Same setup. Different week. Now you know what to watch for.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 7, archetype: 2, loopType: 'C', mood: 'urgent',
+    trigger: 'Call Wall or Put Wall being tested; Zero Gamma Level near spot',
+    hook: '$[LEVEL] is where the market decides. Not suggests. Decides.',
+    loop: 'Market opens in minutes. That decision is being made right now.',
+    hasLevelPlaceholder: true,
+  },
+  {
+    id: 8, archetype: 4, loopType: 'A', mood: 'reflective, building',
+    trigger: 'Significant overnight move after flat close; futures diverging from close',
+    hook: 'Yesterday looked quiet. Overnight changed the conversation entirely.',
+    loop: 'Quiet closes don\'t mean quiet opens. Remember that tomorrow.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 9, archetype: 3, loopType: 'B', mood: 'teaching, confident',
+    trigger: 'IV Rank crossing 30% threshold; premium selling regime opening',
+    hook: 'IV Rank just crossed 30%. That number means something specific to options traders.',
+    loop: 'You just learned the number that changes the strategy. Most never check it.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 10, archetype: 1, loopType: 'B', mood: 'skeptical, sharp',
+    trigger: 'Rally in negative GEX context; moves that "shouldn\'t be happening"',
+    hook: 'SPY is rallying. Gamma says it shouldn\'t be this easy right now.',
+    loop: 'The chart says up. Gamma says fragile. Now you\'re watching both.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 11, archetype: 5, loopType: 'C', mood: 'focused, direct',
+    trigger: 'Fed decision day; CPI/NFP release; high-impact macro event',
+    hook: 'One number drops in 90 minutes. SPY is already positioning for it.',
+    loop: 'Ninety minutes. One print. Watch how fast the levels get retested.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 12, archetype: 6, loopType: 'A', mood: 'calm authority',
+    trigger: 'VIX above 20 with IV Rank in premium selling zone; classic Iron Condor setup',
+    hook: 'High IV. Negative gamma. Spot at Max Pain. This pattern has a playbook.',
+    loop: 'The pattern is set. The playbook exists. The question is who uses it.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 13, archetype: 2, loopType: 'B', mood: 'direct, no-nonsense',
+    trigger: 'Zero Gamma Level being defended; Flip Point as intraday support/resistance',
+    hook: 'Zero Gamma is the line where market makers stop absorbing. Cross it and see.',
+    loop: 'Most traders don\'t know this line exists. Now you can\'t unsee it.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 14, archetype: 4, loopType: 'C', mood: 'energized',
+    trigger: 'Opening gap after flat close; futures diverging >0.5% from prior close',
+    hook: 'Closed flat. Opened with a gap. The overnight narrative rewrote the day.',
+    loop: 'Gap is already priced. What happens at the open is the real story.',
+    hasLevelPlaceholder: false,
+  },
+  {
+    id: 15, archetype: 3, loopType: 'A', mood: 'measured, revealing',
+    trigger: 'Any day — generic fallback when context has no clear tension',
+    hook: 'The market never moves randomly. There\'s always a structure. Here\'s today\'s.',
+    loop: 'Structure changes daily. The principle doesn\'t. Come back tomorrow.',
+    hasLevelPlaceholder: false,
+  },
+]
+
+// ---------------------------------------------------------------------------
+// Pair selection — chooses 3 most relevant pairs for the day's context
+// ---------------------------------------------------------------------------
+
+interface PairSelectionContext {
+  gexRegime: string | null
+  vix: number | null
+  ivRank: number | null
+  isOpex: boolean
+  hasPostCloseYesterday: boolean
+  hasMacroEvent: boolean
+  hasOvernightGap: boolean
+}
+
+function selectRelevantPairs(ctx: PairSelectionContext): HookLoopPair[] {
+  // Build scored list: higher score = more relevant
+  const scored = HOOKS_AND_LOOPS_BANK.map((pair) => {
+    let score = 0
+
+    // OPEX week → prefer archetypes 6, 2 and ids 06, 12, 07
+    if (ctx.isOpex) {
+      if (pair.id === 6 || pair.id === 12) score += 3
+      if (pair.id === 7) score += 2
+    }
+
+    // High-impact macro event → prefer archetype 5 (ids 05, 11)
+    if (ctx.hasMacroEvent) {
+      if (pair.archetype === 5) score += 3
+    }
+
+    // Overnight gap → prefer archetypes 4 (ids 08, 14) or 2
+    if (ctx.hasOvernightGap) {
+      if (pair.archetype === 4) score += 3
+      if (pair.id === 2 || pair.id === 7) score += 1
+    }
+
+    // VIX spike > 25 → prefer archetypes 1 (ids 01, 04, 10) or 4
+    if (ctx.vix != null && ctx.vix > 25) {
+      if (pair.archetype === 1) score += 2
+      if (pair.archetype === 4) score += 1
+    }
+
+    // High IV Rank > 30% → prefer ids 09, 12
+    if (ctx.ivRank != null && ctx.ivRank > 30) {
+      if (pair.id === 9 || pair.id === 12) score += 2
+    }
+
+    // GEX negative → prefer ids 01, 04, 10 (contradiction with price)
+    if (ctx.gexRegime === 'negative') {
+      if (pair.id === 1 || pair.id === 10) score += 2
+      if (pair.id === 4) score += 1
+    }
+
+    // Archetype 4 only if post-close yesterday is available
+    if (pair.archetype === 4 && !ctx.hasPostCloseYesterday) {
+      score -= 10  // effectively excluded
+    }
+
+    // Low volatility fallback → boost ids 15, 09
+    if (ctx.vix != null && ctx.vix < 15 && ctx.ivRank != null && ctx.ivRank < 20) {
+      if (pair.id === 15) score += 2
+      if (pair.id === 9) score += 1
+    }
+
+    return { pair, score }
+  })
+
+  // Sort by score desc, take top 3
+  scored.sort((a, b) => b.score - a.score)
+  return scored.slice(0, 3).map((s) => s.pair)
+}
+
+// ---------------------------------------------------------------------------
+// Pair formatter — renders pairs as prompt text, resolving $[LEVEL] placeholder
+// ---------------------------------------------------------------------------
+
+function formatPairsForPrompt(pairs: HookLoopPair[], keyLevel: number | null): string {
+  const lines: string[] = [
+    'STYLE REFERENCE — 3 curated hook/loop pairs from our bank.',
+    'Use these for VOICE CALIBRATION ONLY. Do NOT copy verbatim. Adapt to today\'s specific data.',
+    '',
+  ]
+
+  for (const pair of pairs) {
+    const levelStr = keyLevel != null ? `$${keyLevel.toFixed(2)}` : '$[KEY_LEVEL]'
+    const hook = pair.hasLevelPlaceholder ? pair.hook.replace('$[LEVEL]', levelStr) : pair.hook
+    const loop = pair.hasLevelPlaceholder ? pair.loop.replace('$[LEVEL]', levelStr) : pair.loop
+
+    lines.push(`Pair ${pair.id} [Archetype ${pair.archetype} / Loop ${pair.loopType} / ${pair.mood}]:`)
+    lines.push(`  Hook: "${hook}"`)
+    lines.push(`  Loop: "${loop}"`)
+    lines.push('')
+  }
+
+  lines.push('PAIR SELECTION RULES (apply when choosing hook_archetype and loop_type):')
+  lines.push('- OPEX week → prefer archetype 6 or 2')
+  lines.push('- High-impact macro event today → prefer archetype 5')
+  lines.push('- Overnight gap (futures diverging >0.5% from prior close) → prefer archetype 4 or 2')
+  lines.push('- VIX spike >25 → prefer archetype 1 or 4')
+  lines.push('- IV Rank >30% → prefer archetype 3 (IV explanation) or archetype 6 (pattern)')
+  lines.push('- GEX negative with price rising → prefer archetype 1 (contradiction)')
+  lines.push('- Low volatility / no clear tension → prefer archetype 3 or use style of Pair 15')
+  lines.push('- Archetype 4 requires post-market data from yesterday')
+
+  return lines.join('\n')
+}
+
+// ---------------------------------------------------------------------------
 // In-memory state
 // ---------------------------------------------------------------------------
 
@@ -119,12 +349,32 @@ async function generateVideoScript(): Promise<void> {
     const ivRank = marketState.ivRank.value
 
     // Determine regime tags for hashtag injection
+    const opex = isOpexWeek()
     const regimeTags = buildRegimeTags({
       gexRegime: gex?.regime,
       vix: vixValue,
       ivRank,
-      isOpex: isOpexWeek(),
+      isOpex: opex,
     })
+
+    // Select 3 most relevant hook/loop pairs for style calibration
+    const hasMacroEvent = newsSnapshot.macroEvents.some((e) => {
+      const today = getTodayDateET()
+      const dateStr = e.time?.split(' ')[0] ?? e.time?.split('T')[0] ?? ''
+      return dateStr === today && (e.impact === 'high' || e.impact === 'HIGH')
+    })
+    const stylePairs = selectRelevantPairs({
+      gexRegime: gex?.regime ?? null,
+      vix: vixValue,
+      ivRank,
+      isOpex: opex,
+      hasPostCloseYesterday: postCloseYesterday != null,
+      hasMacroEvent,
+      hasOvernightGap: false, // no reliable pre-market gap signal at 09:05 ET yet
+    })
+
+    // Key level for Par 07 $[LEVEL] substitution: Flip Point > Call Wall > Max Pain
+    const keyLevel = gex?.flipPoint ?? gex?.callWall ?? gex?.maxPain?.maxPainStrike ?? null
 
     // -----------------------------------------------------------------------
     // Stage 1 — Narrative curation
@@ -146,7 +396,7 @@ async function generateVideoScript(): Promise<void> {
       maxPain: gex?.maxPain?.maxPainStrike ?? null,
     })
 
-    const curation = await callGPTMini(STAGE1_SYSTEM, stage1Input)
+    const curation = await callGPTMini(buildStage1System(stylePairs, keyLevel), stage1Input)
     const curationData = parseJSON<Stage1Output>(curation)
 
     if (!curationData) {
@@ -263,7 +513,13 @@ async function callGPTMini(system: string, user: string): Promise<string> {
 // Stage 1 system prompt — Narrative Curation
 // ---------------------------------------------------------------------------
 
-const STAGE1_SYSTEM = `You are a financial content strategist for Kasper, an AI market analyst on TikTok and YouTube Shorts.
+function buildStage1System(stylePairs: HookLoopPair[], keyLevel: number | null): string {
+  const styleSection = formatPairsForPrompt(stylePairs, keyLevel)
+  return buildStage1SystemBase(styleSection)
+}
+
+function buildStage1SystemBase(styleSection: string): string {
+  return `You are a financial content strategist for Kasper, an AI market analyst on TikTok and YouTube Shorts.
 
 Your job is NOT to write the video. Your job is to identify the STORY of the day.
 
@@ -322,7 +578,12 @@ Return ONLY valid JSON. No preamble. No markdown. Schema:
   "market_mood": "bullish|bearish|coiling|uncertain",
   "selected_hook": "string",
   "selected_loop": "string"
-}`
+}
+
+---
+
+${styleSection}`
+}
 
 // ---------------------------------------------------------------------------
 // Stage 2 system prompt builder — Script Assembly (Kasper v2)
