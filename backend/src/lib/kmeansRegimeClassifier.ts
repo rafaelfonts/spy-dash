@@ -27,7 +27,10 @@
  * of market data at 1 record/minute. Fills gradually after server restart.
  */
 
-import { kmeans } from 'ml-kmeans'
+type KMeansOptions = { initialization?: number[][] | 'kmeans++' | 'random'; maxIterations?: number; tolerance?: number }
+type KMeansOutput = { clusters: number[]; centroids: number[][]; converged: boolean; iterations: number }
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { kmeans } = require('ml-kmeans') as { kmeans: (data: number[][], k: number, options?: KMeansOptions) => KMeansOutput }
 import type { CompositeRegimeComponents } from './compositeRegimeScorer'
 
 // ---------------------------------------------------------------------------

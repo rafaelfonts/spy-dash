@@ -258,10 +258,12 @@ function persistToSupabase(
       kmeans_buffer_size: snapshot.kmeans?.bufferSize ?? getBufferSize(),
       kmeans_converged:   snapshot.kmeans?.converged ?? null,
     })
-    .then(({ error }: { error: { message: string } | null }) => {
-      if (error && !error.message.includes('duplicate')) {
-        console.warn('[RegimeHistory] Supabase insert failed:', error.message)
-      }
-    })
-    .catch(() => {}) // completely non-blocking
+    .then(
+      ({ error }: { error: { message: string } | null }) => {
+        if (error && !error.message.includes('duplicate')) {
+          console.warn('[RegimeHistory] Supabase insert failed:', error.message)
+        }
+      },
+      () => {} // rejection handler — PromiseLike-safe, completely non-blocking
+    )
 }
