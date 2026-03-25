@@ -44,6 +44,9 @@ CLAUDE.md
 .superpowers/
 docs/superpowers/
 
+# Supabase
+supabase/.temp/
+
 # Misc
 coverage/
 .nyc_output/
