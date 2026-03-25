@@ -333,6 +333,34 @@ export interface PreMarketBriefing {
   expiresAt: string     // ISO string — 10:30 ET (pré) ou 06:00 ET próximo dia (pós)
 }
 
+export interface VideoScript {
+  generatedAt: string          // ISO string
+  narrativeAngle: string       // single-sentence tension/angle of the day
+  hookArchetype: number        // 1–6
+  loopType: 'A' | 'B' | 'C'
+  hook: string                 // ≤15 words
+  kasperBullets: string[]      // 3 bullets ≤12 words each
+  voiceover: {
+    paragraph1: string         // technical context (GEX/regime/key level)
+    paragraph2: string         // day catalyst (macro/news/sector)
+    paragraph3: string         // operational implication (points to critical level)
+  }
+  cartela: {
+    spyPrice: string
+    vixLevel: string
+    gexRegime: string
+    keyLevel: string
+  }
+  loop: string                 // ≤15 words — echo of hook, not a copy
+  cta: string                  // question ≤20 words using real data
+  metadata: {
+    youtubeTitle: string       // ≤100 chars with real numeric data
+    youtubeDescription: string
+    youtubeTags: string[]      // ≤15 dynamic tags
+    tiktokCaption: string      // ≤150 chars with contextual emoji
+  }
+}
+
 export interface AnalysisStructuredOutput {
   bias: 'bullish' | 'bearish' | 'neutral'
   confidence: number           // 0.0 to 1.0

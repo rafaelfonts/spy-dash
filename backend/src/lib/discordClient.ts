@@ -48,6 +48,9 @@ export const DISCORD_COLORS = {
   portfolioProfit: 0x00CC66,   // verde lucro — 50% atingido
   portfolioTime: 0xFFAA00,    // amarelo — ≤21 DTE
   portfolioHold: 0x44AA88,     // verde médio — MANTER
+
+  // video script (Kasper)
+  videoScript: 0x9B59B6,       // roxo — roteiro Kasper TikTok/Shorts
 } as const
 
 /**

@@ -17,6 +17,7 @@ import { startVIXTermStructurePoller } from './data/vixTermStructurePoller'
 import { startSkewPoller } from './data/skewPoller'
 import { startTechnicalIndicatorsPoller } from './data/technicalIndicatorsPoller'
 import { startPreMarketScheduler, restoreBriefingFromCache } from './data/preMarketBriefing'
+import { startVideoScriptScheduler, restoreVideoScriptFromCache } from './data/videoScriptService'
 import { startScheduledSignalScheduler } from './data/scheduledSignalService'
 import { startPortfolioTrackerScheduler, refreshPortfolioSnapshot } from './data/portfolioTrackerService'
 import { startCBOEPCRScheduler } from './data/cboePCRPoller'
@@ -167,6 +168,8 @@ async function bootstrap(): Promise<void> {
     ),
     // Restore today's pre-market/post-close briefing from Redis if available
     withTimeout(restoreBriefingFromCache(), 5_000, 'restoreBriefingFromCache'),
+    // Restore today's Kasper video script from Redis if available
+    withTimeout(restoreVideoScriptFromCache(), 5_000, 'restoreVideoScriptFromCache'),
     // Restore last macro digest from Redis if available (TTL 14h)
     withTimeout(restoreMacroDigestFromCache(), 5_000, 'restoreMacroDigestFromCache'),
     // Restore portfolio snapshot so GET /api/portfolio works on cold start
@@ -206,6 +209,7 @@ async function bootstrap(): Promise<void> {
     }
 
     startPreMarketScheduler()
+    startVideoScriptScheduler()
     startScheduledSignalScheduler()
     startPortfolioTrackerScheduler()
     startCBOEPCRScheduler()
