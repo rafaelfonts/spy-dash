@@ -23,8 +23,9 @@ import { registerAlertsFromAnalysis } from '../data/alertEngine'
 import { getExpectedMoveSnapshot } from '../data/expectedMoveState'
 import type { ExpectedMoveSnapshot } from '../data/expectedMoveState'
 import { calcProbabilityOTMPut } from '../lib/blackScholes'
-import { computeRegimeScore, getGexVsYesterday, getRegimeFlipCount } from '../data/regimeScorer'
+import { computeRegimeScore, getGexVsYesterday, getRegimeFlipCount, computeRegimeLabel, computeDayTypeFromState } from '../data/regimeScorer'
 import type { RegimeScorerResult, GexComparison } from '../data/regimeScorer'
+import { getSKEWIndexSnapshot } from '../data/skewIndexPoller'
 import { getSkewSnapshot } from '../data/skewState'
 import type { SkewByDTE, SkewEntry } from '../data/skewService'
 import { getOpexStatus } from '../data/opexCalendar'
@@ -595,6 +596,107 @@ function buildRegimeScoreBlock(gexDynamic: GEXDynamic | null): RegimeScoreBlockR
   ].join('\n')
 
   return { block, regimeScorerResult, gexVsYesterday }
+}
+
+// ---------------------------------------------------------------------------
+// REGIME_CONTEXT — structured JSON block injected at top of user prompt
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the structured REGIME_CONTEXT JSON block for the LLM prompt.
+ *
+ * This block contains the 5–7 pre-computed numerical fields the research
+ * identifies as highest-ROI for premium selling decisions:
+ *   - iv_rank, iv_percentile, iv_hv_spread (edge quantification)
+ *   - vix, vix_term_slope (macro vol regime)
+ *   - gex_sign, skew (positioning / tail risk)
+ *   - regime label + confidence (categorical summary)
+ *   - day_type (intraday context)
+ *
+ * The LLM must cite fields from this block in every recommendation.
+ */
+function buildRegimeContextBlock(gexDynamic: GEXDynamic | null): string {
+  const ivRankVal   = marketState.ivRank.value ?? null
+  const ivPercVal   = marketState.ivRank.percentile ?? null
+  const ivx         = marketState.ivRank.ivx ?? null
+  const hv30        = marketState.ivRank.hv30 ?? null
+  const vixLast     = marketState.vix.last ?? null
+  const termSnap    = getVIXTermStructureSnapshot()
+  const skewSnap    = getSKEWIndexSnapshot()
+
+  // iv_hv_spread: IVx% − HV30% in percentage points (absolute spread)
+  const ivHvSpread = ivx != null && hv30 != null && hv30 > 0
+    ? Math.round((ivx - hv30) * 10) / 10
+    : null
+
+  // vix_term_slope: steepness from term structure (% change from short to long tenor)
+  const vixTermSlope = termSnap?.steepness ?? null
+
+  // GEX sign from aggregate net gamma
+  const totalNetGamma = gexDynamic && gexDynamic.length > 0
+    ? gexDynamic.reduce((sum, e) => sum + e.gex.totalNetGamma, 0)
+    : null
+  const gexSign = totalNetGamma != null
+    ? (totalNetGamma > 0 ? 'positive' : 'negative')
+    : 'unknown'
+
+  // CBOE SKEW index
+  const skewValue = skewSnap?.value ?? null
+
+  // Regime label (Phase 1: semantic from VIX + GEX)
+  const regimeLabelResult = computeRegimeLabel(gexDynamic)
+
+  // Day type
+  const dayType = computeDayTypeFromState(gexDynamic)
+
+  // Phase 2: composite regime from advancedMetrics state (already computed every 60s)
+  const compositeRegime = getAdvancedMetricsSnapshot()?.compositeRegime ?? null
+
+  // Build the JSON object (null fields shown as null for transparency)
+  const regimeContextObj = {
+    regime: {
+      label:              regimeLabelResult.label,       // semantic: elevated_vol_mean_reverting etc.
+      confidence:         regimeLabelResult.confidence,
+      composite_score:    compositeRegime?.compositeScore  ?? null,  // 0–100 (Phase 2)
+      composite_label:    compositeRegime?.regimeLabel     ?? null,  // LOW_VOL/NORMAL/ELEVATED/HIGH_VOL
+      method:             compositeRegime != null ? 'rule-based+kmeans' : null,
+      // Phase 3: K-means validation
+      kmeans_label:       compositeRegime?.kmeansLabel    ?? null,  // low/medium/high (null until buffer fills)
+      transition_detected: compositeRegime?.transitionDetected ?? false,  // true = highest-risk scenario
+      kmeans_buffer_size: compositeRegime?.kmeansBufferSize  ?? 0,   // data quality indicator (max 252)
+    },
+    volatility: {
+      iv_rank:        ivRankVal  != null ? Math.round(ivRankVal * 10) / 10 : null,
+      iv_percentile:  ivPercVal  != null ? Math.round(ivPercVal * 10) / 10 : null,
+      iv_hv_spread:   ivHvSpread,
+      vix:            vixLast    != null ? Math.round(vixLast * 100) / 100 : null,
+      vix_term_slope: vixTermSlope != null ? Math.round(vixTermSlope * 10) / 10 : null,
+    },
+    positioning: {
+      gex_sign: gexSign,
+      skew:     skewValue != null ? Math.round(skewValue * 10) / 10 : null,
+    },
+    day_type: {
+      label:      dayType.label,
+      confidence: dayType.confidence,
+      range_pct:  dayType.rangePercent,
+    },
+  }
+
+  const lines = [
+    '\n=== REGIME_CONTEXT (pré-computado — AUTORITATIVO) ===',
+    JSON.stringify(regimeContextObj, null, 2),
+    'INSTRUÇÕES DE USO OBRIGATÓRIO:',
+    '(1) CITE pelo menos 3 campos numéricos deste bloco em cada recomendação.',
+    '(2) Analise EM SEQUÊNCIA antes de recomendar: regime.composite_score → intensidade do regime (>50=risco elevado); regime.composite_label → classificação; volatility.iv_hv_spread → edge de venda (>3pp = rico, <0pp = NÃO vender); positioning.gex_sign → supressão ou amplificação; positioning.skew → custo de cauda adequado.',
+    '(3) NÃO recalcule estes campos — use os valores literalmente.',
+    '(4) Se day_type.label = "trending": veto implícito para novas posições vendidas curtas (0–7 DTE).',
+    '(5) composite_label: LOW_VOL=<25 (ideal seller); NORMAL=25-50 (bom com IVR>30); ELEVATED=50-75 (edge máxima se iv_hv_spread>3); HIGH_VOL=>75 (evitar, aguardar normalização).',
+    '(6) ALERTA DE TRANSIÇÃO (Phase 3 — K-means): se transition_detected=true → regime em transição (K-means discorda do rule-based). RISCO MÁXIMO para vendedores de prêmio: reduza tamanho de posição em 50% ou evite novas entradas. Se kmeans_buffer_size<15: K-means ainda sem dados suficientes (ignorar kmeans_label). Se kmeans_label e composite_label concordam: sinal de regime estável (confiança elevada).',
+    '',
+  ]
+
+  return lines.join('\n')
 }
 
 /** Builds Vanna/Charm Exposure block from GEXDynamic (each entry has totalVannaExposure, totalCharmExposure). */
@@ -1275,6 +1377,13 @@ function buildPrompt(
 
   prompt += `Análise de mercado atual:\n\n`
 
+  // --- REGIME_CONTEXT — bloco estruturado autoritativo (injetar ANTES de qualquer dado) ---
+  {
+    const advSnap = getAdvancedMetricsSnapshot()
+    const regimeContextBlock = buildRegimeContextBlock(advSnap?.gexDynamic ?? null)
+    prompt += regimeContextBlock
+  }
+
   // --- Dados de mercado em tempo real ---
   const spyAge = freshness?.spy ? ` ${humanizeAge(freshness.spy)}` : ''
   const vixAge = freshness?.vix ? ` ${humanizeAge(freshness.vix)}` : ''
@@ -1873,7 +1982,48 @@ const STATIC_SYSTEM_PROMPT =
   '(2) RVOL > 2.0 sem catalisador estrutural identificado nos dados internos; ' +
   '(3) regime_score caiu ≥ 3 pontos sem mudança em GEX, vanna ou charm. ' +
   'Formule a query incluindo o preço atual do SPY, a variação percentual e o timeframe. ' +
-  'Exemplo: "SPY drop 0.5% in 20 minutes at $580 reason catalyst news"'
+  'Exemplo: "SPY drop 0.5% in 20 minutes at $580 reason catalyst news" ' +
+  'REGIME_CONTEXT — BLOCO AUTORITATIVO DE REGIME (ler primeiro, sempre): ' +
+  'O bloco REGIME_CONTEXT no início do prompt contém 5–7 campos pré-computados de alta precisão. ' +
+  'Estes são os dados de maior impacto por hora de análise para premium selling. ' +
+  'SEQUÊNCIA DE RACIOCÍNIO OBRIGATÓRIA — aplique nesta ordem antes de qualquer recomendação: ' +
+  '(A) regime.label: identifica o tipo de mercado. ' +
+  '    "low_vol_suppressed" = dealers long gamma, vol suprimida, favorável para strangles/iron condors. ' +
+  '    "normal_mean_reverting" = ambiente favorável para premium selling com IVR adequado. ' +
+  '    "elevated_vol_mean_reverting" = edge máxima para vendedores se iv_hv_spread > 3pp. ' +
+  '    "elevated_vol_amplifying" ou "normal_amplifying" = dealers amplificam movimentos — cautela extrema. ' +
+  '    "high_vol_stress" = crise ativa — não vender prêmio, aguardar normalização. ' +
+  '(B) volatility.iv_hv_spread (IVx% − HV30%): quantifica a edge estrutural do vendedor. ' +
+  '    > 5pp: edge excepcional — IV muito acima do realizado. ' +
+  '    3–5pp: edge boa — condição favorável para put spread/strangle. ' +
+  '    0–3pp: edge marginal — exigir outros confirmadores antes de vender. ' +
+  '    < 0pp: IV abaixo do realizado — VETO para venda de prêmio. ' +
+  '(C) volatility.vix_term_slope: inclinação da term structure (% de longo vs curto tenor). ' +
+  '    > 2%: contango forte — dealers cobram mais por vencimentos longos, theta eficiente. ' +
+  '    −2% a +2%: flat — sem sinal claro de term structure. ' +
+  '    < −2%: backwardation — spot IV elevada, reduzir exposição a vega. ' +
+  '(D) positioning.skew (CBOE SKEW Index): custo de opções de cauda (OTM profundo). ' +
+  '    ≥ 140: risco sistêmico precificado — cautela mesmo em regime favorável. ' +
+  '    130–140: tail risk elevado — puts caras, favorável para put spread sellers. ' +
+  '    115–130: normal — sem sinal de extremo. ' +
+  '    < 115: tail risk barato — custo de proteção baixo, avoid put spread vendido sem outros confirmatórios. ' +
+  '    null: dados CBOE SKEW indisponíveis — use skew de volatilidade (RR25) como proxy. ' +
+  '(E) positioning.gex_sign: regime microestrutural dos dealers. ' +
+  '    "positive": dealers suprimem vol, ambiente de mean-reversion. ' +
+  '    "negative": dealers amplificam, evitar novas posições curtas. ' +
+  '(F) day_type.label: contexto intraday. ' +
+  '    "range_bound": ideal para iron condors e short straddles. ' +
+  '    "trending": VETO implícito para 0–7 DTE; para 21–45 DTE, mencionar como risco. ' +
+  '    "neutral" ou "unknown": usar outros sinais para decisão. ' +
+  '(G) regime.transition_detected (Phase 3 — K-means): validação estatística do regime via K-means rolling. ' +
+  '    false + kmeans_label concorda com composite_label → regime ESTÁVEL — maior confiança na análise. ' +
+  '    true → REGIME EM TRANSIÇÃO (K-means e rule-based discordam) — cenário de RISCO MÁXIMO. ' +
+  '      ⚠️ Quando transition_detected=true: OBRIGATÓRIO reduzir tamanho de posição em 50% OU evitar novas entradas. ' +
+  '      Mencionar explicitamente na resposta: "Alerta: regime em transição detectado (K-means vs rule-based)." ' +
+  '    kmeans_buffer_size < 15: buffer insuficiente — ignorar kmeans_label (servidor recém-reiniciado). ' +
+  'CITAÇÃO OBRIGATÓRIA: cada recomendação de estratégia DEVE citar pelo menos 3 campos do REGIME_CONTEXT com seus valores numéricos. ' +
+  'Exemplo correto: "Com iv_hv_spread=4.3pp, gex_sign=positive e vix_term_slope=1.8% (contango), a edge para put spread é confirmada." ' +
+  'Exemplo ERRADO: "O ambiente de vol está favorável" (sem citar campos numéricos).'
 
 /**
  * Returns true if the tech block (RSI/MACD/BBands) should be included in the prompt.
