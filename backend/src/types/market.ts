@@ -352,6 +352,7 @@ export interface VideoScript {
     keyLevel: string
   }
   loop: string                 // ≤15 words — echo of hook, not a copy
+  bridge: string               // transition phrase loop→hook for invisible replay
   cta: string                  // question ≤20 words using real data
   metadata: {
     youtubeTitle: string       // ≤100 chars with real numeric data

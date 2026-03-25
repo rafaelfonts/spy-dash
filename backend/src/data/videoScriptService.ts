@@ -38,6 +38,7 @@ interface HookLoopPair {
   trigger: string            // market context where this pair is most effective
   hook: string
   loop: string
+  bridge: string             // transition phrase loop→hook for invisible replay
   hasLevelPlaceholder: boolean  // true for Par 07 which uses $[LEVEL]
 }
 
@@ -47,6 +48,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'VIX falling but GEX negative; market rising with low Fear & Greed',
     hook: 'VIX is dropping. Gamma is negative. Those two don\'t usually agree.',
     loop: 'When VIX and gamma stop disagreeing — that\'s when the real move happens.',
+    bridge: 'And right now? They\'re still not agreeing.',
     hasLevelPlaceholder: false,
   },
   {
@@ -54,6 +56,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'SPY within $3 of Call Wall; OPEX approaching; clear directional setup',
     hook: 'One level separates a normal day from a very fast move.',
     loop: 'The level is set. The clock is running. Watch what happens next.',
+    bridge: 'So — which level is it?',
     hasLevelPlaceholder: false,
   },
   {
@@ -61,6 +64,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Explaining negative/positive GEX to new audience; educational days',
     hook: 'Most traders see the chart. Market makers see the gamma.',
     loop: 'You just saw what most traders never look at. Use it.',
+    bridge: 'Here\'s what the gamma is showing right now.',
     hasLevelPlaceholder: false,
   },
   {
@@ -68,6 +72,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'SPY flat intraday with Fear & Greed at extremes (below 25 or above 75)',
     hook: 'Extreme fear. SPY barely moved. Something is being held in place.',
     loop: 'When the pin breaks — and it will — you\'ll want to know which side.',
+    bridge: 'The fear is still at extreme levels.',
     hasLevelPlaceholder: false,
   },
   {
@@ -75,6 +80,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Clear binary setup day — imminent breakout or rejection at key level',
     hook: 'Bulls or bears? The data already voted. Most traders didn\'t see it.',
     loop: 'The vote is in. The market just hasn\'t announced the result yet.',
+    bridge: 'So what did the data actually say?',
     hasLevelPlaceholder: false,
   },
   {
@@ -82,6 +88,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'OPEX week; pre-OPEX pin setups; IV Rank above 30 with dominant GEX',
     hook: 'This setup has a name. It has a history. And it\'s happening right now.',
     loop: 'Same setup. Different week. Now you know what to watch for.',
+    bridge: 'Let\'s run it back — because the setup is still active.',
     hasLevelPlaceholder: false,
   },
   {
@@ -89,6 +96,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Call Wall or Put Wall being tested; Zero Gamma Level near spot',
     hook: '$[LEVEL] is where the market decides. Not suggests. Decides.',
     loop: 'Market opens in minutes. That decision is being made right now.',
+    bridge: 'Watch that level one more time.',
     hasLevelPlaceholder: true,
   },
   {
@@ -96,6 +104,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Significant overnight move after flat close; futures diverging from close',
     hook: 'Yesterday looked quiet. Overnight changed the conversation entirely.',
     loop: 'Quiet closes don\'t mean quiet opens. Remember that tomorrow.',
+    bridge: 'It started the night before — just like this.',
     hasLevelPlaceholder: false,
   },
   {
@@ -103,6 +112,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'IV Rank crossing 30% threshold; premium selling regime opening',
     hook: 'IV Rank just crossed 30%. That number means something specific to options traders.',
     loop: 'You just learned the number that changes the strategy. Most never check it.',
+    bridge: 'Check it again — and this time, you\'ll see it differently.',
     hasLevelPlaceholder: false,
   },
   {
@@ -110,6 +120,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Rally in negative GEX context; moves that "shouldn\'t be happening"',
     hook: 'SPY is rallying. Gamma says it shouldn\'t be this easy right now.',
     loop: 'The chart says up. Gamma says fragile. Now you\'re watching both.',
+    bridge: 'So watch both — from the beginning.',
     hasLevelPlaceholder: false,
   },
   {
@@ -117,6 +128,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Fed decision day; CPI/NFP release; high-impact macro event',
     hook: 'One number drops in 90 minutes. SPY is already positioning for it.',
     loop: 'Ninety minutes. One print. Watch how fast the levels get retested.',
+    bridge: 'Miss the setup and you\'ll be watching the retest from the wrong side.',
     hasLevelPlaceholder: false,
   },
   {
@@ -124,6 +136,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'VIX above 20 with IV Rank in premium selling zone; classic Iron Condor setup',
     hook: 'High IV. Negative gamma. Spot at Max Pain. This pattern has a playbook.',
     loop: 'The pattern is set. The playbook exists. The question is who uses it.',
+    bridge: 'Are you using it — or just watching?',
     hasLevelPlaceholder: false,
   },
   {
@@ -131,6 +144,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Zero Gamma Level being defended; Flip Point as intraday support/resistance',
     hook: 'Zero Gamma is the line where market makers stop absorbing. Cross it and see.',
     loop: 'Most traders don\'t know this line exists. Now you can\'t unsee it.',
+    bridge: 'And it starts with understanding what happens at that line.',
     hasLevelPlaceholder: false,
   },
   {
@@ -138,6 +152,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Opening gap after flat close; futures diverging >0.5% from prior close',
     hook: 'Closed flat. Opened with a gap. The overnight narrative rewrote the day.',
     loop: 'Gap is already priced. What happens at the open is the real story.',
+    bridge: 'Here\'s how the story started.',
     hasLevelPlaceholder: false,
   },
   {
@@ -145,6 +160,7 @@ const HOOKS_AND_LOOPS_BANK: HookLoopPair[] = [
     trigger: 'Any day — generic fallback when context has no clear tension',
     hook: 'The market never moves randomly. There\'s always a structure. Here\'s today\'s.',
     loop: 'Structure changes daily. The principle doesn\'t. Come back tomorrow.',
+    bridge: 'But first — understand today\'s structure one more time.',
     hasLevelPlaceholder: false,
   },
 ]
@@ -240,6 +256,7 @@ function formatPairsForPrompt(pairs: HookLoopPair[], keyLevel: number | null): s
     lines.push(`Pair ${pair.id} [Archetype ${pair.archetype} / Loop ${pair.loopType} / ${pair.mood}]:`)
     lines.push(`  Hook: "${hook}"`)
     lines.push(`  Loop: "${loop}"`)
+    lines.push(`  Bridge: "${pair.bridge}"`)
     lines.push('')
   }
 
@@ -447,6 +464,7 @@ async function generateVideoScript(): Promise<void> {
         keyLevel: scriptData.cartela.key_level,
       },
       loop: scriptData.loop,
+      bridge: curationData.selected_bridge,
       cta: scriptData.cta,
       metadata: {
         youtubeTitle: scriptData.metadata.youtube_title,
@@ -561,10 +579,19 @@ Rules for hook_candidates and loop_candidates:
 - Hooks must NOT start with "Today"
 - Loops must NOT repeat hook verbatim — create an echo, not a copy
 
-Rules for selected_hook and selected_loop:
-- Select the best option from the candidates
+Rules for bridge_candidates:
+- Generate exactly 3 options matching the bridge rules for the selected loop_type
+- Loop Type A: confirm the tension persists OR ask the question the hook will answer
+- Loop Type B: offer a second learning layer or a self-assessment challenge
+- Loop Type C: escalate the consequence or make urgency personal ("you", "your side")
+- Max 8 words. Must NOT contain the words "replay", "loop", or "rewatch"
+- Must sound like Kasper's thought or a natural continuation — never a replay announcement
+
+Rules for selected_hook, selected_loop, and selected_bridge:
+- Select the best option from each set of candidates
 - selected_hook must create genuine curiosity without being clickbait
 - selected_loop must feel like a satisfying echo
+- selected_bridge must connect seamlessly from loop back to hook
 
 Return ONLY valid JSON. No preamble. No markdown. Schema:
 {
@@ -573,11 +600,13 @@ Return ONLY valid JSON. No preamble. No markdown. Schema:
   "loop_type": "A",
   "hook_candidates": ["string","string","string"],
   "loop_candidates": ["string","string","string"],
+  "bridge_candidates": ["string","string","string"],
   "key_tension": "string",
   "key_levels": ["$680","$670"],
   "market_mood": "bullish|bearish|coiling|uncertain",
   "selected_hook": "string",
-  "selected_loop": "string"
+  "selected_loop": "string",
+  "selected_bridge": "string"
 }
 
 ---
@@ -857,6 +886,9 @@ function buildDiscordEmbed(script: VideoScript) {
     `**🔄 Loop**`,
     `> ${script.loop}`,
     '',
+    `**🌉 Bridge**`,
+    `> ${script.bridge}`,
+    '',
     `**❓ CTA**`,
     script.cta,
     '',
@@ -920,11 +952,13 @@ interface Stage1Output {
   loop_type: 'A' | 'B' | 'C'
   hook_candidates: string[]
   loop_candidates: string[]
+  bridge_candidates: string[]
   key_tension: string
   key_levels: string[]
   market_mood: 'bullish' | 'bearish' | 'coiling' | 'uncertain'
   selected_hook: string
   selected_loop: string
+  selected_bridge: string
 }
 
 interface Stage2Output {
