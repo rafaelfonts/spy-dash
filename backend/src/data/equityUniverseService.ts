@@ -17,7 +17,7 @@ function getWeekKey(): string {
 }
 
 async function fetchAISuggestions(): Promise<string[]> {
-  const prompt = `List exactly 50 US-listed small cap stock tickers (NYSE/NASDAQ) that are currently trading between $2–$20 and have shown consistent momentum and liquidity in recent weeks. Focus on sectors with high retail activity: AI/tech, crypto mining, biotech, EV, fintech. Return ONLY a JSON array of ticker symbols, no explanation. Example: ["SOUN","BBAI","MARA"]`;
+  const prompt = `List exactly 50 US-listed stock tickers (NYSE/NASDAQ) priced at $5 or above, any market cap, that have shown consistent momentum and liquidity in recent weeks. Focus on sectors with high retail activity: AI/tech, crypto mining, biotech, EV, fintech, semiconductors. Include a mix of small, mid, and large caps with fractional share accessibility. Return ONLY a JSON array of ticker symbols, no explanation. Example: ["SOUN","NVDA","MARA"]`;
 
   try {
     const response = await openai.chat.completions.create({
@@ -45,7 +45,7 @@ async function validateWithTradier(candidates: string[]): Promise<string[]> {
     return quotes
       .filter((q) => {
         const price = q.last ?? q.close ?? 0;
-        return price >= 2 && price <= 20;
+        return price >= 5; // sem teto — suporte a ações fracionadas
       })
       .map((q) => q.symbol);
   } catch {

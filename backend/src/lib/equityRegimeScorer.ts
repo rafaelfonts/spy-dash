@@ -86,3 +86,15 @@ export function scoreEquityRegime(input: ScoreInput): EquityRegimeResult {
 
   return { score, components }
 }
+
+/**
+ * Retorna true quando RSI oversold + MACD bullish + BB %B < 0.3 convergem simultaneamente.
+ * Usado para aplicar multiplicador de 1.3× no equityScore da análise individual.
+ */
+export function hasConvergence(technicals: EquityTechnicals): boolean {
+  const rsiOversold = technicals.rsiZone === 'oversold'
+  const macdBullish = technicals.macdCross === 'bullish' ||
+    (technicals.macd !== null && technicals.macd.histogram > 0)
+  const bbLow = technicals.bbPercentB !== null && technicals.bbPercentB < 0.3
+  return rsiOversold && macdBullish && bbLow
+}

@@ -1,11 +1,15 @@
 // frontend/src/components/equity/EquityWatchlist.tsx
 import { useState } from 'react'
 import { useMarketStore } from '../../store/marketStore'
+import type { AnalysisStructuredEquity as EquityAnalysis } from '../../store/marketStore'
 import { supabase } from '../../lib/supabase'
 import { getApiBase } from '../../lib/apiBase'
 
 export function EquityWatchlist() {
-  const { equityWatchlist, equityCandidates, setEquityWatchlist } = useMarketStore()
+  const {
+    equityWatchlist, equityCandidates, setEquityWatchlist,
+    analyzingSymbol, setAnalyzingSymbol, setEquityAnalysis, setEquityAnalysisLoading,
+  } = useMarketStore()
   const [adding, setAdding] = useState(false)
   const [newSymbol, setNewSymbol] = useState('')
 
@@ -27,6 +31,29 @@ export function EquityWatchlist() {
       setEquityWatchlist([...equityWatchlist, item])
       setNewSymbol('')
       setAdding(false)
+    }
+  }
+
+  async function handleAnalyze(symbol: string) {
+    setEquityAnalysisLoading(true)
+    setAnalyzingSymbol(symbol)
+    setEquityAnalysis(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const token = session?.access_token ?? ''
+      const res = await fetch(`${getApiBase()}/api/equity/analyze`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol }),
+      })
+      if (res.ok) {
+        const data: EquityAnalysis = await res.json()
+        setEquityAnalysis(data)
+        setTimeout(() => document.getElementById('equity-ai-analysis')?.scrollIntoView({ behavior: 'smooth' }), 100)
+      }
+    } finally {
+      setEquityAnalysisLoading(false)
+      setAnalyzingSymbol(null)
     }
   }
 
@@ -55,6 +82,7 @@ export function EquityWatchlist() {
               <td className="pb-2">Var%</td>
               <td className="pb-2">Alerta</td>
               <td className="pb-2"></td>
+              <td className="pb-2"></td>
             </tr>
           </thead>
           <tbody>
@@ -71,6 +99,15 @@ export function EquityWatchlist() {
                     {w.alert_price ? `$${w.alert_price} ${w.alert_direction === 'above' ? '↑' : '↓'}` : '—'}
                   </td>
                   <td className="py-2">
+                    <button
+                      onClick={() => handleAnalyze(w.symbol)}
+                      disabled={analyzingSymbol !== null}
+                      className="px-3 py-1 rounded text-[11px] font-semibold transition-all bg-[#00ff88]/10 border border-[#00ff88]/30 text-[#00ff88] hover:bg-[#00ff88]/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {analyzingSymbol === w.symbol ? '...' : 'Analisar'}
+                    </button>
+                  </td>
+                  <td className="py-2 pl-1">
                     <button onClick={() => handleRemove(w.symbol)} className="text-text-muted hover:text-red-400 text-[11px]">✕</button>
                   </td>
                 </tr>

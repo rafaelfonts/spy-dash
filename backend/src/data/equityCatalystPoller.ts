@@ -44,9 +44,15 @@ async function fetchCatalystsFromFinnhub(tickers: string[]): Promise<Set<string>
 }
 
 let catalystTickersCache: Set<string> = new Set();
+let catalystFirstSeenAt: Map<string, number> = new Map(); // symbol → epoch ms quando detectado
 
 export function getCatalystTickers(): Set<string> {
   return catalystTickersCache;
+}
+
+/** Retorna o epoch ms em que o catalisador foi detectado pela primeira vez hoje, ou null se não encontrado. */
+export function getCatalystFirstSeenAt(symbol: string): number | null {
+  return catalystFirstSeenAt.get(symbol) ?? null;
 }
 
 export async function startEquityCatalystPoller(getUniverse: () => string[]): Promise<void> {
@@ -65,6 +71,13 @@ export async function startEquityCatalystPoller(getUniverse: () => string[]): Pr
     }
 
     const catalysts = await fetchCatalystsFromFinnhub(tickers);
+    const now = Date.now();
+    // Registrar firstSeenAt apenas para símbolos novos (não sobrescreve detecções anteriores)
+    for (const sym of catalysts) {
+      if (!catalystFirstSeenAt.has(sym)) {
+        catalystFirstSeenAt.set(sym, now);
+      }
+    }
     catalystTickersCache = catalysts;
     await cacheSet(key, Array.from(catalysts), CATALYST_TTL_MS, 'equityCatalystPoller');
     console.log(`[equityCatalyst] Found ${catalysts.size} tickers with catalysts today`);
@@ -75,6 +88,13 @@ export async function startEquityCatalystPoller(getUniverse: () => string[]): Pr
   const restored = await cacheGet<string[]>(restoreKey).catch(() => null);
   if (restored) {
     catalystTickersCache = new Set(restored);
+    // Restaurar firstSeenAt como startup time (timestamp conservador)
+    const startupTs = Date.now();
+    for (const sym of restored) {
+      if (!catalystFirstSeenAt.has(sym)) {
+        catalystFirstSeenAt.set(sym, startupTs);
+      }
+    }
     console.log(`[equityCatalyst] Restored ${restored.length} catalyst tickers from cache`);
   }
 

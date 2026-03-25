@@ -18,11 +18,11 @@ export interface EquityCandidate {
 }
 
 export interface ScreenerFilters {
-  priceMin: number      // padrão: 2
-  priceMax: number      // padrão: 20
-  volumeMin: number     // padrão: 300_000
-  rvolMin: number       // padrão: 2.0
-  changeMin: number     // padrão: 3.0
+  priceMin: number        // padrão: 5
+  priceMax: number | null // padrão: null (sem teto — suporte a ações fracionadas)
+  volumeMin: number       // padrão: 500_000
+  rvolMin: number         // padrão: 1.5
+  changeMin: number       // padrão: 2.0
 }
 
 export interface EquityScreenerPayload {
@@ -30,4 +30,6 @@ export interface EquityScreenerPayload {
   filters: ScreenerFilters
   marketOpen: boolean
   capturedAt: number    // epoch ms
+  regimeVetoed?: boolean   // true quando SPY noTradeLevel = 'avoid'
+  regimeVetoReasons?: string[]
 }

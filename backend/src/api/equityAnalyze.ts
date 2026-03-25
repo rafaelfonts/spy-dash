@@ -5,7 +5,7 @@ import { getTradierClient } from '../lib/tradierClient.js'
 import { CONFIG } from '../config.js'
 import { computeEquityTechnicals } from '../lib/equityTechnicals.js'
 import type { TradierBar } from '../lib/equityTechnicals.js'
-import { scoreEquityRegime } from '../lib/equityRegimeScorer.js'
+import { scoreEquityRegime, hasConvergence } from '../lib/equityRegimeScorer.js'
 import { buildEquityMemoryBlock, saveEquityAnalysis } from '../data/equityMemory.js'
 import { searchLiveNews } from '../lib/tavilyClient.js'
 import type { TavilyResult } from '../lib/tavilyClient.js'
@@ -363,6 +363,14 @@ export async function registerEquityAnalyzeRoute(app: FastifyInstance): Promise<
     // 9. Override regime_score with pre-computed value (prevent model drift)
     // -----------------------------------------------------------------------
     structured.equity_regime_score = regimeResult.score
+
+    // -----------------------------------------------------------------------
+    // 9b. Convergência técnica — multiplicador 1.3× quando RSI oversold +
+    //     MACD bullish + BB %B < 0.3 convergem simultaneamente
+    // -----------------------------------------------------------------------
+    if (hasConvergence(technicals) && structured.equity_regime_score !== undefined) {
+      structured.equity_regime_score = Math.min(10, Math.round(structured.equity_regime_score * 1.3))
+    }
 
     // -----------------------------------------------------------------------
     // 8. Save analysis (fire-and-forget)

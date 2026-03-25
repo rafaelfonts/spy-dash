@@ -2,14 +2,40 @@
 import { getTradierClient } from '../lib/tradierClient.js';
 import { emitter } from '../data/marketState.js';
 import { getEquityUniverse, scheduleWeeklyUniverseRefresh } from './equityUniverseService.js';
-import { startEquityCatalystPoller, getCatalystTickers } from './equityCatalystPoller.js';
+import { startEquityCatalystPoller, getCatalystTickers, getCatalystFirstSeenAt } from './equityCatalystPoller.js';
 import { setEquityCandidates, DEFAULT_FILTERS } from './equityScreenerState.js';
+import { getAdvancedMetricsSnapshot } from './advancedMetricsState.js';
 import type { EquityCandidate } from './equityTypes.js';
 import { checkEquityAlerts } from './alertEngine.js';
 import { calcRSI } from '../lib/technicalCalcs.js';
 
 const POLL_MS = 60_000;
 const OFFHOURS_MS = 5 * 60_000;
+
+// ── RVOL adaptativo (4b) ──────────────────────────────────────────────────────
+// Histórico rolling de RVOL médio dos candidatos aprovados (max 10 entradas)
+const RVOL_HISTORY_MAX = 10;
+const RVOL_FLOOR = 1.2; // mínimo absoluto, independente do histórico
+const rvolHistory: number[] = [];
+
+function getAdaptiveRvolMin(): number {
+  if (rvolHistory.length < 3) return DEFAULT_FILTERS.rvolMin;
+  const sorted = [...rvolHistory].sort((a, b) => a - b);
+  const p50 = sorted[Math.floor(sorted.length / 2)];
+  return Math.max(RVOL_FLOOR, p50);
+}
+
+// ── Decaimento de catalisador (4d) ────────────────────────────────────────────
+// Peso máximo 25pts → decaimento linear até 0 em 4h (240min)
+const CATALYST_DECAY_MINUTES = 240;
+
+function catalystScore(symbol: string, hasCatalyst: boolean): number {
+  if (!hasCatalyst) return 0;
+  const firstSeen = getCatalystFirstSeenAt(symbol);
+  if (firstSeen === null) return 25; // fallback conservador: score cheio
+  const ageMin = (Date.now() - firstSeen) / 60_000;
+  return Math.max(0, Math.round(25 * (1 - ageMin / CATALYST_DECAY_MINUTES)));
+}
 
 function isMarketOpen(): boolean {
   const now = new Date();
@@ -21,6 +47,24 @@ function isMarketOpen(): boolean {
 }
 
 async function tick(): Promise<void> {
+  // Verificar veto de regime SPY antes de qualquer processamento
+  const metrics = getAdvancedMetricsSnapshot();
+  if (metrics?.noTrade?.noTradeLevel === 'avoid') {
+    const reasons = metrics.noTrade.activeVetos ?? [];
+    const open = isMarketOpen();
+    setEquityCandidates([], open);
+    emitter.emit('equity-screener', {
+      candidates: [],
+      filters: DEFAULT_FILTERS,
+      marketOpen: open,
+      capturedAt: Date.now(),
+      regimeVetoed: true,
+      regimeVetoReasons: reasons,
+    });
+    console.log(`[equityScreener] Regime SPY adverso — screening suspenso (${reasons.length} vetos)`);
+    return;
+  }
+
   const universe = await getEquityUniverse();
   if (universe.tickers.length === 0) return;
 
@@ -29,6 +73,7 @@ async function tick(): Promise<void> {
 
   const catalysts = getCatalystTickers();
   const f = DEFAULT_FILTERS;
+  const adaptiveRvolMin = getAdaptiveRvolMin();
 
   const rawCandidates = quotes
     .filter((q) => {
@@ -38,11 +83,12 @@ async function tick(): Promise<void> {
       const avgVol = q.average_volume ?? 0;
       if (avgVol === 0) return false; // rejeita se RVOL incalculável
       const rvol = vol / avgVol;
+      const passesMaxPrice = f.priceMax === null || price <= f.priceMax;
       return (
         price >= f.priceMin &&
-        price <= f.priceMax &&
+        passesMaxPrice &&
         vol >= f.volumeMin &&
-        rvol >= f.rvolMin &&
+        rvol >= adaptiveRvolMin &&  // 4b: RVOL adaptativo
         change >= f.changeMin
       );
     })
@@ -63,7 +109,7 @@ async function tick(): Promise<void> {
       const equityScore = Math.round(
         Math.min(c.rvol / 5, 1) * 30 +
         Math.min(Math.abs(c.changePct) / 10, 1) * 25 +
-        (c.hasCatalyst ? 1 : 0) * 25 +
+        catalystScore(c.symbol, c.hasCatalyst) +  // 4d: decaimento de catalisador
         rsiMacroScore * 20
       );
       return {
@@ -81,6 +127,13 @@ async function tick(): Promise<void> {
     .sort((a, b) => b.equityScore - a.equityScore)
     .slice(0, 20) // máx 20 candidatos exibidos
     .map((c, idx) => ({ ...c, isTopSetup: idx < 3 }));
+
+  // 4b: Atualizar histórico de RVOL médio para próximos ciclos
+  if (candidates.length > 0) {
+    const avgRvol = candidates.reduce((sum, c) => sum + c.rvol, 0) / candidates.length;
+    rvolHistory.push(Math.round(avgRvol * 10) / 10);
+    if (rvolHistory.length > RVOL_HISTORY_MAX) rvolHistory.shift();
+  }
 
   const open = isMarketOpen();
   setEquityCandidates(candidates, open);

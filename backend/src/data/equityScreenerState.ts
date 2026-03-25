@@ -2,11 +2,11 @@
 import type { EquityCandidate, EquityScreenerPayload, ScreenerFilters } from './equityTypes.js';
 
 export const DEFAULT_FILTERS: ScreenerFilters = {
-  priceMin: 2,
-  priceMax: 20,
-  volumeMin: 300_000,
-  rvolMin: 2.0,
-  changeMin: 3.0,
+  priceMin: 5,
+  priceMax: null,   // sem teto — suporte a ações fracionadas
+  volumeMin: 500_000,
+  rvolMin: 1.5,
+  changeMin: 2.0,
 };
 
 let _candidates: EquityCandidate[] = [];

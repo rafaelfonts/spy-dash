@@ -467,11 +467,16 @@ interface MarketStore {
   equityTrades: EquityTrade[]
   equityAnalysis: AnalysisStructuredEquity | null
   equityAnalysisLoading: boolean
+  analyzingSymbol: string | null
+  equityRegimeVetoed: boolean
+  equityRegimeVetoReasons: string[]
   setEquityCandidates: (candidates: EquityCandidate[], marketOpen: boolean) => void
+  setEquityRegimeVeto: (vetoed: boolean, reasons: string[]) => void
   setEquityWatchlist: (w: WatchlistEntry[]) => void
   setEquityTrades: (t: EquityTrade[]) => void
   setEquityAnalysis: (a: AnalysisStructuredEquity | null) => void
   setEquityAnalysisLoading: (v: boolean) => void
+  setAnalyzingSymbol: (symbol: string | null) => void
 
   alerts: AlertToast[]
   addAlert: (alert: AlertToast) => void
@@ -604,12 +609,18 @@ export const useMarketStore = create<MarketStore>()(
     equityTrades: [] as EquityTrade[],
     equityAnalysis: null as AnalysisStructuredEquity | null,
     equityAnalysisLoading: false,
+    analyzingSymbol: null as string | null,
+    equityRegimeVetoed: false,
+    equityRegimeVetoReasons: [] as string[],
     setEquityCandidates: (candidates, marketOpen) =>
       set({ equityCandidates: candidates, equityMarketOpen: marketOpen }),
+    setEquityRegimeVeto: (vetoed, reasons) =>
+      set({ equityRegimeVetoed: vetoed, equityRegimeVetoReasons: reasons }),
     setEquityWatchlist: (w) => set({ equityWatchlist: w }),
     setEquityTrades: (t) => set({ equityTrades: t }),
     setEquityAnalysis: (a) => set({ equityAnalysis: a }),
     setEquityAnalysisLoading: (v) => set({ equityAnalysisLoading: v }),
+    setAnalyzingSymbol: (symbol) => set({ analyzingSymbol: symbol }),
 
     isDataReady: () => {
       return get().spy.last !== null

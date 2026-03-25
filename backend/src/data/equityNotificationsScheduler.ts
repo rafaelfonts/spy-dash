@@ -4,6 +4,7 @@
 import { cacheGet, cacheSet } from '../lib/cacheStore.js';
 import { sendEmbed } from '../lib/discordClient.js';
 import { getEquityScreenerSnapshot } from './equityScreenerState.js';
+import { checkAndExecuteMaintenanceTrade } from './maintenanceTradeService.js';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -120,6 +121,11 @@ export function startEquityNotificationsScheduler(): void {
     // Resumo semanal: sexta 17:00 ET
     if (dayOfWeek === 5 && hour === 17 && minute >= 0 && minute < 2) {
       await sendWeeklySummary().catch((e) => console.warn('[equityNotifications] Weekly summary failed:', e));
+    }
+
+    // Manutenção de API: último dia útil do mês, 10:30–11:00 ET
+    if (dayOfWeek >= 1 && dayOfWeek <= 5 && hour === 10 && minute >= 30 && minute < 60) {
+      await checkAndExecuteMaintenanceTrade().catch((e) => console.warn('[equityNotifications] Maintenance trade failed:', e));
     }
   }, 60 * 1000); // verifica a cada 60s
 

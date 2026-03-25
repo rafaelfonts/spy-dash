@@ -5,7 +5,10 @@ import { getApiBase } from '../../lib/apiBase'
 import type { AnalysisStructuredEquity as EquityAnalysis } from '../../store/marketStore'
 
 export function EquityScreenerPanel() {
-  const { equityCandidates, equityMarketOpen, equityAnalysisLoading, setEquityAnalysis, setEquityAnalysisLoading } = useMarketStore()
+  const {
+    equityCandidates, equityMarketOpen, equityAnalysisLoading, setEquityAnalysis, setEquityAnalysisLoading,
+    equityRegimeVetoed, equityRegimeVetoReasons,
+  } = useMarketStore()
 
   async function handleAnalyze(symbol: string) {
     setEquityAnalysisLoading(true)
@@ -40,14 +43,23 @@ export function EquityScreenerPanel() {
 
       {/* Filtros ativos */}
       <div className="flex gap-1.5 flex-wrap mb-3">
-        {['$2–$20', 'RVOL >2x', 'Vol >300k', 'Var >3%'].map((f) => (
+        {['≥$5', 'RVOL >1.5x', 'Vol >500k', 'Var >2%'].map((f) => (
           <span key={f} className="text-[10px] bg-bg-elevated text-text-secondary px-2 py-0.5 rounded">{f}</span>
         ))}
       </div>
 
+      {equityRegimeVetoed && (
+        <div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2">
+          <div className="text-xs font-semibold text-red-400 mb-1">⚠️ Regime SPY adverso — screening suspenso</div>
+          {equityRegimeVetoReasons.length > 0 && (
+            <div className="text-[11px] text-red-300/70">{equityRegimeVetoReasons.slice(0, 3).join(' · ')}</div>
+          )}
+        </div>
+      )}
+
       {equityCandidates.length === 0 ? (
         <div className="text-sm text-text-muted text-center py-6">
-          {equityMarketOpen ? 'Nenhum candidato no momento' : 'Aguardando abertura do mercado'}
+          {equityRegimeVetoed ? 'Screening pausado por regime adverso' : equityMarketOpen ? 'Nenhum candidato no momento' : 'Aguardando abertura do mercado'}
         </div>
       ) : (
         <table className="w-full text-xs">
