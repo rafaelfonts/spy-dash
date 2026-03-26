@@ -35,7 +35,7 @@ export function CandidateList({ candidates, selectedSymbol, onSelect }: Props) {
             className={`w-full text-left rounded-md px-3 py-2 border transition-colors ${
               isSelected
                 ? 'bg-blue-900/30 border-blue-600/60'
-                : 'bg-gray-800 border-gray-700 hover:bg-gray-750 hover:border-gray-600'
+                : 'bg-gray-800 border-gray-700 hover:bg-gray-700/80 hover:border-gray-600'
             }`}
           >
             <div className="flex justify-between items-center">

@@ -1,5 +1,6 @@
 // frontend/src/components/options/DeepDivePanel.tsx
 
+import type { ReactNode } from 'react'
 import type { OptionDeepDiveFE, OptionStrategyFE, ScreenerStatus } from '../../store/marketStore'
 
 interface Props {
@@ -19,7 +20,7 @@ function MetricBox({ label, value, color }: { label: string; value: string; colo
   )
 }
 
-function EventWarning({ children, level }: { children: React.ReactNode; level: 'error' | 'warn' | 'info' }) {
+function EventWarning({ children, level }: { children: ReactNode; level: 'error' | 'warn' | 'info' }) {
   const colors = {
     error: 'bg-red-900/30 border-red-600/50 text-red-300',
     warn:  'bg-orange-900/30 border-orange-600/50 text-orange-300',
@@ -89,7 +90,7 @@ export function DeepDivePanel({ symbol, deepDive, strategy, strategyTokens, stat
           <MetricBox
             label="GEX Regime"
             value={deepDive.gexRegime === 'positive' ? 'Positivo' : deepDive.gexRegime === 'negative' ? 'Negativo' : 'N/A'}
-            color={deepDive.gexRegime === 'positive' ? 'text-green-400' : 'text-orange-400'}
+            color={deepDive.gexRegime === 'positive' ? 'text-green-400' : deepDive.gexRegime === 'negative' ? 'text-orange-400' : 'text-gray-400'}
           />
         </div>
       )}
