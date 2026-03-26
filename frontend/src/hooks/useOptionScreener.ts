@@ -35,19 +35,28 @@ export function useOptionScreener() {
         body: JSON.stringify(body),
       })
 
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        const msg =
+          res.status === 504 ? 'Tempo limite — selecione um preset específico e tente novamente' :
+          res.status === 429 ? 'Limite de requisições atingido — aguarde 30s e tente novamente' :
+          res.status === 401 ? 'Sessão expirada — faça login novamente' :
+          `Erro no servidor (${res.status})`
+        throw new Error(msg)
+      }
 
       const json = await res.json() as {
         candidates: OptionCandidateFE[]
         scannedAt: number
         totalScanned: number
         passedFilters: number
+        autoPreset?: ScreenerPresetFE
       }
 
       const meta: OptionScanMetaFE = {
         scannedAt: json.scannedAt,
         totalScanned: json.totalScanned,
         passedFilters: json.passedFilters,
+        ...(json.autoPreset ? { autoPreset: json.autoPreset } : {}),
       }
 
       store.setOptionScreenerCandidates(json.candidates, meta)
@@ -78,7 +87,14 @@ export function useOptionScreener() {
         body: JSON.stringify({ symbol, deltaProfile: useMarketStore.getState().optionScreener.deltaProfile }),
       })
 
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        const msg =
+          res.status === 504 ? 'Tempo limite ao carregar análise — tente novamente' :
+          res.status === 429 ? 'Limite de requisições atingido — aguarde 30s e tente novamente' :
+          res.status === 401 ? 'Sessão expirada — faça login novamente' :
+          `Erro na análise (${res.status})`
+        throw new Error(msg)
+      }
 
       const reader = res.body?.getReader()
       if (!reader) throw new Error('No response stream')

@@ -67,6 +67,8 @@ export interface OptionScreenerScanResult {
   totalScanned: number
   passedFilters: number
   cacheHit: boolean
+  /** Set when the backend auto-adjusted the preset (e.g. no preset + market closed → broad_etfs) */
+  autoPreset?: ScreenerPreset
 }
 
 export interface ScanRequest {

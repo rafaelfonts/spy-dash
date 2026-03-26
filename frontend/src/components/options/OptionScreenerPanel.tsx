@@ -1,6 +1,7 @@
 // frontend/src/components/options/OptionScreenerPanel.tsx
 
 import { useOptionScreener } from '../../hooks/useOptionScreener'
+import { useMarketStore } from '../../store/marketStore'
 import { CandidateList } from './CandidateList'
 import { DeepDivePanel } from './DeepDivePanel'
 import type { ScreenerPresetFE, DeltaProfileFE } from '../../store/marketStore'
@@ -23,6 +24,7 @@ function formatTime(ts: number) {
 
 export function OptionScreenerPanel() {
   const screener = useOptionScreener()
+  const marketOpen = useMarketStore((s) => s.marketOpen)
   const isLoading = screener.status === 'scanning'
 
   return (
@@ -31,6 +33,11 @@ export function OptionScreenerPanel() {
       <div className="bg-card px-4 py-3 border-b border-border-subtle flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <span className="text-[#00ff88] font-bold text-sm">Option Screener</span>
+          {marketOpen === false && (
+            <span className="text-[10px] text-[#ffcc00] bg-[#ffcc00]/10 border border-[#ffcc00]/20 rounded px-1.5 py-0.5">
+              Mercado Fechado
+            </span>
+          )}
           {screener.scanMeta && (
             <span className="text-[10px] text-text-muted">
               {screener.scanMeta.passedFilters} de {screener.scanMeta.totalScanned} · {formatTime(screener.scanMeta.scannedAt)} ET
@@ -88,6 +95,11 @@ export function OptionScreenerPanel() {
       {/* Body */}
       {screener.status === 'idle' && screener.candidates.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-10 gap-3">
+          {marketOpen === false && (
+            <p className="text-[10px] text-[#ffcc00] bg-[#ffcc00]/10 border border-[#ffcc00]/20 rounded px-2.5 py-1">
+              Mercado fechado — filtros de liquidez relaxados automaticamente
+            </p>
+          )}
           <p className="text-text-secondary text-sm">Clique em um preset ou "Varrer Agora" para iniciar a varredura</p>
           <p className="text-text-muted text-xs">
             {screener.deltaProfile === 'conservative' && 'Perfil conservador · Δ 0.15–0.25 · POP 75–85%'}
@@ -119,6 +131,7 @@ export function OptionScreenerPanel() {
                 candidates={screener.candidates}
                 selectedSymbol={screener.selectedSymbol}
                 onSelect={screener.analyzeSymbol}
+                marketOpen={marketOpen}
               />
             )}
           </div>
@@ -137,14 +150,19 @@ export function OptionScreenerPanel() {
       )}
 
       {/* Footer */}
-      {screener.candidates.length > 0 && (
+      {screener.scanMeta && (
         <div className="bg-card border-t border-border-subtle px-4 py-1.5 flex justify-between text-[10px] text-text-muted">
           <span>
-            {screener.scanMeta?.totalScanned ?? '?'} tickers varridos ·{' '}
-            {screener.scanMeta?.passedFilters ?? 0} passaram nos filtros
+            {screener.scanMeta.totalScanned} tickers varridos ·{' '}
+            {screener.scanMeta.passedFilters} passaram nos filtros
             {screener.activePreset && ` · Preset: ${screener.activePreset.replace(/_/g, ' ')}`}
+            {screener.scanMeta.autoPreset && (
+              <span className="text-[#ffcc00] ml-1">
+                · universo limitado a ETFs Amplos (mercado fechado)
+              </span>
+            )}
           </span>
-          <span className="text-[#00ff88]">● Live</span>
+          {screener.candidates.length > 0 && <span className="text-[#00ff88]">● Live</span>}
         </div>
       )}
     </div>

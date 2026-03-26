@@ -13,11 +13,13 @@ import type { MaxPainInput } from '../lib/maxPainCalculator'
 import { calculateIVPercentile } from '../lib/ivPercentileCalculator'
 import { getEventsForSymbol } from '../lib/eventsCalendar'
 import { marketState } from '../data/marketState'
+import { isMarketOpen } from '../lib/time'
 import {
   findATMOption,
   passesFilters,
   buildCandidate,
   DEFAULT_FILTER_CONFIG,
+  CLOSED_MARKET_FILTER_CONFIG,
 } from '../lib/optionScreenerFilters'
 import type { FilterConfig } from '../lib/optionScreenerFilters'
 import {
@@ -38,7 +40,8 @@ import type {
 
 const openai = new OpenAI({ apiKey: CONFIG.OPENAI_API_KEY })
 
-const SCAN_CACHE_TTL = 5 * 60 * 1000  // 5 minutes
+const SCAN_CACHE_TTL_OPEN   = 5  * 60 * 1000  // 5 min during market hours
+const SCAN_CACHE_TTL_CLOSED = 60 * 60 * 1000  // 60 min after hours (data stale)
 
 function scanCacheKey(tickers: string[]): string {
   return `option_screener_scan:${[...tickers].sort().join(',')}`
@@ -48,13 +51,13 @@ function scanCacheKey(tickers: string[]): string {
 // Phase 1 helpers
 // ---------------------------------------------------------------------------
 
-async function scanTicker(symbol: string, minIVR: number): Promise<OptionCandidate | null> {
+async function scanTicker(symbol: string, minIVR: number, marketOpen: boolean): Promise<OptionCandidate | null> {
   try {
     const client = getTradierClient()
     const quotes = await client.getQuotes([symbol])
     if (!quotes || quotes.length === 0) return null
     const quote = quotes[0]
-    if (!quote.last || quote.last < 20) return null
+    if (!quote.last || quote.last < (marketOpen ? 20 : 15)) return null
 
     const expiration = await resolveNearestExpiration(symbol)
     if (!expiration) return null
@@ -75,7 +78,8 @@ async function scanTicker(symbol: string, minIVR: number): Promise<OptionCandida
     const underlyingVol = quote.volume ?? 0
     const avg20dVol = (quote as any).average_volume ?? underlyingVol
 
-    const filterConfig: FilterConfig = { ...DEFAULT_FILTER_CONFIG, minIVR }
+    const baseConfig = marketOpen ? DEFAULT_FILTER_CONFIG : CLOSED_MARKET_FILTER_CONFIG
+    const filterConfig: FilterConfig = { ...baseConfig, minIVR: Math.min(minIVR, baseConfig.minIVR) }
 
     if (!passesFilters(atmCall, underlyingVol, quote.last, ivRank, filterConfig)) return null
 
@@ -169,20 +173,27 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
     async (request, reply) => {
       const { preset, deltaProfile = 'moderate' } = request.body ?? {}
 
-      const tickers = preset ? PRESET_TICKERS[preset] : ALL_TICKERS
-      const minIVR  = preset ? PRESET_IVR_THRESHOLD[preset] : DEFAULT_FILTER_CONFIG.minIVR
+      const marketOpen = isMarketOpen()
+
+      // When market is closed and no preset is selected, limit universe to broad ETFs
+      // to avoid scanning 37+ symbols and hitting Tradier timeouts.
+      const resolvedPreset = preset ?? (marketOpen ? undefined : 'broad_etfs')
+      const tickers = resolvedPreset ? PRESET_TICKERS[resolvedPreset] : ALL_TICKERS
+      const minIVR  = resolvedPreset
+        ? PRESET_IVR_THRESHOLD[resolvedPreset]
+        : (marketOpen ? DEFAULT_FILTER_CONFIG.minIVR : CLOSED_MARKET_FILTER_CONFIG.minIVR)
 
       const cKey = scanCacheKey(tickers)
       const cached = await cacheGet<OptionScreenerScanResult>(cKey)
       if (cached) return reply.send({ ...cached, cacheHit: true })
 
-      // Scan in parallel batches of 10 to respect Tradier rate limits
-      const BATCH = 10
+      // Scan in parallel batches; smaller batch after hours to reduce rate-limit pressure
+      const BATCH = marketOpen ? 10 : 5
       const results: OptionCandidate[] = []
 
       for (let i = 0; i < tickers.length; i += BATCH) {
         const batch = tickers.slice(i, i + BATCH)
-        const settled = await Promise.allSettled(batch.map((sym) => scanTicker(sym, minIVR)))
+        const settled = await Promise.allSettled(batch.map((sym) => scanTicker(sym, minIVR, marketOpen)))
         for (const r of settled) {
           if (r.status === 'fulfilled' && r.value !== null) {
             results.push(r.value)
@@ -200,9 +211,11 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
         totalScanned: tickers.length,
         passedFilters: results.length,
         cacheHit: false,
+        ...(!preset && resolvedPreset ? { autoPreset: resolvedPreset } : {}),
       }
 
-      await cacheSet(cKey, scanResult, SCAN_CACHE_TTL, 'tradier')
+      const cacheTtl = marketOpen ? SCAN_CACHE_TTL_OPEN : SCAN_CACHE_TTL_CLOSED
+      await cacheSet(cKey, scanResult, cacheTtl, 'tradier')
       return reply.send(scanResult)
     },
   )

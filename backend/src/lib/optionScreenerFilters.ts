@@ -25,6 +25,19 @@ export const DEFAULT_FILTER_CONFIG: FilterConfig = {
   minPrice: 20,
 }
 
+// Relaxed config for after-hours scans: volume/spread data is stale when market is closed.
+// IVR and OI are structural (don't reset daily) so those thresholds are kept.
+export const CLOSED_MARKET_FILTER_CONFIG: FilterConfig = {
+  minIVR: 30,
+  maxIVR: 100,
+  minOI: 1_000,
+  maxBidAskAbsolute: 1.00,
+  maxBidAskPct: 0.50,
+  minOptionVolume: 0,
+  minUnderlyingVolume: 100_000,
+  minPrice: 15,
+}
+
 /**
  * Find ATM option (call or put) closest to spot price.
  * Returns the option or null if chain is empty.

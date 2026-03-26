@@ -392,6 +392,7 @@ export interface OptionScanMetaFE {
   scannedAt: number
   totalScanned: number
   passedFilters: number
+  autoPreset?: ScreenerPresetFE
 }
 
 export interface OptionScreenerState {

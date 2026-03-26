@@ -6,6 +6,7 @@ interface Props {
   candidates: OptionCandidateFE[]
   selectedSymbol: string | null
   onSelect: (symbol: string) => void
+  marketOpen?: boolean | null
 }
 
 function scoreColor(score: number): string {
@@ -14,11 +15,21 @@ function scoreColor(score: number): string {
   return 'text-text-secondary'
 }
 
-export function CandidateList({ candidates, selectedSymbol, onSelect }: Props) {
+export function CandidateList({ candidates, selectedSymbol, onSelect, marketOpen }: Props) {
   if (candidates.length === 0) {
     return (
-      <div className="flex items-center justify-center h-32 text-text-secondary text-sm">
-        Nenhum candidato encontrado
+      <div className="flex flex-col items-center justify-center h-32 gap-1.5 px-4 text-center">
+        <p className="text-text-secondary text-sm">Nenhum candidato encontrado</p>
+        {marketOpen === false && (
+          <p className="text-[10px] text-text-muted">
+            Mercado fechado — candidatos baseados em IVR e OI de fechamento
+          </p>
+        )}
+        {marketOpen === true && (
+          <p className="text-[10px] text-text-muted">
+            Nenhum ativo passou nos filtros de liquidez para este preset
+          </p>
+        )}
       </div>
     )
   }
