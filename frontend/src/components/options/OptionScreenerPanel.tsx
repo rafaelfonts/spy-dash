@@ -5,10 +5,10 @@ import { CandidateList } from './CandidateList'
 import { DeepDivePanel } from './DeepDivePanel'
 import type { ScreenerPresetFE, DeltaProfileFE } from '../../store/marketStore'
 
-const PRESETS: { id: ScreenerPresetFE; label: string; icon: string }[] = [
-  { id: 'flight_to_safety', label: 'Flight to Safety', icon: '🛡️' },
-  { id: 'blue_chips',       label: 'Blue Chips',        icon: '📊' },
-  { id: 'broad_etfs',       label: 'ETFs Amplos',        icon: '🌐' },
+const PRESETS: { id: ScreenerPresetFE; label: string }[] = [
+  { id: 'flight_to_safety', label: 'Flight to Safety' },
+  { id: 'blue_chips',       label: 'Blue Chips'        },
+  { id: 'broad_etfs',       label: 'ETFs Amplos'        },
 ]
 
 const DELTA_PROFILES: { id: DeltaProfileFE; label: string }[] = [
@@ -30,7 +30,7 @@ export function OptionScreenerPanel() {
       {/* Header */}
       <div className="bg-card px-4 py-3 border-b border-border-subtle flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <span className="text-[#00ff88] font-bold text-sm">⚡ Option Screener</span>
+          <span className="text-[#00ff88] font-bold text-sm">Option Screener</span>
           {screener.scanMeta && (
             <span className="text-[10px] text-text-muted">
               {screener.scanMeta.passedFilters} de {screener.scanMeta.totalScanned} · {formatTime(screener.scanMeta.scannedAt)} ET
@@ -51,7 +51,7 @@ export function OptionScreenerPanel() {
                   : 'bg-bg-elevated border-border-subtle text-text-secondary hover:border-border'
               } disabled:opacity-50 disabled:cursor-not-allowed`}
             >
-              {p.icon} {p.label}
+              {p.label}
             </button>
           ))}
         </div>
@@ -80,7 +80,7 @@ export function OptionScreenerPanel() {
               Varrendo...
             </>
           ) : (
-            '▶ Varrer Agora'
+            'Varrer Agora'
           )}
         </button>
       </div>
@@ -88,7 +88,6 @@ export function OptionScreenerPanel() {
       {/* Body */}
       {screener.status === 'idle' && screener.candidates.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-10 gap-3">
-          <div className="text-3xl">🔍</div>
           <p className="text-text-secondary text-sm">Clique em um preset ou "Varrer Agora" para iniciar a varredura</p>
           <p className="text-text-muted text-xs">
             {screener.deltaProfile === 'conservative' && 'Perfil conservador · Δ 0.15–0.25 · POP 75–85%'}
@@ -98,7 +97,7 @@ export function OptionScreenerPanel() {
         </div>
       ) : screener.status === 'error' ? (
         <div className="flex flex-col items-center justify-center py-8 gap-2">
-          <p className="text-[#ff4444] text-sm">⚠️ {screener.error}</p>
+          <p className="text-[#ff4444] text-sm">[!] {screener.error}</p>
           <button
             onClick={() => screener.runScan()}
             className="text-xs text-text-secondary underline hover:text-text-primary"
