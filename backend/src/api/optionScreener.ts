@@ -265,9 +265,12 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
 
         // P/C Ratio
         const pcrResult = await calculatePutCallRatio(sym).catch(() => null)
-        const putCallRatio = pcrResult && pcrResult.callVolume > 0
-          ? pcrResult.putVolume / pcrResult.callVolume
-          : null
+        const putCallRatio = (() => {
+          if (!pcrResult) return null
+          const totalPut  = (pcrResult.putVolume  ?? 0) + (pcrResult.putOI  ?? 0)
+          const totalCall = (pcrResult.callVolume ?? 0) + (pcrResult.callOI ?? 0)
+          return totalCall > 0 ? totalPut / totalCall : null
+        })()
 
         // GEX regime proxy
         const totalCallOI = options.filter((o) => o.option_type === 'call').reduce((s, o) => s + o.open_interest, 0)
@@ -318,8 +321,8 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
           sendEvent('strategy', strategy)
         } catch {
           // If AI didn't return valid JSON, send raw text as rationale
-          const fallback: OptionStrategy = {
-            type: 'cash_secured_put',
+          const fallback = {
+            type: 'cash_secured_put' as const,
             symbol: sym,
             strikes: [],
             expiration,
@@ -332,7 +335,7 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
             maxLoss: null,
             breakevens: [],
             rationale: fullText,
-          }
+          } satisfies OptionStrategy
           sendEvent('strategy', fallback)
         }
 
