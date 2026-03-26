@@ -461,7 +461,19 @@ export async function generateVideoScript(): Promise<void> {
       throw new Error('Stage 1 falhou: JSON inválido retornado pelo modelo')
     }
 
-    console.log(`[VideoScript] Stage 1 concluído — arquétipo ${curationData.hook_archetype}, loop ${curationData.loop_type}`)
+    console.log(`[VideoScript] Stage 1 concluído — arquétipo ${curationData.hook_archetype}, loop ${curationData.loop_type}, par #${curationData.selected_pair_id}`)
+
+    // Resolve the selected pair from the bank — hook/loop/bridge come from here, not from the model
+    const selectedPair = HOOKS_AND_LOOPS_BANK.find((p) => p.id === curationData.selected_pair_id)
+      ?? HOOKS_AND_LOOPS_BANK.find((p) => p.archetype === curationData.hook_archetype && p.loopType === curationData.loop_type)
+      ?? HOOKS_AND_LOOPS_BANK[0]
+
+    // Resolve $[LEVEL] placeholder if this pair uses it
+    const resolvedHook = selectedPair.hasLevelPlaceholder && keyLevel != null
+      ? selectedPair.hook.replace('$[LEVEL]', `$${keyLevel.toFixed(2)}`)
+      : selectedPair.hook
+    const resolvedLoop = selectedPair.loop
+    const resolvedBridge = selectedPair.bridge
 
     // -----------------------------------------------------------------------
     // Stage 2 — Script assembly
@@ -469,6 +481,9 @@ export async function generateVideoScript(): Promise<void> {
 
     const stage2Input = buildStage2Input({
       curation: curationData,
+      selectedHook: resolvedHook,
+      selectedLoop: resolvedLoop,
+      selectedBridge: resolvedBridge,
       spyPrice,
       vixValue,
       ivRank,
@@ -483,7 +498,7 @@ export async function generateVideoScript(): Promise<void> {
       topHeadlines: newsSnapshot.headlines.slice(0, 3).map((h) => h.title ?? h.summary ?? '').filter(Boolean),
     })
 
-    const scriptRaw = await callGPTMini(buildStage2System(curationData), stage2Input)
+    const scriptRaw = await callGPTMini(buildStage2System(curationData, resolvedHook, resolvedLoop, resolvedBridge), stage2Input)
     const scriptData = parseJSON<Stage2Output>(scriptRaw)
 
     if (!scriptData) {
@@ -495,7 +510,7 @@ export async function generateVideoScript(): Promise<void> {
       narrativeAngle: curationData.narrative_angle,
       hookArchetype: curationData.hook_archetype,
       loopType: curationData.loop_type,
-      hook: curationData.selected_hook,
+      hook: resolvedHook,
       kasperBullets: scriptData.kasper_bullets,
       voiceover: scriptData.voiceover,
       cartela: {
@@ -504,8 +519,8 @@ export async function generateVideoScript(): Promise<void> {
         gexRegime: scriptData.cartela.gex_regime,
         keyLevel: scriptData.cartela.key_level,
       },
-      loop: curationData.selected_loop,
-      bridge: curationData.selected_bridge,
+      loop: resolvedLoop,
+      bridge: resolvedBridge,
       cta: scriptData.cta,
       firstPinnedComment: curationData.first_pinned_comment ?? undefined,
       metadata: {
@@ -581,7 +596,7 @@ function buildStage1System(stylePairs: HookLoopPair[], keyLevel: number | null):
 function buildStage1SystemBase(styleSection: string): string {
   return `You are a financial content strategist for Kasper, an AI market analyst on TikTok and YouTube Shorts.
 
-Your job is NOT to write the video. Your job is to identify the STORY of the day.
+Your job is NOT to write the video. Your job is to identify the STORY of the day and select the best pre-written pair from the bank below.
 
 You receive three inputs:
 1. Pre-market briefing (today)
@@ -598,42 +613,26 @@ Rules for narrative_angle:
   "Gamma is flipping zones today — whoever controls $680 controls the week"
   "Yesterday's quiet close masked a setup that looks very different this morning"
 
-Rules for hook_archetype selection (1–6):
+Rules for hook_archetype (1–6):
 1 = Contradiction of Data (two signals pointing opposite directions)
 2 = Threshold Alert (a critical level being tested)
 3 = Insider Knowledge (something most traders don't know how to read)
 4 = Yesterday vs Today (post-market vs pre-market narrative shift)
 5 = High Stakes Question (a binary outcome the market will decide today)
 6 = Recognizable Pattern (setup echoes a known historical configuration)
-- Choose the archetype that best frames the narrative_angle
-- Prefer archetypes that create information asymmetry
-- Use Archetype 4 only if post-market data is available
 
-Rules for loop_type selection (A/B/C):
-A = Open Resolution — for hooks of contradiction or question; doesn't resolve, deepens
-B = Identity Reinforcement — for insider knowledge hooks; viewer becomes "someone who knows"
-C = Time Urgency — for setups with clear intraday catalyst; creates legitimate FOMO
+Rules for loop_type (A/B/C):
+A = Open Resolution — tension deepens, doesn't resolve
+B = Identity Reinforcement — viewer becomes "someone who knows"
+C = Time Urgency — creates legitimate FOMO with intraday catalyst
 - Pair: Archetypes 1,5 → A; Archetypes 3,4 → B; Archetypes 2,6 → C
 
-Rules for hook_candidates and loop_candidates:
-- Generate exactly 3 options each
-- Each under 15 words
-- Hooks must NOT start with "Today"
-- Loops must NOT repeat hook verbatim — create an echo, not a copy
-
-Rules for bridge_candidates:
-- Generate exactly 3 options matching the bridge rules for the selected loop_type
-- Loop Type A: confirm the tension persists OR ask the question the hook will answer
-- Loop Type B: offer a second learning layer or a self-assessment challenge
-- Loop Type C: escalate the consequence or make urgency personal ("you", "your side")
-- Max 8 words. Must NOT contain the words "replay", "loop", or "rewatch"
-- Must sound like Kasper's thought or a natural continuation — never a replay announcement
-
-Rules for selected_hook, selected_loop, and selected_bridge:
-- Select the best option from each set of candidates
-- selected_hook must create genuine curiosity without being clickbait
-- selected_loop must feel like a satisfying echo
-- selected_bridge must connect seamlessly from loop back to hook
+Rules for selected_pair_id:
+- You MUST choose ONE pair id from the bank below (integers 1–20)
+- The chosen pair's hook, loop, and bridge will be used VERBATIM in the video — do not write them yourself
+- Choose the pair whose trigger best matches today's market context
+- Use Archetype 4 pairs (ids 8, 14) only if post-market data from yesterday is available
+- selected_pair_id MUST be one of the pair ids listed below
 
 Rules for first_pinned_comment:
 - ≤200 characters total
@@ -649,15 +648,10 @@ Return ONLY valid JSON. No preamble. No markdown. Schema:
   "narrative_angle": "string",
   "hook_archetype": 1,
   "loop_type": "A",
-  "hook_candidates": ["string","string","string"],
-  "loop_candidates": ["string","string","string"],
-  "bridge_candidates": ["string","string","string"],
   "key_tension": "string",
   "key_levels": ["$680","$670"],
   "market_mood": "bullish|bearish|coiling|uncertain",
-  "selected_hook": "string",
-  "selected_loop": "string",
-  "selected_bridge": "string",
+  "selected_pair_id": 1,
   "first_pinned_comment": "string"
 }
 
@@ -670,16 +664,16 @@ ${styleSection}`
 // Stage 2 system prompt builder — Script Assembly (Kasper v2)
 // ---------------------------------------------------------------------------
 
-function buildStage2System(curation: Stage1Output): string {
+function buildStage2System(curation: Stage1Output, selectedHook: string, selectedLoop: string, selectedBridge: string): string {
   return `You are Kasper, an AI market analyst. Never say "as an AI".
 
 Your voice: confident, slightly fast-paced, analytically sharp.
 Anchor phrases (use 1 per video, rotating): "Here's what the data says…" | "Watch this level." | "The market doesn't lie." | "Most traders miss this." | "This is the setup."
 
 FIXED CONTENT — already locked, do NOT generate or change these:
-Hook: "${curation.selected_hook}"
-Loop: "${curation.selected_loop}"
-Bridge: "${curation.selected_bridge}"
+Hook: "${selectedHook}"
+Loop: "${selectedLoop}"
+Bridge: "${selectedBridge}"
 
 TASK: Generate ONLY the content listed in the schema below.
 Build kasper_bullets, voiceover, cartela, cta, and metadata around the fixed hook above.
@@ -817,6 +811,9 @@ function buildStage1Input(d: Stage1InputData): string {
 
 interface Stage2InputData {
   curation: Stage1Output
+  selectedHook: string    // resolved from bank by selected_pair_id
+  selectedLoop: string
+  selectedBridge: string
   spyPrice: number | null
   vixValue: number | null
   ivRank: number | null
@@ -842,8 +839,8 @@ function buildStage2Input(d: Stage2InputData): string {
     key_tension: d.curation.key_tension,
     key_levels: d.curation.key_levels,
     market_mood: d.curation.market_mood,
-    selected_hook: d.curation.selected_hook,
-    selected_loop: d.curation.selected_loop,
+    selected_hook: d.selectedHook,
+    selected_loop: d.selectedLoop,
   }, null, 2))
   lines.push('')
 
@@ -1032,15 +1029,10 @@ interface Stage1Output {
   narrative_angle: string
   hook_archetype: number
   loop_type: 'A' | 'B' | 'C'
-  hook_candidates: string[]
-  loop_candidates: string[]
-  bridge_candidates: string[]
   key_tension: string
   key_levels: string[]
   market_mood: 'bullish' | 'bearish' | 'coiling' | 'uncertain'
-  selected_hook: string
-  selected_loop: string
-  selected_bridge: string
+  selected_pair_id: number   // id of the chosen HookLoopPair from the bank (1–20)
   first_pinned_comment: string
 }
 
