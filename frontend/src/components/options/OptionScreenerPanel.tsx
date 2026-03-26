@@ -60,7 +60,7 @@ export function OptionScreenerPanel() {
         <select
           value={screener.deltaProfile}
           onChange={(e) => screener.setDeltaProfile(e.target.value as DeltaProfileFE)}
-          className="text-[11px] bg-card border border-border-subtle text-text-primary rounded px-2 py-1"
+          className="text-[11px] bg-bg-elevated border border-border-subtle text-text-primary rounded px-2 py-1"
           disabled={isLoading}
         >
           {DELTA_PROFILES.map((p) => (
