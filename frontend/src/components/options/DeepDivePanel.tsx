@@ -109,16 +109,16 @@ export function DeepDivePanel({ symbol, deepDive, strategy, strategyTokens, stat
         <div className="flex flex-col gap-1">
           <p className="text-[9px] text-text-muted uppercase tracking-wider">Eventos</p>
           {events.earningsWithinDTE && (
-            <EventWarning level="error">⚠️ Earnings durante a operação: {events.nextEarnings}</EventWarning>
+            <EventWarning level="error">[!] Earnings durante a operação: {events.nextEarnings}</EventWarning>
           )}
           {events.exDivWithin5Days && (
-            <EventWarning level="warn">⚠️ Ex-dividend em {events.exDividendDate} — risco de exercício antecipado</EventWarning>
+            <EventWarning level="warn">[!] Ex-dividend em {events.exDividendDate} — risco de exercício antecipado</EventWarning>
           )}
           {events.upcomingMacroEvents.map((e) => (
-            <EventWarning key={e} level="info">📅 {e}</EventWarning>
+            <EventWarning key={e} level="info">{e}</EventWarning>
           ))}
           {!events.earningsWithinDTE && !events.exDivWithin5Days && events.upcomingMacroEvents.length === 0 && (
-            <div className="text-[10px] text-[#00ff88]">✅ Sem eventos de risco no período</div>
+            <div className="text-[10px] text-[#00ff88]">Sem eventos de risco no período</div>
           )}
         </div>
       )}
@@ -127,7 +127,7 @@ export function DeepDivePanel({ symbol, deepDive, strategy, strategyTokens, stat
       {(strategy || strategyTokens) && (
         <div className="bg-[#00ff88]/5 border border-[#00ff88]/20 rounded-md p-3">
           <p className="text-[10px] text-[#00ff88] font-bold mb-2">
-            🤖 Sugestão IA — {strategy?.type?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) ?? '...'}
+            Sugestão IA — {strategy?.type?.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) ?? '...'}
           </p>
           {strategy ? (
             <>
