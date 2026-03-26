@@ -320,6 +320,93 @@ export interface EquityScreenerPayload {
   capturedAt: number
 }
 
+// --- Option Screener types ---
+export interface OptionCandidateFE {
+  symbol: string
+  price: number
+  ivRank: number
+  bidAskSpread: number
+  spreadPct: number
+  openInterest: number
+  optionVolume: number
+  underlyingVolume: number
+  liquidityScore: number
+  nearestExpiration: string
+  lastUpdated: number
+}
+
+export type DeltaProfileFE = 'conservative' | 'moderate' | 'aggressive'
+export type ScreenerPresetFE = 'flight_to_safety' | 'blue_chips' | 'broad_etfs'
+export type ScreenerStatus = 'idle' | 'scanning' | 'results' | 'analyzing' | 'streaming' | 'error'
+
+export interface OptionEventsFE {
+  nextEarnings: string | null
+  exDividendDate: string | null
+  earningsWithinDTE: boolean
+  exDivWithin5Days: boolean
+  upcomingMacroEvents: string[]
+}
+
+export interface IVSkewFE {
+  callIV: number
+  putIV: number
+  skew: number
+}
+
+export interface MaxPainFE {
+  maxPainStrike: number
+  distanceFromSpot: number
+  distancePct: number
+  pinRisk: 'high' | 'moderate' | 'low'
+}
+
+export interface OptionDeepDiveFE {
+  symbol: string
+  price: number
+  ivRank: number
+  ivPercentile: number | null
+  maxPain: MaxPainFE | null
+  putCallRatio: number | null
+  gexRegime: 'positive' | 'negative' | null
+  ivSkew: IVSkewFE | null
+  events: OptionEventsFE
+}
+
+export interface OptionStrategyFE {
+  type: string
+  symbol: string
+  strikes: number[]
+  expiration: string
+  dte: number
+  credit: number | null
+  debit: number | null
+  delta: number
+  popEstimate: number
+  maxProfit: number
+  maxLoss: number | null
+  breakevens: number[]
+  rationale: string
+}
+
+export interface OptionScanMetaFE {
+  scannedAt: number
+  totalScanned: number
+  passedFilters: number
+}
+
+export interface OptionScreenerState {
+  status: ScreenerStatus
+  candidates: OptionCandidateFE[]
+  selectedSymbol: string | null
+  deepDive: OptionDeepDiveFE | null
+  strategy: OptionStrategyFE | null
+  strategyTokens: string
+  scanMeta: OptionScanMetaFE | null
+  error: string | null
+  activePreset: ScreenerPresetFE | null
+  deltaProfile: DeltaProfileFE
+}
+
 // Live regime preview — computed every SSE tick, available before first AI analysis
 export interface RegimePreviewData {
   score: number
@@ -482,6 +569,19 @@ interface MarketStore {
   addAlert: (alert: AlertToast) => void
   dismissAlert: (id: string) => void
   isDataReady: () => boolean
+
+  // Option Screener state
+  optionScreener: OptionScreenerState
+  setOptionScreenerStatus: (status: ScreenerStatus) => void
+  setOptionScreenerCandidates: (candidates: OptionCandidateFE[], meta: OptionScanMetaFE) => void
+  setOptionScreenerSelected: (symbol: string | null) => void
+  setOptionScreenerDeepDive: (deepDive: OptionDeepDiveFE | null) => void
+  setOptionScreenerStrategy: (strategy: OptionStrategyFE | null) => void
+  appendOptionScreenerToken: (token: string) => void
+  resetOptionScreenerAnalysis: () => void
+  setOptionScreenerError: (error: string | null) => void
+  setOptionScreenerPreset: (preset: ScreenerPresetFE | null) => void
+  setOptionScreenerDeltaProfile: (profile: DeltaProfileFE) => void
 }
 
 const initialSPY: SPYData = {
@@ -621,6 +721,62 @@ export const useMarketStore = create<MarketStore>()(
     setEquityAnalysis: (a) => set({ equityAnalysis: a }),
     setEquityAnalysisLoading: (v) => set({ equityAnalysisLoading: v }),
     setAnalyzingSymbol: (symbol) => set({ analyzingSymbol: symbol }),
+
+    // Option Screener state
+    optionScreener: {
+      status: 'idle',
+      candidates: [],
+      selectedSymbol: null,
+      deepDive: null,
+      strategy: null,
+      strategyTokens: '',
+      scanMeta: null,
+      error: null,
+      activePreset: null,
+      deltaProfile: 'moderate',
+    },
+    setOptionScreenerStatus: (status) =>
+      set((s) => ({ optionScreener: { ...s.optionScreener, status } })),
+    setOptionScreenerCandidates: (candidates, meta) =>
+      set((s) => ({
+        optionScreener: {
+          ...s.optionScreener,
+          candidates,
+          scanMeta: meta,
+          status: 'results',
+          error: null,
+        },
+      })),
+    setOptionScreenerSelected: (symbol) =>
+      set((s) => ({ optionScreener: { ...s.optionScreener, selectedSymbol: symbol } })),
+    setOptionScreenerDeepDive: (deepDive) =>
+      set((s) => ({ optionScreener: { ...s.optionScreener, deepDive } })),
+    setOptionScreenerStrategy: (strategy) =>
+      set((s) => ({ optionScreener: { ...s.optionScreener, strategy, status: 'results' } })),
+    appendOptionScreenerToken: (token) =>
+      set((s) => ({
+        optionScreener: {
+          ...s.optionScreener,
+          strategyTokens: s.optionScreener.strategyTokens + token,
+          status: 'streaming',
+        },
+      })),
+    resetOptionScreenerAnalysis: () =>
+      set((s) => ({
+        optionScreener: {
+          ...s.optionScreener,
+          deepDive: null,
+          strategy: null,
+          strategyTokens: '',
+          status: s.optionScreener.candidates.length > 0 ? 'results' : 'idle',
+        },
+      })),
+    setOptionScreenerError: (error) =>
+      set((s) => ({ optionScreener: { ...s.optionScreener, error, status: 'error' } })),
+    setOptionScreenerPreset: (preset) =>
+      set((s) => ({ optionScreener: { ...s.optionScreener, activePreset: preset } })),
+    setOptionScreenerDeltaProfile: (profile) =>
+      set((s) => ({ optionScreener: { ...s.optionScreener, deltaProfile: profile } })),
 
     isDataReady: () => {
       return get().spy.last !== null
