@@ -8,8 +8,8 @@ import { newsSnapshot } from '../data/marketState'
 
 const CACHE_TTL = 24 * 60 * 60 * 1000  // 24h
 
-function cacheKey(symbol: string) {
-  return `option_screener_events:${symbol}`
+function cacheKey(symbol: string, dte: number) {
+  return `option_screener_events:${symbol}:${dte}`
 }
 
 function todayET(): string {
@@ -40,7 +40,7 @@ export async function getEventsForSymbol(symbol: string, dte: number = 60): Prom
     }
   }
 
-  const cached = await cacheGet<OptionEvents>(cacheKey(symbol))
+  const cached = await cacheGet<OptionEvents>(cacheKey(symbol, dte))
   if (cached) return cached
 
   const today = todayET()
@@ -84,7 +84,7 @@ export async function getEventsForSymbol(symbol: string, dte: number = 60): Prom
   // Macro events within DTE from in-memory snapshot
   const macroEvents: MacroEvent[] = newsSnapshot.macroEvents ?? []
   const upcomingMacroEvents = macroEvents
-    .filter((e) => e.impact === 'high' && e.time && e.time >= today && e.time <= horizon)
+    .filter((e) => e.impact === 'high' && e.time && e.time.slice(0, 10) >= today && e.time.slice(0, 10) <= horizon)
     .map((e) => `${e.event} ${e.time}`)
     .slice(0, 3)
 
@@ -96,6 +96,6 @@ export async function getEventsForSymbol(symbol: string, dte: number = 60): Prom
     upcomingMacroEvents,
   }
 
-  await cacheSet(cacheKey(symbol), result, CACHE_TTL, 'finnhub')
+  await cacheSet(cacheKey(symbol, dte), result, CACHE_TTL, 'finnhub')
   return result
 }

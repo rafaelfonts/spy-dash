@@ -38,7 +38,8 @@ async function fetchTastytradeIVHistory(symbol: string): Promise<IVHistoryEntry[
       date: e.date,
       iv: parseFloat(e.implied_volatility) * 100,
     }))
-  } catch {
+  } catch (err) {
+    console.warn(`[IVPercentile] Tastytrade history fetch failed for ${symbol}:`, err)
     return []
   }
 }
@@ -60,8 +61,9 @@ export async function calculateIVPercentile(
     await cacheSet(cacheKey(symbol), history, CACHE_TTL, 'tastytrade')
   }
 
-  // Use up to LOOKBACK_DAYS most recent entries
-  const recent = history.slice(-LOOKBACK_DAYS)
+  // Sort ascending by date, then take the most recent LOOKBACK_DAYS entries
+  const sorted = [...history].sort((a, b) => a.date.localeCompare(b.date))
+  const recent = sorted.slice(-LOOKBACK_DAYS)
   if (recent.length < 20) return null // insufficient data
 
   const belowCount = recent.filter((e) => e.iv < currentIV).length
