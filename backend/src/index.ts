@@ -111,7 +111,9 @@ async function bootstrap(): Promise<void> {
     }
     const { redis } = await import('./lib/cacheStore')
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
-    await redis.del(`cache:video_script:${today}`, `lock:video_script:${today}`)
+    // cacheGet/cacheSet prefix keys with 'cache:' internally, so the actual Redis key is 'cache:cache:video_script:...'
+    // The lock key is managed directly via redis.set (no cacheStore wrapper), so no double prefix
+    await redis.del(`cache:cache:video_script:${today}`, `lock:video_script:${today}`)
     generateVideoScript().catch((err) =>
       console.error('[Admin] trigger-video-script error:', err),
     )
