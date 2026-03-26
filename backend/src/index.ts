@@ -101,6 +101,24 @@ async function bootstrap(): Promise<void> {
   // Rota pública de health check
   await registerHealth(fastify)
 
+  // Admin: force Kasper video script generation — protected by HEALTH_SECRET
+  fastify.post('/admin/trigger-video-script', async (request, reply) => {
+    const secret = CONFIG.HEALTH_SECRET
+    const provided = (request.headers['x-admin-secret'] as string) ?? ''
+    if (!secret || provided !== secret) {
+      reply.code(401)
+      return { error: 'Unauthorized' }
+    }
+    const { redis } = await import('./lib/cacheStore')
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+    await redis.del(`cache:video_script:${today}`, `lock:video_script:${today}`)
+    generateVideoScript().catch((err) =>
+      console.error('[Admin] trigger-video-script error:', err),
+    )
+    reply.code(202)
+    return { ok: true, message: `Geração iniciada para ${today} — verifique #roteiro em ~30s` }
+  })
+
   // Rotas protegidas por JWT Supabase
   await fastify.register(async (app) => {
     app.addHook('preHandler', requireAuth)
@@ -134,17 +152,6 @@ async function bootstrap(): Promise<void> {
       return { ok: true, name, status: 'CLOSED' }
     })
 
-    // Admin: force Kasper video script generation (bypasses cooldown via Redis key deletion)
-    app.post('/admin/trigger-video-script', async (_request, reply) => {
-      const { redis } = await import('./lib/cacheStore')
-      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
-      await redis.del(`cache:video_script:${today}`, `lock:video_script:${today}`)
-      generateVideoScript().catch((err) =>
-        console.error('[Admin] trigger-video-script error:', err),
-      )
-      reply.code(202)
-      return { ok: true, message: `Geração iniciada para ${today} — verifique #roteiro em ~30s` }
-    })
   })
 
   // Start server immediately — health endpoint must be available without delay.
