@@ -498,7 +498,7 @@ export async function generateVideoScript(): Promise<void> {
       topHeadlines: newsSnapshot.headlines.slice(0, 3).map((h) => h.title ?? h.summary ?? '').filter(Boolean),
     })
 
-    const scriptRaw = await callGPTMini(buildStage2System(curationData, resolvedHook, resolvedLoop, resolvedBridge), stage2Input)
+    const scriptRaw = await callGPTMini(buildStage2System(curationData, resolvedHook, resolvedLoop, resolvedBridge, selectedPair.archetype), stage2Input)
     const scriptData = parseJSON<Stage2Output>(scriptRaw)
 
     if (!scriptData) {
@@ -508,8 +508,8 @@ export async function generateVideoScript(): Promise<void> {
     const script: VideoScript = {
       generatedAt: new Date().toISOString(),
       narrativeAngle: curationData.narrative_angle,
-      hookArchetype: curationData.hook_archetype,
-      loopType: curationData.loop_type,
+      hookArchetype: selectedPair.archetype,
+      loopType: selectedPair.loopType,
       hook: resolvedHook,
       kasperBullets: scriptData.kasper_bullets,
       voiceover: scriptData.voiceover,
@@ -664,7 +664,7 @@ ${styleSection}`
 // Stage 2 system prompt builder — Script Assembly (Kasper v2)
 // ---------------------------------------------------------------------------
 
-function buildStage2System(curation: Stage1Output, selectedHook: string, selectedLoop: string, selectedBridge: string): string {
+function buildStage2System(_curation: Stage1Output, selectedHook: string, selectedLoop: string, selectedBridge: string, resolvedArchetype: number): string {
   return `You are Kasper, an AI market analyst. Never say "as an AI".
 
 Your voice: confident, slightly fast-paced, analytically sharp.
@@ -679,9 +679,9 @@ TASK: Generate ONLY the content listed in the schema below.
 Build kasper_bullets, voiceover, cartela, cta, and metadata around the fixed hook above.
 The hook sets the tone, archetype, and narrative angle for everything you write.
 
-KASPER BULLETS [archetype ${curation.hook_archetype}] RULES:
+KASPER BULLETS [archetype ${resolvedArchetype}] RULES:
 - Exactly 3 bullets, ≤12 words each
-${getBulletRules(curation.hook_archetype)}
+${getBulletRules(resolvedArchetype)}
 - Always ends with [pause 1s]
 
 VOICEOVER RULES:
