@@ -22,7 +22,7 @@ export function useOptionScreener() {
     try {
       const authHeader = await getAuthHeader()
       const body: { preset?: ScreenerPresetFE; deltaProfile: DeltaProfileFE } = {
-        deltaProfile: optionScreener.deltaProfile,
+        deltaProfile: useMarketStore.getState().optionScreener.deltaProfile,
       }
       if (preset) body.preset = preset
 
@@ -75,7 +75,7 @@ export function useOptionScreener() {
           'Content-Type': 'application/json',
           Authorization: authHeader,
         },
-        body: JSON.stringify({ symbol, deltaProfile: optionScreener.deltaProfile }),
+        body: JSON.stringify({ symbol, deltaProfile: useMarketStore.getState().optionScreener.deltaProfile }),
       })
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -85,6 +85,7 @@ export function useOptionScreener() {
 
       const decoder = new TextDecoder()
       let buffer = ''
+      let currentEvent = ''
 
       while (true) {
         const { done, value } = await reader.read()
@@ -94,7 +95,6 @@ export function useOptionScreener() {
         const lines = buffer.split('\n')
         buffer = lines.pop() ?? ''
 
-        let currentEvent = ''
         for (const line of lines) {
           if (line.startsWith('event: ')) {
             currentEvent = line.slice(7).trim()
@@ -117,6 +117,7 @@ export function useOptionScreener() {
           }
         }
       }
+      store.setOptionScreenerStatus('results')
     } catch (err) {
       store.setOptionScreenerError(err instanceof Error ? err.message : 'Erro na análise')
     }
