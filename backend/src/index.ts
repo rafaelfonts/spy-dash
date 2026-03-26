@@ -47,6 +47,7 @@ import { registerSignalMetrics } from './api/signalMetrics'
 import { registerEquityAnalyzeRoute } from './api/equityAnalyze.js'
 import { registerEquityTradesRoutes } from './api/equityTrades.js'
 import { registerEquityWatchlistRoutes } from './api/equityWatchlist.js'
+import { registerOptionScreener } from './api/optionScreener'
 import { getOptionChain } from './data/optionChain'
 import { requireAuth } from './middleware/authMiddleware'
 import { restoreSnapshotsFromCache } from './lib/restoreCache'
@@ -136,6 +137,7 @@ async function bootstrap(): Promise<void> {
     await registerEquityAnalyzeRoute(app)
     await registerEquityTradesRoutes(app)
     await registerEquityWatchlistRoutes(app)
+    await registerOptionScreener(app)
     app.get('/api/option-chain', async () => {
       return await getOptionChain()
     })
