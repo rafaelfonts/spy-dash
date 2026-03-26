@@ -367,7 +367,7 @@ export function RegimeDashboard() {
   const dist = output?.price_distribution ?? regimePreview?.priceDistribution ?? null
 
   return (
-    <div className="bg-bg-elevated border border-border-subtle rounded-xl p-4 space-y-3">
+    <div className="card space-y-3">
 
       {/* ── Header ── */}
       <div className="text-[11px] font-semibold text-text-muted uppercase tracking-wide">

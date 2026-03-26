@@ -26,7 +26,7 @@ export function OptionScreenerPanel() {
   const isLoading = screener.status === 'scanning'
 
   return (
-    <div className="bg-bg-elevated border border-border-subtle rounded-xl overflow-hidden">
+    <div className="card" style={{ padding: 0 }}>
       {/* Header */}
       <div className="bg-card px-4 py-3 border-b border-border-subtle flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2 flex-1 min-w-0">
