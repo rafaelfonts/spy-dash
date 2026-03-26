@@ -17,7 +17,7 @@ import { startVIXTermStructurePoller } from './data/vixTermStructurePoller'
 import { startSkewPoller } from './data/skewPoller'
 import { startTechnicalIndicatorsPoller } from './data/technicalIndicatorsPoller'
 import { startPreMarketScheduler, restoreBriefingFromCache } from './data/preMarketBriefing'
-import { startVideoScriptScheduler, restoreVideoScriptFromCache } from './data/videoScriptService'
+import { startVideoScriptScheduler, restoreVideoScriptFromCache, generateVideoScript } from './data/videoScriptService'
 import { startScheduledSignalScheduler } from './data/scheduledSignalService'
 import { startPortfolioTrackerScheduler, refreshPortfolioSnapshot } from './data/portfolioTrackerService'
 import { startCBOEPCRScheduler } from './data/cboePCRPoller'
@@ -132,6 +132,18 @@ async function bootstrap(): Promise<void> {
         return { error: `Circuit breaker '${name}' not found` }
       }
       return { ok: true, name, status: 'CLOSED' }
+    })
+
+    // Admin: force Kasper video script generation (bypasses cooldown via Redis key deletion)
+    app.post('/admin/trigger-video-script', async (_request, reply) => {
+      const { redis } = await import('./lib/cacheStore')
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+      await redis.del(`cache:video_script:${today}`, `lock:video_script:${today}`)
+      generateVideoScript().catch((err) =>
+        console.error('[Admin] trigger-video-script error:', err),
+      )
+      reply.code(202)
+      return { ok: true, message: `Geração iniciada para ${today} — verifique #roteiro em ~30s` }
     })
   })
 

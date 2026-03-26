@@ -364,7 +364,7 @@ export function startVideoScriptScheduler(): void {
 // Core generator
 // ---------------------------------------------------------------------------
 
-async function generateVideoScript(): Promise<void> {
+export async function generateVideoScript(): Promise<void> {
   const today = getTodayDateET()
   const cacheKey = `cache:video_script:${today}`
 
