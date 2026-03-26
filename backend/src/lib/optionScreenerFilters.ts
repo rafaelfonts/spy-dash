@@ -55,6 +55,7 @@ export function passesFilters(
   if (atmOption.volume < config.minOptionVolume) return false
 
   const spread = atmOption.ask - atmOption.bid
+  if (spread < 0) return false
   if (spread > config.maxBidAskAbsolute) return false
 
   const midpoint = (atmOption.ask + atmOption.bid) / 2
@@ -70,7 +71,7 @@ export function passesFilters(
  *   IVR component    (35pts): ivRank / 100 * 35
  *   Spread component (30pts): max(0, 1 - spread/0.10) * 30
  *   OI component     (20pts): log-scaled, teto 100k OI → 20pts
- *   RVOL component   (15pts): min(100, rvol * 50) * 0.15
+ *   RVOL component   (15pts): min(1, rvol * 0.5) * 15
  */
 export function calculateLiquidityScore(
   ivRank: number,
