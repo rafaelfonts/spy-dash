@@ -6,7 +6,6 @@ import { getTradierClient } from '../lib/tradierClient'
 import { CONFIG } from '../config'
 import { requireAuth } from '../middleware/authMiddleware'
 import { cacheGet, cacheSet } from '../lib/cacheStore'
-import { resolveNearestExpiration } from '../data/gexService'
 import { calculatePutCallRatio } from '../data/putCallRatio'
 import { calculateMaxPain } from '../lib/maxPainCalculator'
 import type { MaxPainInput } from '../lib/maxPainCalculator'
@@ -16,7 +15,6 @@ import { marketState } from '../data/marketState'
 import { isMarketOpen } from '../lib/time'
 import {
   findATMOption,
-  passesFilters,
   buildCandidate,
   DEFAULT_FILTER_CONFIG,
   CLOSED_MARKET_FILTER_CONFIG,
@@ -43,6 +41,34 @@ const openai = new OpenAI({ apiKey: CONFIG.OPENAI_API_KEY })
 const SCAN_CACHE_TTL_OPEN   = 5  * 60 * 1000  // 5 min during market hours
 const SCAN_CACHE_TTL_CLOSED = 60 * 60 * 1000  // 60 min after hours (data stale)
 
+/**
+ * Resolve the best expiration for option screening: prefers the date closest
+ * to 30 DTE within the 21–60 DTE window, where monthlies have meaningful OI.
+ * Falls back to the nearest expiration >= 21 DTE if nothing is in range.
+ * NOTE: intentionally NOT using resolveScreenerExpiration, which targets 0DTE.
+ */
+async function resolveScreenerExpiration(symbol: string): Promise<string | null> {
+  const expirations = await getTradierClient().getExpirations(symbol)
+  if (expirations.length === 0) return null
+
+  const now = Date.now()
+  const withDTE = expirations.map((exp) => {
+    const dte = Math.round((new Date(exp + 'T12:00:00Z').getTime() - now) / 86_400_000)
+    return { exp, dte }
+  })
+
+  // Prefer expirations in the 21–60 DTE sweet spot, sorted by proximity to 30 DTE
+  const inRange = withDTE
+    .filter(({ dte }) => dte >= 21 && dte <= 60)
+    .sort((a, b) => Math.abs(a.dte - 30) - Math.abs(b.dte - 30))
+
+  if (inRange.length > 0) return inRange[0].exp
+
+  // Fallback: nearest expiration with at least 21 DTE
+  const fallback = withDTE.filter(({ dte }) => dte >= 21).sort((a, b) => a.dte - b.dte)
+  return fallback[0]?.exp ?? null
+}
+
 function scanCacheKey(tickers: string[]): string {
   return `option_screener_scan:${[...tickers].sort().join(',')}`
 }
@@ -55,19 +81,19 @@ async function scanTicker(symbol: string, minIVR: number, marketOpen: boolean): 
   try {
     const client = getTradierClient()
     const quotes = await client.getQuotes([symbol])
-    if (!quotes || quotes.length === 0) return null
+    if (!quotes || quotes.length === 0) { console.log(`[Screener] ${symbol}: no quote`); return null }
     const quote = quotes[0]
-    if (!quote.last || quote.last < (marketOpen ? 20 : 15)) return null
+    if (!quote.last || quote.last < (marketOpen ? 20 : 15)) { console.log(`[Screener] ${symbol}: price too low (${quote.last})`); return null }
 
-    const expiration = await resolveNearestExpiration(symbol)
-    if (!expiration) return null
+    const expiration = await resolveScreenerExpiration(symbol)
+    if (!expiration) { console.log(`[Screener] ${symbol}: no expiration`); return null }
 
     const options = await client.getOptionChain(symbol, expiration)
-    if (!options || options.length === 0) return null
+    if (!options || options.length === 0) { console.log(`[Screener] ${symbol}: no options for ${expiration}`); return null }
 
     const calls = options.filter((o) => o.option_type === 'call')
     const atmCall = findATMOption(calls, quote.last)
-    if (!atmCall) return null
+    if (!atmCall) { console.log(`[Screener] ${symbol}: no ATM call`); return null }
 
     // IVR: use polled value for SPY, chain smv_vol as proxy for others
     const chainIV = (atmCall.greeks?.smv_vol ?? 0) * 100
@@ -77,15 +103,32 @@ async function scanTicker(symbol: string, minIVR: number, marketOpen: boolean): 
 
     const underlyingVol = quote.volume ?? 0
     const avg20dVol = (quote as any).average_volume ?? underlyingVol
+    const spread = atmCall.ask - atmCall.bid
+    const midpoint = (atmCall.ask + atmCall.bid) / 2
 
     const baseConfig = marketOpen ? DEFAULT_FILTER_CONFIG : CLOSED_MARKET_FILTER_CONFIG
     const filterConfig: FilterConfig = { ...baseConfig, minIVR: Math.min(minIVR, baseConfig.minIVR) }
 
-    if (!passesFilters(atmCall, underlyingVol, quote.last, ivRank, filterConfig)) return null
+    const diagReasons: string[] = []
+    if (quote.last < filterConfig.minPrice) diagReasons.push(`price=${quote.last}<${filterConfig.minPrice}`)
+    if (underlyingVol < filterConfig.minUnderlyingVolume) diagReasons.push(`uvol=${underlyingVol}<${filterConfig.minUnderlyingVolume}`)
+    if (ivRank < filterConfig.minIVR || ivRank > filterConfig.maxIVR) diagReasons.push(`ivr=${ivRank.toFixed(1)} not in [${filterConfig.minIVR},${filterConfig.maxIVR}]`)
+    if (atmCall.open_interest < filterConfig.minOI) diagReasons.push(`oi=${atmCall.open_interest}<${filterConfig.minOI}`)
+    if (atmCall.volume < filterConfig.minOptionVolume) diagReasons.push(`vol=${atmCall.volume}<${filterConfig.minOptionVolume}`)
+    if (spread < 0) diagReasons.push(`spread<0`)
+    if (spread > filterConfig.maxBidAskAbsolute) diagReasons.push(`spread=$${spread.toFixed(2)}>$${filterConfig.maxBidAskAbsolute}`)
+    if (midpoint > 0 && spread / midpoint > filterConfig.maxBidAskPct) diagReasons.push(`spreadPct=${(spread/midpoint*100).toFixed(1)}%>${filterConfig.maxBidAskPct*100}%`)
 
+    if (diagReasons.length > 0) {
+      console.log(`[Screener] ${symbol}: FAIL — ${diagReasons.join(', ')} | smv_vol=${atmCall.greeks?.smv_vol ?? 'null'} strike=${atmCall.strike} bid=${atmCall.bid} ask=${atmCall.ask}`)
+      return null
+    }
+
+    console.log(`[Screener] ${symbol}: PASS — ivr=${ivRank.toFixed(1)} spread=$${spread.toFixed(2)} oi=${atmCall.open_interest} uvol=${underlyingVol}`)
     return buildCandidate(symbol, quote.last, ivRank, atmCall, underlyingVol, avg20dVol, expiration)
-  } catch {
-    return null  // non-fatal per ticker
+  } catch (err) {
+    console.log(`[Screener] ${symbol}: exception — ${err instanceof Error ? err.message : String(err)}`)
+    return null
   }
 }
 
@@ -245,7 +288,7 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
       try {
         const client = getTradierClient()
 
-        const expiration = await resolveNearestExpiration(sym)
+        const expiration = await resolveScreenerExpiration(sym)
         if (!expiration) throw new Error('No expiration found')
 
         const [quotes, options] = await Promise.all([
