@@ -127,8 +127,8 @@ export function useOptionScreener() {
               } else if (currentEvent === 'error') {
                 store.setOptionScreenerError((data as { message: string }).message)
               }
-            } catch {
-              // Ignore parse errors on individual SSE lines
+            } catch (e) {
+              console.warn('[OptionScreener] SSE parse error:', e)
             }
           }
         }

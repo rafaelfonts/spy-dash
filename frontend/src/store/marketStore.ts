@@ -773,7 +773,13 @@ export const useMarketStore = create<MarketStore>()(
         },
       })),
     setOptionScreenerError: (error) =>
-      set((s) => ({ optionScreener: { ...s.optionScreener, error, status: 'error' } })),
+      set((s) => ({
+        optionScreener: {
+          ...s.optionScreener,
+          error,
+          ...(error !== null ? { status: 'error' } : {}),
+        },
+      })),
     setOptionScreenerPreset: (preset) =>
       set((s) => ({ optionScreener: { ...s.optionScreener, activePreset: preset } })),
     setOptionScreenerDeltaProfile: (profile) =>
