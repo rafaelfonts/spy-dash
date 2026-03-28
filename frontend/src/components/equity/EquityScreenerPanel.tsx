@@ -3,6 +3,7 @@ import { useMarketStore } from '../../store/marketStore'
 import { supabase } from '../../lib/supabase'
 import { getApiBase } from '../../lib/apiBase'
 import type { AnalysisStructuredEquity as EquityAnalysis } from '../../store/marketStore'
+import { EquityRegimeBanner } from './EquityRegimeBanner'
 
 export function EquityScreenerPanel() {
   const {
@@ -41,6 +42,8 @@ export function EquityScreenerPanel() {
         )}
       </div>
 
+      <EquityRegimeBanner />
+
       {/* Filtros ativos */}
       <div className="flex gap-1.5 flex-wrap mb-3">
         {['≥$5', 'RVOL >1.5x', 'Vol >500k', 'Var >2%'].map((f) => (
@@ -68,7 +71,9 @@ export function EquityScreenerPanel() {
               <td className="pb-2">Ticker</td>
               <td className="pb-2">Preço</td>
               <td className="pb-2">Var%</td>
-              <td className="pb-2">RVOL</td>
+              <td className="pb-2">MTF</td>
+              <td className="pb-2">ADX</td>
+              <td className="pb-2">Z</td>
               <td className="pb-2">Score</td>
               <td className="pb-2"></td>
             </tr>
@@ -91,8 +96,39 @@ export function EquityScreenerPanel() {
                 <td className={`py-2 font-medium ${c.change >= 0 ? 'text-[#00ff88]' : 'text-red-400'}`}>
                   {c.change >= 0 ? '+' : ''}{c.change.toFixed(1)}%
                 </td>
-                <td className={`py-2 ${c.rvol >= 4 ? 'text-red-400' : c.rvol >= 2 ? 'text-yellow-500' : 'text-text-secondary'}`}>
-                  {c.rvol}x
+                {/* MTF alignment badge */}
+                <td className="py-2">
+                  <span
+                    className="text-[9px] font-semibold px-1.5 py-0.5 rounded"
+                    style={{
+                      color: c.alignment === 'bullish' ? '#00ff88' : c.alignment === 'bearish' ? '#ff4444' : '#ffcc00',
+                      background: c.alignment === 'bullish' ? 'rgba(0,255,136,0.1)' : c.alignment === 'bearish' ? 'rgba(255,68,68,0.1)' : 'rgba(255,204,0,0.1)',
+                    }}
+                  >
+                    {c.alignment === 'bullish' ? 'BULL' : c.alignment === 'bearish' ? 'BEAR' : c.alignment === 'neutral' ? 'NEU' : '—'}
+                  </span>
+                </td>
+                {/* ADX */}
+                <td className="py-2">
+                  <span
+                    className="font-mono text-[10px]"
+                    style={{
+                      color: (c.adx ?? 0) >= 25 ? '#00ff88' : (c.adx ?? 0) >= 18 ? '#ffcc00' : '#555577',
+                    }}
+                  >
+                    {c.adx != null ? Math.round(c.adx) : '—'}
+                  </span>
+                </td>
+                {/* Z-Score */}
+                <td className="py-2">
+                  <span
+                    className="font-mono text-[10px]"
+                    style={{
+                      color: Math.abs(c.zScore ?? 0) > 2 ? '#ff4444' : Math.abs(c.zScore ?? 0) > 1.5 ? '#ffcc00' : '#8888aa',
+                    }}
+                  >
+                    {c.zScore != null ? (c.zScore >= 0 ? '+' : '') + c.zScore.toFixed(1) : '—'}
+                  </span>
                 </td>
                 <td className={`py-2 font-semibold tabular-nums ${
                   c.equityScore >= 70 ? 'text-[#00ff88]' :
