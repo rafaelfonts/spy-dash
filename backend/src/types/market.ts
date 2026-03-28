@@ -472,4 +472,74 @@ export interface AnalysisStructuredEquity {
   key_levels: { support: number[]; resistance: number[] }
   trade_signal: 'trade' | 'wait' | 'avoid'
   no_trade_reasons: string[]
+  swing_days_estimate: number       // expected swing duration in days
+  geo_risk_score: number            // 0–100
+  mtf_alignment: 'bullish' | 'bearish' | 'neutral'
+  stop_atr_multiple: number         // ATR multiple used for stop
+}
+
+// ── Equity Screener Institucional ────────────────────────────────────────────
+
+export type VIXRegime = 'calm' | 'elevated' | 'crisis'
+export type EquityCategory = 'defensive' | 'aggressive' | 'etf'
+
+export interface DailyBar {
+  date: string   // YYYY-MM-DD
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
+export interface ADXResult {
+  adx: number
+  plusDI: number
+  minusDI: number
+}
+
+export interface EquityDailyContext {
+  symbol: string
+  bars: DailyBar[]        // last 60D
+  sma20: number
+  sma50: number
+  adx14: ADXResult
+  avwapWeekly: number
+  avwapMonthly: number
+  zScore20d: number
+  distFromMA20: number    // % relative to SMA20
+  atr14: number
+  bollingerWidth: number
+  rvolD1: number          // today volume / avg20d daily volume
+  alignment: 'bullish' | 'bearish' | 'neutral'
+  fetchedAt: number
+}
+
+export interface EquityRegimeState {
+  vixRegime: VIXRegime
+  vtsSlope: number
+  geoRiskScore: number
+  activeCategories: EquityCategory[]
+  scoreThresholds: Record<EquityCategory, number>
+  maxCandidates: number
+  mode: 'full' | 'defensive_only' | 'suspended'
+  suspendedReason?: string
+  updatedAt: number
+}
+
+export interface GeopoliticalOverlay {
+  goldVsSpy: number
+  usdStrength: number
+  defenseVsCivilian: number
+  vixVvix: number
+  geoRiskScore: number
+  fetchedAt: number
+}
+
+export interface RiskEvent {
+  date: string
+  type: 'macro' | 'geopolitical' | 'fomc' | 'opex'
+  severity: 'low' | 'medium' | 'high'
+  description: string
+  hoursUntil: number
 }
