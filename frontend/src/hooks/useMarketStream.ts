@@ -282,6 +282,9 @@ export function useMarketStream(): void {
               capturedAt: rv.capturedAt,
             })
           }
+          if ((data as any).equityRegime) {
+            setEquityRegimeState((data as any).equityRegime)
+          }
         } catch (err) {
           console.warn('[SSE] advanced-metrics parse error:', (err as Error).message)
         }

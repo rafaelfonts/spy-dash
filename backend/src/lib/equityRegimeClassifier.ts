@@ -22,9 +22,14 @@ export function classifyEquityRegime(params: {
   geoRiskScore: number
   noTradeAvoid: boolean
 }): EquityRegimeState {
-  const { vix, vtsSlope, geoRiskScore, noTradeAvoid } = params
+  const { vix, vtsSlope, gexRegime, geoRiskScore, noTradeAvoid } = params
 
   const vixRegime = classifyVIXRegime(vix)
+
+  // VTS backwardation (slope < -0.05) elevates risk: treat as one VIX regime step higher
+  const backwardation = vtsSlope < -0.05
+  // GEX negative: amplified moves — restrict aggressive plays
+  const gexNegative = gexRegime === 'negative'
 
   let activeCategories: EquityCategory[] = []
   let mode: EquityRegimeState['mode'] = 'full'
@@ -37,9 +42,13 @@ export function classifyEquityRegime(params: {
       ? 'Regime SPY adverso (noTrade=avoid)'
       : `Risco geopolitico extremo (geoRisk=${geoRiskScore})`
     activeCategories = []
-  } else if (vixRegime === 'crisis' || geoRiskScore >= 56) {
+  } else if (vixRegime === 'crisis' || geoRiskScore >= 56 || (backwardation && vixRegime === 'elevated')) {
     mode = 'defensive_only'
     activeCategories = ['defensive', 'etf']
+  } else if (vixRegime === 'elevated' || gexNegative) {
+    // Elevated VIX or negative GEX: conditional aggressive
+    mode = 'full'
+    activeCategories = ['defensive', 'etf', 'aggressive'] // aggressive allowed but with higher threshold
   } else {
     mode = 'full'
     activeCategories = ['defensive', 'aggressive', 'etf']

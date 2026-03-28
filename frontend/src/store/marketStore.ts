@@ -327,6 +327,10 @@ export interface AnalysisStructuredEquity {
   key_levels: { support: number[]; resistance: number[] }
   trade_signal: 'trade' | 'wait' | 'avoid'
   no_trade_reasons: string[]
+  swing_days_estimate: number
+  geo_risk_score: number
+  mtf_alignment: 'bullish' | 'bearish' | 'neutral'
+  stop_atr_multiple: number
 }
 
 export interface EquityScreenerPayload {

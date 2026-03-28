@@ -23,8 +23,8 @@ export function EquityScreenerPanel() {
         body: JSON.stringify({ symbol }),
       })
       if (res.ok) {
-        const data: EquityAnalysis = await res.json()
-        setEquityAnalysis(data)
+        const body = await res.json() as { analysis: EquityAnalysis }
+        setEquityAnalysis(body.analysis)
         // Scroll suave para a análise
         setTimeout(() => document.getElementById('equity-ai-analysis')?.scrollIntoView({ behavior: 'smooth' }), 100)
       }
@@ -53,7 +53,7 @@ export function EquityScreenerPanel() {
 
       {equityRegimeVetoed && (
         <div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2">
-          <div className="text-xs font-semibold text-red-400 mb-1">⚠️ Regime SPY adverso — screening suspenso</div>
+          <div className="text-xs font-semibold text-red-400 mb-1">[!] Regime SPY adverso — screening suspenso</div>
           {equityRegimeVetoReasons.length > 0 && (
             <div className="text-[11px] text-red-300/70">{equityRegimeVetoReasons.slice(0, 3).join(' · ')}</div>
           )}
@@ -84,10 +84,10 @@ export function EquityScreenerPanel() {
                 <td className="py-2 font-bold text-text-primary">
                   <span className="flex items-center gap-1.5">
                     {c.symbol}
-                    {c.hasCatalyst && <span className="text-[9px] text-yellow-500">📰</span>}
+                    {c.hasCatalyst && <span className="text-[9px] text-yellow-500">[CAT]</span>}
                     {c.isTopSetup && (
                       <span className="text-[9px] bg-amber-500/20 border border-amber-500/40 text-amber-400 px-1 py-0.5 rounded font-semibold">
-                        ⭐ Top
+                        TOP
                       </span>
                     )}
                   </span>

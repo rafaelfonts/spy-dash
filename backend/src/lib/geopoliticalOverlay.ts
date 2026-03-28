@@ -44,8 +44,9 @@ export async function calcGeopoliticalOverlay(): Promise<GeopoliticalOverlay> {
     const minLen = Math.min(gldCtx.bars.length, spyCtx.bars.length)
     const ratios = gldCtx.bars.slice(-minLen).map((b, i) => b.close / (spyCtx.bars.slice(-minLen)[i].close || 1))
     goldVsSpy = zScore20(ratios.slice(-20))
-  } else if (gldPrice && spyPrice && spyPrice > 0) {
-    goldVsSpy = gldPrice / spyPrice
+  } else {
+    // D1 cache not ready yet — return neutral score to avoid false suspended on cold start
+    goldVsSpy = 0
   }
 
   // usdStrength: UUP Z-score of closes (20D)
