@@ -358,7 +358,7 @@ function buildScriptPrompt(ctx: ScriptContext): string {
   // Signal 10:30
   if (ctx.signal_1030) {
     lines.push('### Sinal 10:30 ET')
-    const labelMap = { trade: 'OPERAR', wait: 'AGUARDAR', avoid: 'NÃO OPERAR' }
+    const labelMap: Record<string, string> = { trade: 'OPERAR', wait: 'AGUARDAR', avoid: 'NÃO OPERAR' }
     lines.push(`- Decisão: ${labelMap[ctx.signal_1030.decision] ?? ctx.signal_1030.decision}`)
     if (ctx.signal_1030.regime_score != null) {
       lines.push(`- Regime Score: ${ctx.signal_1030.regime_score}/10`)
@@ -375,7 +375,7 @@ function buildScriptPrompt(ctx: ScriptContext): string {
   // Signal 15:00
   if (ctx.signal_1500) {
     lines.push('### Sinal 15:00 ET')
-    const labelMap = { trade: 'OPERAR', wait: 'AGUARDAR', avoid: 'NÃO OPERAR' }
+    const labelMap: Record<string, string> = { trade: 'OPERAR', wait: 'AGUARDAR', avoid: 'NÃO OPERAR' }
     lines.push(`- Decisão: ${labelMap[ctx.signal_1500.decision] ?? ctx.signal_1500.decision}`)
     if (ctx.signal_1500.regime_score != null) {
       lines.push(`- Regime Score: ${ctx.signal_1500.regime_score}/10`)
