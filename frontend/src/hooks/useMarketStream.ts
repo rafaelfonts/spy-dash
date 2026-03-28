@@ -29,6 +29,7 @@ export function useMarketStream(): void {
   const addAlert = useMarketStore((s) => s.addAlert)
   const setEquityCandidates = useMarketStore((s) => s.setEquityCandidates)
   const setEquityRegimeVeto = useMarketStore((s) => s.setEquityRegimeVeto)
+  const setEquityRegimeState = useMarketStore((s) => s.setEquityRegimeState)
 
   const esRef = useRef<EventSource | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -366,6 +367,9 @@ export function useMarketStream(): void {
           }
           setEquityCandidates(payload.candidates, payload.marketOpen)
           setEquityRegimeVeto(payload.regimeVetoed ?? false, payload.regimeVetoReasons ?? [])
+          if ((payload as any).equityRegime) {
+            setEquityRegimeState((payload as any).equityRegime)
+          }
         } catch { /* ignora */ }
       })
 

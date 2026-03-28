@@ -262,6 +262,18 @@ export interface RVOLData {
 }
 
 // Equity Screener types
+export interface EquityRegimeState {
+  vixRegime: 'calm' | 'elevated' | 'crisis'
+  vtsSlope: number
+  geoRiskScore: number
+  activeCategories: Array<'defensive' | 'aggressive' | 'etf'>
+  scoreThresholds: Record<'defensive' | 'aggressive' | 'etf', number>
+  maxCandidates: number
+  mode: 'full' | 'defensive_only' | 'suspended'
+  suspendedReason?: string
+  updatedAt: number
+}
+
 export interface EquityCandidate {
   symbol: string
   price: number
@@ -272,6 +284,9 @@ export interface EquityCandidate {
   lastUpdated: number
   equityScore: number   // 0–100 composite score
   isTopSetup: boolean   // true for top 3 by equityScore
+  alignment?: 'bullish' | 'bearish' | 'neutral'
+  adx?: number
+  zScore?: number
 }
 
 export interface WatchlistEntry {
@@ -558,8 +573,10 @@ interface MarketStore {
   analyzingSymbol: string | null
   equityRegimeVetoed: boolean
   equityRegimeVetoReasons: string[]
+  equityRegimeState: EquityRegimeState | null
   setEquityCandidates: (candidates: EquityCandidate[], marketOpen: boolean) => void
   setEquityRegimeVeto: (vetoed: boolean, reasons: string[]) => void
+  setEquityRegimeState: (r: EquityRegimeState | null) => void
   setEquityWatchlist: (w: WatchlistEntry[]) => void
   setEquityTrades: (t: EquityTrade[]) => void
   setEquityAnalysis: (a: AnalysisStructuredEquity | null) => void
@@ -713,10 +730,12 @@ export const useMarketStore = create<MarketStore>()(
     analyzingSymbol: null as string | null,
     equityRegimeVetoed: false,
     equityRegimeVetoReasons: [] as string[],
+    equityRegimeState: null as EquityRegimeState | null,
     setEquityCandidates: (candidates, marketOpen) =>
       set({ equityCandidates: candidates, equityMarketOpen: marketOpen }),
     setEquityRegimeVeto: (vetoed, reasons) =>
       set({ equityRegimeVetoed: vetoed, equityRegimeVetoReasons: reasons }),
+    setEquityRegimeState: (r) => set({ equityRegimeState: r }),
     setEquityWatchlist: (w) => set({ equityWatchlist: w }),
     setEquityTrades: (t) => set({ equityTrades: t }),
     setEquityAnalysis: (a) => set({ equityAnalysis: a }),
