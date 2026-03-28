@@ -12,6 +12,9 @@ import type { TavilyResult } from '../lib/tavilyClient.js'
 import { buildEquityNewsDigest } from '../lib/equityNewsDigest.js'
 import { cacheGet, cacheSet } from '../lib/cacheStore.js'
 import type { AnalysisStructuredEquity, EquityTechnicals } from '../types/market.js'
+import { getDailyContext } from '../data/equityDailyBarsCache.js'
+import { calcGeopoliticalOverlay } from '../lib/geopoliticalOverlay.js'
+import { getVIXTermStructureSnapshot } from '../data/vixTermStructureState.js'
 
 const openai = new OpenAI({ apiKey: CONFIG.OPENAI_API_KEY })
 
@@ -53,12 +56,17 @@ const EQUITY_ANALYSIS_SCHEMA = {
       },
       trade_signal:     { type: 'string', enum: ['trade', 'wait', 'avoid'] },
       no_trade_reasons: { type: 'array', items: { type: 'string' } },
+      swing_days_estimate: { type: 'integer', description: 'Estimated swing duration in trading days (1-15)' },
+      geo_risk_score: { type: 'integer', description: 'Geopolitical risk score 0-100 used in this analysis' },
+      mtf_alignment: { type: 'string', enum: ['bullish', 'bearish', 'neutral'], description: 'Multi-timeframe alignment' },
+      stop_atr_multiple: { type: 'number', description: 'ATR multiple used to compute the stop distance' },
     },
     required: [
       'symbol', 'setup', 'entry_range', 'target', 'stop', 'risk_reward',
       'confidence', 'warning', 'equity_regime_score', 'rsi_zone', 'trend',
       'catalyst_confirmed', 'timeframe', 'invalidation_level', 'key_levels',
       'trade_signal', 'no_trade_reasons',
+      'swing_days_estimate', 'geo_risk_score', 'mtf_alignment', 'stop_atr_multiple',
     ],
     additionalProperties: false,
   },
@@ -87,6 +95,47 @@ const SEARCH_EQUITY_NEWS_TOOL = {
 }
 
 // ---------------------------------------------------------------------------
+// Regime & macro context block
+// ---------------------------------------------------------------------------
+
+function buildRegimeBlock(params: {
+  vixRegime: string
+  geoRiskScore: number
+  vtsSlope: number
+  alignment: string
+  adx: number
+  avwapWeekly: number
+  zScore: number
+  distFromMA20: number
+  atr14: number
+}): string {
+  const stopMult = (1 + (params.geoRiskScore / 100) * 0.5).toFixed(2)
+  const stopDist = (params.atr14 * Number(stopMult)).toFixed(2)
+  const vixLabel = params.vixRegime === 'crisis' ? 'CRISE' : params.vixRegime === 'elevated' ? 'ELEVADO' : 'CALMO'
+  const geoLabel = params.geoRiskScore >= 56 ? ' [ELEVADO]' : params.geoRiskScore >= 31 ? ' [MODERADO]' : ' [BAIXO]'
+  const adxLabel = params.adx < 18 ? ' [SEM TENDÊNCIA]' : params.adx >= 30 ? ' [FORTE]' : ' [EMERGINDO]'
+  const zLabel = Math.abs(params.zScore) > 2 ? ' [SOBREEXTENDIDO]' : Math.abs(params.zScore) < 0.3 ? ' [LATERAL]' : ' [SAUDÁVEL]'
+  const avwapRelation = params.alignment === 'bullish' ? 'ACIMA' : 'ABAIXO ou em'
+  return `
+=== REGIME E CONTEXTO MACRO ===
+VIX Regime: ${vixLabel}
+Risco Geopolítico: ${params.geoRiskScore}/100${geoLabel}
+VTS Slope: ${params.vtsSlope > 0 ? '+' : ''}${(params.vtsSlope * 100).toFixed(1)}%${params.vtsSlope < -0.05 ? ' [BACKWARDATION — risco tail]' : ''}
+
+=== CONTEXTO MULTI-TIMEFRAME (D1) ===
+Alinhamento MTF: ${params.alignment.toUpperCase()}
+ADX(14): ${params.adx.toFixed(1)}${adxLabel}
+AVWAP Semanal: $${params.avwapWeekly.toFixed(2)} (preço ${avwapRelation} da AVWAP)
+Z-Score 20D: ${params.zScore.toFixed(2)}${zLabel}
+Dist. SMA20: ${params.distFromMA20 > 0 ? '+' : ''}${params.distFromMA20.toFixed(1)}%
+
+=== GESTÃO DE RISCO AJUSTADA ===
+ATR(14): $${params.atr14.toFixed(2)}
+Stop mínimo sugerido: ${stopMult}× ATR = $${stopDist} abaixo da entrada
+`
+}
+
+// ---------------------------------------------------------------------------
 // Prompt builder
 // ---------------------------------------------------------------------------
 
@@ -99,6 +148,7 @@ function buildEquityPrompt(
   regimeScore: number,
   regimeComponents: ReturnType<typeof scoreEquityRegime>['components'],
   memoryBlock: string,
+  regimeBlock: string,
 ): string {
   const t = technicals
   const techBlock = [
@@ -109,7 +159,7 @@ function buildEquityPrompt(
     `Tendência: ${t.trend}`,
   ].join('\n')
 
-  const regimeBlock = [
+  const equityRegimeBlock = [
     `Score: ${regimeScore}/10`,
     `Componentes: RSI=${regimeComponents.rsi} MACD=${regimeComponents.macd} BB=${regimeComponents.bb} Catalisador=${regimeComponents.catalyst} SPY=${regimeComponents.spyAlignment}`,
   ].join('\n')
@@ -130,10 +180,11 @@ ${priceBlock}
 ${techBlock}
 
 ## Regime Score (PRÉ-COMPUTADO — NÃO recalcule)
-${regimeBlock}
+${equityRegimeBlock}
 
 ## Notícias Hoje
 ${newsBlock}
+${regimeBlock}
 ${memSection}
 ## Instruções
 - setup deve ter no máximo 2 frases em pt-BR descrevendo o contexto técnico e direcional
@@ -230,7 +281,28 @@ export async function registerEquityAnalyzeRoute(app: FastifyInstance): Promise<
     const memoryBlock = await buildEquityMemoryBlock(userId, symbol, technicals.rsi)
 
     // -----------------------------------------------------------------------
-    // 5. Build initial messages for OpenAI tool-calling loop
+    // 5. Build regime / macro context
+    // -----------------------------------------------------------------------
+    const d1 = getDailyContext(symbol)
+    const geoOverlay = await calcGeopoliticalOverlay().catch(() => null)
+    const vts = getVIXTermStructureSnapshot()
+    const vtsSlope = vts ? vts.steepness / 100 : 0
+    const geoRiskScore = geoOverlay?.geoRiskScore ?? 30
+
+    const regimeBlock = d1 ? buildRegimeBlock({
+      vixRegime: (geoRiskScore >= 56 ? 'crisis' : geoRiskScore >= 31 ? 'elevated' : 'calm'),
+      geoRiskScore,
+      vtsSlope,
+      alignment: d1.alignment,
+      adx: d1.adx14.adx,
+      avwapWeekly: d1.avwapWeekly,
+      zScore: d1.zScore20d,
+      distFromMA20: d1.distFromMA20,
+      atr14: d1.atr14,
+    }) : ''
+
+    // -----------------------------------------------------------------------
+    // 5b. Build initial messages for OpenAI tool-calling loop
     // -----------------------------------------------------------------------
     const systemPrompt = buildEquityPrompt(
       symbol,
@@ -241,6 +313,7 @@ export async function registerEquityAnalyzeRoute(app: FastifyInstance): Promise<
       regimeResult.score,
       regimeResult.components,
       memoryBlock,
+      regimeBlock,
     )
 
     type OAIMessage = OpenAI.Chat.ChatCompletionMessageParam
@@ -316,6 +389,7 @@ export async function registerEquityAnalyzeRoute(app: FastifyInstance): Promise<
           regimeResult.score,
           regimeResult.components,
           memoryBlock,
+          regimeBlock,
         )
 
         // Push assistant tool call + tool result into messages
@@ -370,6 +444,22 @@ export async function registerEquityAnalyzeRoute(app: FastifyInstance): Promise<
     // -----------------------------------------------------------------------
     if (hasConvergence(technicals) && structured.equity_regime_score !== undefined) {
       structured.equity_regime_score = Math.min(10, Math.round(structured.equity_regime_score * 1.3))
+    }
+
+    // -----------------------------------------------------------------------
+    // 9c. Safety-net defaults for new MTF/regime fields
+    // -----------------------------------------------------------------------
+    if (typeof structured.swing_days_estimate !== 'number' || structured.swing_days_estimate < 1) {
+      structured.swing_days_estimate = 3
+    }
+    if (typeof structured.geo_risk_score !== 'number') {
+      structured.geo_risk_score = geoRiskScore
+    }
+    if (!structured.mtf_alignment) {
+      structured.mtf_alignment = (d1?.alignment ?? 'neutral') as 'bullish' | 'bearish' | 'neutral'
+    }
+    if (typeof structured.stop_atr_multiple !== 'number') {
+      structured.stop_atr_multiple = 1 + (geoRiskScore / 100) * 0.5
     }
 
     // -----------------------------------------------------------------------
