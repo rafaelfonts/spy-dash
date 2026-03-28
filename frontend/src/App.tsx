@@ -76,7 +76,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       </main>
 
       <footer className="text-center py-4 text-[10px] text-text-muted border-t border-border-subtle mt-8">
-        SPY DASH — Dados via Tastytrade DXFeed · IA via Claude Sonnet 4.6
+        Copyright &copy; {new Date().getFullYear()} SPY Dash. All rights reserved.
       </footer>
 
       <AlertOverlay />

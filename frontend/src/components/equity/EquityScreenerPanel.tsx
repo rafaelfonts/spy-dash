@@ -44,12 +44,6 @@ export function EquityScreenerPanel() {
 
       <EquityRegimeBanner />
 
-      {/* Filtros ativos */}
-      <div className="flex gap-1.5 flex-wrap mb-3">
-        {['≥$5', 'RVOL >1.5x', 'Vol >500k', 'Var >2%'].map((f) => (
-          <span key={f} className="text-[10px] bg-bg-elevated text-text-secondary px-2 py-0.5 rounded">{f}</span>
-        ))}
-      </div>
 
       {equityRegimeVetoed && (
         <div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2">
