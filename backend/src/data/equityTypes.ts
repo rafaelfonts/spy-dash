@@ -15,6 +15,9 @@ export interface EquityCandidate {
   lastUpdated: number   // epoch ms
   equityScore: number   // 0–100 composite score
   isTopSetup: boolean   // true for top 3 by equityScore
+  alignment?: 'bullish' | 'bearish' | 'neutral'
+  adx?: number
+  zScore?: number
 }
 
 export interface ScreenerFilters {
@@ -32,4 +35,5 @@ export interface EquityScreenerPayload {
   capturedAt: number    // epoch ms
   regimeVetoed?: boolean   // true quando SPY noTradeLevel = 'avoid'
   regimeVetoReasons?: string[]
+  equityRegime?: import('../types/market.js').EquityRegimeState | null
 }

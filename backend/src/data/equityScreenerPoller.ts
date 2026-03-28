@@ -7,7 +7,7 @@ import { setEquityCandidates, DEFAULT_FILTERS } from './equityScreenerState.js';
 import { getAdvancedMetricsSnapshot } from './advancedMetricsState.js';
 import type { EquityCandidate } from './equityTypes.js';
 import { checkEquityAlerts } from './alertEngine.js';
-import { calcRSI } from '../lib/technicalCalcs.js';
+import { getDailyContext, startEquityDailyBarsCachePoll } from './equityDailyBarsCache.js';
 
 const POLL_MS = 60_000;
 const OFFHOURS_MS = 5 * 60_000;
@@ -75,57 +75,88 @@ async function tick(): Promise<void> {
   const f = DEFAULT_FILTERS;
   const adaptiveRvolMin = getAdaptiveRvolMin();
 
-  const rawCandidates = quotes
+  const equityRegimeState = metrics?.equityRegime ?? null;
+  const maxCandidates = equityRegimeState?.maxCandidates ?? 20;
+  const scoreThreshold = equityRegimeState?.scoreThresholds?.etf ?? 60;
+
+  const scored = quotes
     .filter((q) => {
       const price = q.last ?? q.close ?? 0;
-      const change = q.change_percentage ?? 0;
       const vol = q.volume ?? 0;
       const avgVol = q.average_volume ?? 0;
-      if (avgVol === 0) return false; // rejeita se RVOL incalculável
-      const rvol = vol / avgVol;
-      const passesMaxPrice = f.priceMax === null || price <= f.priceMax;
-      return (
-        price >= f.priceMin &&
-        passesMaxPrice &&
-        vol >= f.volumeMin &&
-        rvol >= adaptiveRvolMin &&  // 4b: RVOL adaptativo
-        change >= f.changeMin
-      );
-    })
-    .map((q) => ({
-      symbol: q.symbol,
-      price: q.last ?? q.close ?? 0,
-      changePct: q.change_percentage ?? 0,
-      volume: q.volume ?? 0,
-      rvol: Math.round(((q.volume ?? 0) / (q.average_volume ?? 1)) * 10) / 10,
-      hasCatalyst: catalysts.has(q.symbol),
-    }));
+      if (avgVol === 0) return false;
 
-  // Compute equityScore for each candidate (no extra API calls — rsiMacroScore = 0 fallback)
-  const candidates: EquityCandidate[] = rawCandidates
-    .map((c) => {
-      // RSI not available without timesales fetch — use 0 as fallback per spec
-      const rsiMacroScore = 0;
-      const equityScore = Math.round(
-        Math.min(c.rvol / 5, 1) * 30 +
-        Math.min(Math.abs(c.changePct) / 10, 1) * 25 +
-        catalystScore(c.symbol, c.hasCatalyst) +  // 4d: decaimento de catalisador
-        rsiMacroScore * 20
-      );
+      // Hard filters (Camada 0)
+      if (price < f.priceMin) return false;
+      if (f.priceMax !== null && price > f.priceMax) return false;
+      if (vol < f.volumeMin) return false;
+
+      // D1 filters (prefer daily data if available)
+      const d1 = getDailyContext(q.symbol);
+      if (d1) {
+        // Z-score guard: reject over-extended moves
+        if (Math.abs(d1.zScore20d) > 2.0) return false;
+        // D1 RVOL floor
+        if (d1.rvolD1 < RVOL_FLOOR) return false;
+        // D1 daily change from close bars
+        const bars = d1.bars;
+        if (bars.length >= 2) {
+          const d1Change = (bars[bars.length - 1].close - bars[bars.length - 2].close) / bars[bars.length - 2].close * 100;
+          if (Math.abs(d1Change) < f.changeMin) return false;
+        }
+      } else {
+        // Fallback to intraday RVOL when D1 cache not yet populated
+        const rvol = vol / avgVol;
+        if (rvol < adaptiveRvolMin) return false;
+        const change = q.change_percentage ?? 0;
+        if (change < f.changeMin) return false;
+      }
+      return true;
+    })
+    .map((q) => {
+      const d1 = getDailyContext(q.symbol);
+      const price = q.last ?? q.close ?? 0;
+      const rvol = d1 ? d1.rvolD1 : Math.round(((q.volume ?? 0) / (q.average_volume ?? 1)) * 10) / 10;
+      const hasCatalyst = catalysts.has(q.symbol);
+
+      // Score components aligned with institutional spec
+      const alignmentScore = d1
+        ? (d1.alignment === 'bullish' ? 30 : d1.alignment === 'neutral' ? 12 : 0)
+        : Math.min(rvol / 5, 1) * 30;
+
+      const adxScore = d1
+        ? (d1.adx14.adx >= 35 ? 20 : d1.adx14.adx >= 28 ? 16 : d1.adx14.adx >= 22 ? 12 : d1.adx14.adx >= 18 ? 7 : 0)
+        : 0;
+
+      const catScore = catalystScore(q.symbol, hasCatalyst);
+      const zScorePos = d1 ? (Math.abs(d1.zScore20d) > 2 ? 0 : Math.abs(d1.zScore20d) <= 1.5 ? 5 : 3) : 3;
+      const volScore = Math.min(rvol / 2, 1) * 10;
+
+      const equityScore = Math.round(alignmentScore + adxScore + catScore + zScorePos + volScore);
+      const changePct = d1 && d1.bars.length >= 2
+        ? (d1.bars[d1.bars.length - 1].close - d1.bars[d1.bars.length - 2].close) / d1.bars[d1.bars.length - 2].close * 100
+        : (q.change_percentage ?? 0);
+
       return {
-        symbol: c.symbol,
-        price: c.price,
-        change: c.changePct,
-        volume: c.volume,
-        rvol: c.rvol,
-        hasCatalyst: c.hasCatalyst,
+        symbol: q.symbol,
+        price,
+        change: changePct,
+        volume: q.volume ?? 0,
+        rvol,
+        hasCatalyst,
         lastUpdated: Date.now(),
         equityScore,
-        isTopSetup: false, // set after sorting
+        isTopSetup: false,
+        alignment: d1?.alignment,
+        adx: d1 ? d1.adx14.adx : undefined,
+        zScore: d1 ? d1.zScore20d : undefined,
       };
-    })
+    });
+
+  const candidates: EquityCandidate[] = scored
+    .filter((c) => c.equityScore >= scoreThreshold * 0.8) // soft threshold for screener list
     .sort((a, b) => b.equityScore - a.equityScore)
-    .slice(0, 20) // máx 20 candidatos exibidos
+    .slice(0, maxCandidates)
     .map((c, idx) => ({ ...c, isTopSetup: idx < 3 }));
 
   // 4b: Atualizar histórico de RVOL médio para próximos ciclos
@@ -137,7 +168,7 @@ async function tick(): Promise<void> {
 
   const open = isMarketOpen();
   setEquityCandidates(candidates, open);
-  emitter.emit('equity-screener', { candidates, filters: f, marketOpen: open, capturedAt: Date.now() });
+  emitter.emit('equity-screener', { candidates, filters: f, marketOpen: open, capturedAt: Date.now(), equityRegime: equityRegimeState ?? null });
 
   // Verificar alertas da watchlist (non-blocking)
   checkEquityAlerts(candidates.map((c) => ({ symbol: c.symbol, price: c.price })))
@@ -164,6 +195,9 @@ export async function startEquityScreenerPoller(): Promise<void> {
   const initialUniverse = await getEquityUniverse().catch(() => null);
   if (initialUniverse) universeRef.tickers = initialUniverse.tickers;
   await startEquityCatalystPoller(() => universeRef.tickers);
+
+  // Start D1 bars cache — refreshes every 8h
+  startEquityDailyBarsCachePoll(() => universeRef.tickers);
 
   function scheduleNext(): void {
     const delay = isMarketOpen() ? POLL_MS : OFFHOURS_MS;
