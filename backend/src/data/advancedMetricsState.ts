@@ -12,7 +12,7 @@ import type { GEXDynamic } from './gexService'
 import type { NoTradeResult, GexComparison, PriceDistribution, SurfaceQuality } from './regimeScorer'
 import type { DANResult } from '../lib/danCalculator'
 import type { RVOLSnapshot } from './rvolPoller'
-import type { PutCallRatioMulti } from '../types/market'
+import type { PutCallRatioMulti, EquityRegimeState } from '../types/market'
 import type { CompositeRegimeResult } from '../lib/compositeRegimeScorer'
 export type { CompositeRegimeResult }
 
@@ -80,6 +80,8 @@ export interface AdvancedMetricsPayload {
     /** Phase 3: number of points in the rolling buffer (grows to 252 over first 4h). */
     kmeansBufferSize: number
   }) | null
+  /** Equity screener regime: VIX classification, active categories, geopolitical overlay. */
+  equityRegime: EquityRegimeState | null
 }
 
 // ---------------------------------------------------------------------------

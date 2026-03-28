@@ -29,6 +29,10 @@ import { marketState } from './marketState'
 import { getOptionChainSnapshot } from './optionChain'
 import { calculateDAN } from '../lib/danCalculator'
 import { getRVOLSnapshot } from './rvolPoller'
+import { calcGeopoliticalOverlay } from '../lib/geopoliticalOverlay.js'
+import { classifyEquityRegime } from '../lib/equityRegimeClassifier.js'
+import { getVIXTermStructureSnapshot } from './vixTermStructureState.js'
+import type { EquityRegimeState } from '../types/market.js'
 
 const SYMBOL = 'SPY'
 const POLL_INTERVAL_MS   = 60_000   // 60 s during market hours
@@ -174,6 +178,30 @@ async function tick(): Promise<void> {
       }
     : null
 
+  const noTrade = computeNoTradeScore(serializedGexDynamic.length > 0 ? serializedGexDynamic : null)
+
+  // Equity regime classification
+  let equityRegime: EquityRegimeState | null = null
+  try {
+    const geoOverlay = await calcGeopoliticalOverlay()
+    const vts = getVIXTermStructureSnapshot()
+    const vtsSlope = vts ? vts.steepness / 100 : 0
+    const vixSpot = marketState.vix.last ?? 20
+    const noTradeAvoid = noTrade?.noTradeLevel === 'avoid'
+    const gexSign = lowestDTERegime ?? 'positive'
+    const regScore = regimeLive.score ?? 5
+    equityRegime = classifyEquityRegime({
+      vix: vixSpot,
+      vtsSlope,
+      gexRegime: gexSign,
+      spyAlignment: regScore >= 6 ? 'bullish' : regScore <= 3 ? 'bearish' : 'neutral',
+      geoRiskScore: geoOverlay.geoRiskScore,
+      noTradeAvoid,
+    })
+  } catch (e) {
+    console.warn('[advancedMetricsPoller] equityRegime calc failed:', (e as Error).message)
+  }
+
   const payload: AdvancedMetricsPayload = {
     gex: serializeGexBucket(gex),
     profile: profile
@@ -188,7 +216,7 @@ async function tick(): Promise<void> {
     putCallRatio: pc ?? null,
     gexDynamic: serializedGexDynamic.length > 0 ? serializedGexDynamic : null,
     timestamp: new Date().toISOString(),
-    noTrade: computeNoTradeScore(serializedGexDynamic.length > 0 ? serializedGexDynamic : null),
+    noTrade,
     dan,
     regimePreview: {
       score: regimeLive.score,
@@ -201,6 +229,7 @@ async function tick(): Promise<void> {
     marketOpen: isMarketOpen(),
     rvol: getRVOLSnapshot(),
     compositeRegime,
+    equityRegime,
   }
 
   publishAdvancedMetrics(payload)
