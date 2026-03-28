@@ -83,6 +83,15 @@ export interface TradierQuotesResponse {
   quotes: { quote: TradierQuote | TradierQuote[] } | null
 }
 
+export interface DailyHistoryBar {
+  date: string   // YYYY-MM-DD
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
 // ---------------------------------------------------------------------------
 // Token-bucket rate limiter
 // ---------------------------------------------------------------------------
@@ -319,6 +328,42 @@ class TradierClient {
 
     console.log(`[Tradier] getQuotes(${symbolList}): ${quotes.length} quotes`)
     return quotes
+  }
+
+  /**
+   * Fetch daily OHLCV history bars for a symbol.
+   * Defaults to the last 65 calendar days (enough for ~45 trading days).
+   */
+  async getHistory(
+    symbol: string,
+    days = 65,
+  ): Promise<DailyHistoryBar[]> {
+    if (!this.token) return []
+
+    const end = new Date()
+    const start = new Date()
+    start.setDate(start.getDate() - days)
+    const fmt = (d: Date) => d.toISOString().slice(0, 10)
+
+    const url = `${this.baseUrl}/v1/markets/history?symbol=${encodeURIComponent(symbol)}&interval=daily&start=${fmt(start)}&end=${fmt(end)}`
+    const json = await this.fetchWithBreaker<{
+      history?: { day?: Array<{ date: string; open: number; high: number; low: number; close: number; volume: number }> | { date: string; open: number; high: number; low: number; close: number; volume: number } }
+    }>('history', url)
+
+    const raw = json?.history?.day
+    if (!raw) return []
+    const arr = Array.isArray(raw) ? raw : [raw]
+    const bars = arr.map((d) => ({
+      date: d.date,
+      open: d.open,
+      high: d.high,
+      low: d.low,
+      close: d.close,
+      volume: d.volume,
+    }))
+
+    console.log(`[Tradier] getHistory(${symbol}, ${days}d): ${bars.length} bars`)
+    return bars
   }
 }
 
