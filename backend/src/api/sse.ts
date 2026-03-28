@@ -7,6 +7,7 @@ import { getVIXTermStructureSnapshot } from '../data/vixTermStructureState'
 import { getTechnicalSnapshot } from '../data/technicalIndicatorsState'
 import { getSkewSnapshot } from '../data/skewState'
 import { getTodaysBriefing } from '../data/preMarketBriefing'
+import { getTodaysScript } from '../data/dailyScriptService'
 import { getLastMacroDigest } from '../data/macroDigestService'
 import { getLastScheduledSignal } from '../data/scheduledSignalService'
 import { getLastCBOEPCR } from '../data/cboePCRPoller'
@@ -74,6 +75,7 @@ emitter.on('technical-indicators', (data) => broadcast('technical-indicators', d
 emitter.on('skew', (data) => broadcast('skew', data))
 emitter.on('macro-digest', (data) => broadcast('macro-digest', data))
 emitter.on('briefing', (data) => broadcast('briefing', data))
+emitter.on('daily_script', (data) => broadcast('daily_script', data))
 emitter.on('trade_signal_update', (data) => broadcast('trade_signal_update', data))
 emitter.on('cboe_pcr', (data) => broadcast('cboe_pcr', data))
 emitter.on('cftc_cot', (data) => broadcast('cftc_cot', data))
@@ -275,6 +277,12 @@ export async function registerSSE(fastify: FastifyInstance): Promise<void> {
     const briefing = getTodaysBriefing()
     if (briefing && new Date() < new Date(briefing.expiresAt)) {
       client.write('briefing', briefing)
+    }
+
+    // Send today's daily script (roteiro 16:20) if available
+    const dailyScript = getTodaysScript()
+    if (dailyScript && new Date() < new Date(dailyScript.expiresAt)) {
+      client.write('daily_script', dailyScript)
     }
 
     // Send last scheduled trade signal from Redis (10:30 / 15:00 ET) if available

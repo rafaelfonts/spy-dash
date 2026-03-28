@@ -35,6 +35,7 @@ export const DISCORD_COLORS = {
   postClose: 0xFFCC00,         // âmbar — mantém existente
   macroDigest: 0x3498DB,       // azul — novo digest macro+notícias
   macroDayBefore: 0x2980B9,    // azul escuro — aviso D-1 FOMC/CPI/NFP
+  dailyScript: 0x9B59B6,       // roxo — roteiro do dia
 
   // #sinais
   signalProceed: 0x2ECC71,     // verde — OPERAR

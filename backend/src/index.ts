@@ -19,6 +19,7 @@ import { startTechnicalIndicatorsPoller } from './data/technicalIndicatorsPoller
 import { startPreMarketScheduler, restoreBriefingFromCache } from './data/preMarketBriefing'
 import { startVideoScriptScheduler, restoreVideoScriptFromCache, generateVideoScript } from './data/videoScriptService'
 import { startScheduledSignalScheduler } from './data/scheduledSignalService'
+import { startDailyScriptScheduler, restoreDailyScriptFromCache } from './data/dailyScriptService'
 import { startPortfolioTrackerScheduler, refreshPortfolioSnapshot } from './data/portfolioTrackerService'
 import { startCBOEPCRScheduler } from './data/cboePCRPoller'
 import { startApeWisdomPoller } from './data/apeWisdomPoller'
@@ -193,6 +194,8 @@ async function bootstrap(): Promise<void> {
     withTimeout(restoreBriefingFromCache(), 5_000, 'restoreBriefingFromCache'),
     // Restore today's Kasper video script from Redis if available
     withTimeout(restoreVideoScriptFromCache(), 5_000, 'restoreVideoScriptFromCache'),
+    // Restore today's daily script (roteiro 16:20) from Redis if available
+    withTimeout(restoreDailyScriptFromCache(), 5_000, 'restoreDailyScriptFromCache'),
     // Restore last macro digest from Redis if available (TTL 14h)
     withTimeout(restoreMacroDigestFromCache(), 5_000, 'restoreMacroDigestFromCache'),
     // Restore portfolio snapshot so GET /api/portfolio works on cold start
@@ -234,6 +237,7 @@ async function bootstrap(): Promise<void> {
     startPreMarketScheduler()
     startVideoScriptScheduler()
     startScheduledSignalScheduler()
+    startDailyScriptScheduler()
     startPortfolioTrackerScheduler()
     startCBOEPCRScheduler()
     startRedditSentimentPoller()
