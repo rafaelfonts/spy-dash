@@ -19,7 +19,7 @@ import { startTechnicalIndicatorsPoller } from './data/technicalIndicatorsPoller
 import { startPreMarketScheduler, restoreBriefingFromCache } from './data/preMarketBriefing'
 import { startVideoScriptScheduler, restoreVideoScriptFromCache, generateVideoScript } from './data/videoScriptService'
 import { startScheduledSignalScheduler } from './data/scheduledSignalService'
-import { startDailyScriptScheduler, restoreDailyScriptFromCache } from './data/dailyScriptService'
+import { startDailyScriptScheduler, restoreDailyScriptFromCache, generateDailyScript } from './data/dailyScriptService'
 import { startPortfolioTrackerScheduler, refreshPortfolioSnapshot } from './data/portfolioTrackerService'
 import { startCBOEPCRScheduler } from './data/cboePCRPoller'
 import { startApeWisdomPoller } from './data/apeWisdomPoller'
@@ -121,6 +121,24 @@ async function bootstrap(): Promise<void> {
     )
     reply.code(202)
     return { ok: true, message: `Geração iniciada para ${today} — verifique #roteiro em ~30s` }
+  })
+
+  // Admin: force daily script (roteiro) generation — protected by HEALTH_SECRET
+  fastify.post('/admin/trigger-daily-script', async (request, reply) => {
+    const secret = CONFIG.HEALTH_SECRET
+    const provided = (request.headers['x-admin-secret'] as string) ?? ''
+    if (!secret || provided !== secret) {
+      reply.code(401)
+      return { error: 'Unauthorized' }
+    }
+    const { redis } = await import('./lib/cacheStore')
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+    await redis.del(`cache:daily_script:${today}`, `lock:daily_script:${today}`)
+    generateDailyScript().catch((err) =>
+      console.error('[Admin] trigger-daily-script error:', err),
+    )
+    reply.code(202)
+    return { ok: true, message: `Geração iniciada para ${today} — verifique #briefings em ~30s` }
   })
 
   // Rotas protegidas por JWT Supabase

@@ -99,7 +99,7 @@ export function startDailyScriptScheduler(): void {
 // Core generator
 // ---------------------------------------------------------------------------
 
-async function generateDailyScript(): Promise<void> {
+export async function generateDailyScript(): Promise<void> {
   const today = getTodayDateET()
   const cacheKey = `cache:daily_script:${today}`
 
