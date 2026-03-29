@@ -104,6 +104,52 @@ export function DeepDivePanel({ symbol, deepDive, strategy, strategyTokens, stat
         </div>
       )}
 
+      {/* Vol Metrics */}
+      {deepDive?.volMetrics && (
+        <div className="bg-bg-elevated rounded border border-border-subtle px-3 py-2">
+          <p className="text-[9px] text-text-muted uppercase tracking-wider mb-2">Vol Metrics</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px]">
+            {/* IRP */}
+            <span className="text-text-muted">
+              IV Risk Premium:{' '}
+              <strong className={deepDive.volMetrics.irp === null ? 'text-text-muted' : deepDive.volMetrics.irp > 0 ? 'text-[#00ff88]' : 'text-[#ff4444]'}>
+                {deepDive.volMetrics.irp !== null ? `${deepDive.volMetrics.irp > 0 ? '+' : ''}${deepDive.volMetrics.irp.toFixed(1)}pp` : 'N/A'}
+              </strong>
+            </span>
+            {/* RR25 */}
+            <span className="text-text-muted">
+              RR25:{' '}
+              <strong className="text-text-primary">
+                {deepDive.volMetrics.rr25 !== null ? `${deepDive.volMetrics.rr25.toFixed(1)}pp skew` : 'N/A'}
+              </strong>
+            </span>
+            {/* TSS */}
+            <span className="text-text-muted">
+              Term Structure:{' '}
+              <strong className={deepDive.volMetrics.termStructureInverted ? 'text-[#ffcc00]' : 'text-text-primary'}>
+                {deepDive.volMetrics.tss !== null
+                  ? `${deepDive.volMetrics.tss >= 0 ? '+' : ''}${(deepDive.volMetrics.tss * 100).toFixed(1)}% ${deepDive.volMetrics.termStructureInverted ? '[!] Backwardation' : 'Contango'}`
+                  : 'N/A'}
+              </strong>
+            </span>
+            {/* RVP */}
+            <span className="text-text-muted">
+              RVP:{' '}
+              <strong className={
+                deepDive.volMetrics.rvp === null ? 'text-text-muted' :
+                deepDive.volMetrics.rvp < 30 ? 'text-[#00ff88]' :
+                deepDive.volMetrics.rvp > 70 ? 'text-[#ff4444]' :
+                'text-text-primary'
+              }>
+                {deepDive.volMetrics.rvp !== null
+                  ? `Perc. ${deepDive.volMetrics.rvp}${deepDive.volMetrics.rvp < 30 ? ' (compressão)' : deepDive.volMetrics.rvp > 70 ? ' (expansão)' : ''}`
+                  : 'N/A'}
+              </strong>
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Events */}
       {events && (
         <div className="flex flex-col gap-1">

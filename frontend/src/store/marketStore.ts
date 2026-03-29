@@ -344,6 +344,7 @@ export interface OptionCandidateFE {
   symbol: string
   price: number
   ivRank: number
+  ivRankSource: 'tastytrade' | 'chain_fallback'
   bidAskSpread: number
   spreadPct: number
   openInterest: number
@@ -379,6 +380,14 @@ export interface MaxPainFE {
   pinRisk: 'high' | 'moderate' | 'low'
 }
 
+export interface VolMetricsFE {
+  irp: number | null
+  rr25: number | null
+  tss: number | null
+  rvp: number | null
+  termStructureInverted: boolean
+}
+
 export interface OptionDeepDiveFE {
   symbol: string
   price: number
@@ -388,6 +397,7 @@ export interface OptionDeepDiveFE {
   putCallRatio: number | null
   gexRegime: 'positive' | 'negative' | null
   ivSkew: IVSkewFE | null
+  volMetrics: VolMetricsFE | null
   events: OptionEventsFE
 }
 

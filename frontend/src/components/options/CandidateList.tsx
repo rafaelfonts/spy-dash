@@ -57,8 +57,12 @@ export function CandidateList({ candidates, selectedSymbol, onSelect, marketOpen
                 Score {c.liquidityScore}
               </span>
             </div>
-            <div className="text-[10px] text-text-muted mt-0.5">
-              IVR {c.ivRank.toFixed(0)} · Spread ${c.bidAskSpread.toFixed(2)} · OI {(c.openInterest / 1000).toFixed(0)}k
+            <div className="text-[10px] text-text-muted mt-0.5 flex items-center gap-1">
+              <span>IVR {c.ivRank.toFixed(0)}</span>
+              <span className={`text-[9px] px-1 rounded ${c.ivRankSource === 'tastytrade' ? 'text-[#00ff88]/70' : 'text-[#ffcc00]/70'}`}>
+                {c.ivRankSource === 'tastytrade' ? '[TT]' : '[est.]'}
+              </span>
+              <span>· Spread ${c.bidAskSpread.toFixed(2)} · OI {(c.openInterest / 1000).toFixed(0)}k</span>
             </div>
           </button>
         )
