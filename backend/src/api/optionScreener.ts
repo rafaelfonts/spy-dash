@@ -305,8 +305,26 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
       try {
         const client = getTradierClient()
 
-        const expiration = await resolveScreenerExpiration(sym)
-        if (!expiration) throw new Error('No expiration found')
+        // Busca expirations UMA única vez e resolve tanto a short (~30 DTE)
+        // quanto a long (~60 DTE) para TSS — sem chamada duplicada à API.
+        const allExpirations = await client.getExpirations(sym)
+        const nowMs = Date.now()
+        const withDTE = allExpirations.map((e) => ({
+          e,
+          dte: Math.round((new Date(e + 'T12:00:00Z').getTime() - nowMs) / 86_400_000),
+        }))
+
+        const shortExpEntry =
+          withDTE
+            .filter(({ dte }) => dte >= 21 && dte <= 60)
+            .sort((a, b) => Math.abs(a.dte - 30) - Math.abs(b.dte - 30))[0] ??
+          withDTE.filter(({ dte }) => dte >= 21).sort((a, b) => a.dte - b.dte)[0]
+        if (!shortExpEntry) throw new Error('No expiration found')
+        const expiration = shortExpEntry.e
+
+        const longExpEntry = withDTE
+          .filter(({ dte }) => dte >= 55 && dte <= 90)
+          .sort((a, b) => Math.abs(a.dte - 60) - Math.abs(b.dte - 60))[0]
 
         const [quotes, options] = await Promise.all([
           client.getQuotes([sym]),
@@ -345,10 +363,16 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
           return totalCall > 0 ? totalPut / totalCall : null
         })()
 
-        // GEX regime proxy
-        const totalCallOI = options.filter((o) => o.option_type === 'call').reduce((s, o) => s + o.open_interest, 0)
-        const totalPutOI  = options.filter((o) => o.option_type === 'put').reduce((s, o) => s + o.open_interest, 0)
-        const gexRegime: 'positive' | 'negative' = totalCallOI > totalPutOI ? 'positive' : 'negative'
+        // GEX regime proxy — gamma-weighted (não OI bruto).
+        // GEX ∝ Σ(gamma × OI) para calls − Σ(gamma × OI) para puts.
+        // Comparar OI bruto ignora que strikes OTM têm gamma próximo de zero e distorce o sinal.
+        const netGammaExposure = options.reduce((sum, o) => {
+          const gamma = o.greeks?.gamma
+          if (gamma == null || !isFinite(gamma) || gamma < 0) return sum
+          const sign = o.option_type === 'call' ? 1 : -1
+          return sum + sign * gamma * o.open_interest
+        }, 0)
+        const gexRegime: 'positive' | 'negative' = netGammaExposure >= 0 ? 'positive' : 'negative'
 
         // IV Skew
         const ivSkew = calculateIVSkew(options)
@@ -357,17 +381,11 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
         const events = await getEventsForSymbol(sym, 60)
 
         // Vol Metrics (institutional: IRP, RR25, TSS, RVP)
-        // Fetch a second expiration ~60 DTE for Term Structure Slope
-        const expirations2 = await getTradierClient().getExpirations(sym).catch(() => [])
-        const now2 = Date.now()
-        const longExp = expirations2
-          .map((e) => ({ e, dte: Math.round((new Date(e + 'T12:00:00Z').getTime() - now2) / 86_400_000) }))
-          .filter(({ dte }) => dte >= 55 && dte <= 90)
-          .sort((a, b) => Math.abs(a.dte - 60) - Math.abs(b.dte - 60))[0]
-
+        // longExpEntry já foi resolvido no início do handler a partir da mesma lista
+        // de expirations — sem nova chamada à API Tradier.
         let ivLong: number | null = null
-        if (longExp) {
-          const longOptions = await getTradierClient().getOptionChain(sym, longExp.e).catch(() => null)
+        if (longExpEntry) {
+          const longOptions = await client.getOptionChain(sym, longExpEntry.e).catch(() => null)
           if (longOptions) {
             const longCalls = longOptions.filter((o) => o.option_type === 'call')
             const longATM = findATMOption(longCalls, spot)
@@ -384,15 +402,14 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
         const dailyCtx = getDailyContext(sym)
         const closes = dailyCtx?.bars?.map((b) => b.close) ?? []
 
+        // tss calculado uma única vez e reutilizado em termStructureInverted.
+        const tss = calculateTSS(ivAtmForMetrics, ivLong)
         const volMetrics: DeepDiveVolMetrics = {
           irp: calculateIRP(ivAtmForMetrics, hv30ForMetrics),
           rr25: calculateRR25(options),
-          tss: calculateTSS(ivAtmForMetrics, ivLong),
+          tss,
           rvp: calculateRVP(closes),
-          termStructureInverted: (() => {
-            const tss = calculateTSS(ivAtmForMetrics, ivLong)
-            return tss !== null && tss < -0.03
-          })(),
+          termStructureInverted: tss !== null && tss < -0.03,
         }
 
         const deepDive: OptionDeepDive = {
@@ -421,6 +438,10 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
 
         let fullText = ''
         for await (const chunk of stream) {
+          // Se o cliente desconectou (aba fechada, reload), encerra o loop
+          // imediatamente para não consumir tokens da OpenAI em vão.
+          if (reply.raw.destroyed) break
+
           const token = chunk.choices[0]?.delta?.content ?? ''
           if (token) {
             fullText += token

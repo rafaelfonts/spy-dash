@@ -124,7 +124,9 @@ export function calculateLiquidityScore(
   const rvpOk = typeof rvp === 'number' && isFinite(rvp) && rvp < 40
   const irpRvpScore = (irpOk && rvpOk) ? 10 : (irpOk || rvpOk) ? 5 : 0
 
-  return Math.round(ivrScore + spreadScore + oiScore + rvolScore + irpRvpScore)
+  // Cap em 100: a soma teórica dos componentes chega a 105 (35+30+20+10+10).
+  // Sem o cap, scores como 103 quebram a semântica da escala declarada 0–100.
+  return Math.min(100, Math.round(ivrScore + spreadScore + oiScore + rvolScore + irpRvpScore))
 }
 
 /**

@@ -10,6 +10,10 @@ async function getAuthHeader(): Promise<string> {
   return session?.access_token ? `Bearer ${session.access_token}` : ''
 }
 
+// Singleton: garante que apenas uma análise rode por vez.
+// Cancelar antes de iniciar a próxima evita race condition no store.
+let _activeAnalysisAbort: AbortController | null = null
+
 export function useOptionScreener() {
   const store = useMarketStore()
   const { optionScreener } = store
@@ -71,6 +75,16 @@ export function useOptionScreener() {
   }
 
   async function analyzeSymbol(symbol: string) {
+    // Cancela qualquer análise anterior ainda em andamento antes de iniciar nova.
+    // Sem isso, dois loops de stream concorrentes escrevem no mesmo estado Zustand
+    // e os tokens de análises diferentes se misturam na UI.
+    if (_activeAnalysisAbort) {
+      _activeAnalysisAbort.abort()
+      _activeAnalysisAbort = null
+    }
+    const abortCtrl = new AbortController()
+    _activeAnalysisAbort = abortCtrl
+
     // Clear previous analysis state, then set selected + analyzing
     store.resetOptionScreenerAnalysis()
     store.setOptionScreenerSelected(symbol)
@@ -85,6 +99,7 @@ export function useOptionScreener() {
           Authorization: authHeader,
         },
         body: JSON.stringify({ symbol, deltaProfile: useMarketStore.getState().optionScreener.deltaProfile }),
+        signal: abortCtrl.signal,
       })
 
       if (!res.ok) {
@@ -104,6 +119,9 @@ export function useOptionScreener() {
       let currentEvent = ''
 
       while (true) {
+        // Se esta análise foi supersedida por uma mais recente, abandona silenciosamente.
+        if (abortCtrl.signal.aborted) break
+
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
@@ -133,9 +151,20 @@ export function useOptionScreener() {
           }
         }
       }
-      store.setOptionScreenerStatus('results')
+
+      // Só atualiza status se esta requisição não foi cancelada.
+      if (!abortCtrl.signal.aborted) {
+        store.setOptionScreenerStatus('results')
+      }
     } catch (err) {
+      // AbortError é intencional (nova análise iniciada) — não reportar como erro.
+      if (err instanceof Error && err.name === 'AbortError') return
       store.setOptionScreenerError(err instanceof Error ? err.message : 'Erro na análise')
+    } finally {
+      // Libera a referência se ainda for a nossa.
+      if (_activeAnalysisAbort === abortCtrl) {
+        _activeAnalysisAbort = null
+      }
     }
   }
 
