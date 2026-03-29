@@ -18,6 +18,7 @@ import {
   buildCandidate,
   DEFAULT_FILTER_CONFIG,
   CLOSED_MARKET_FILTER_CONFIG,
+  passesFilters,
 } from '../lib/optionScreenerFilters'
 import type { FilterConfig } from '../lib/optionScreenerFilters'
 import {
@@ -25,6 +26,7 @@ import {
   PRESET_TICKERS,
   PRESET_IVR_THRESHOLD,
   DELTA_RANGES,
+  ETF_TICKERS,
 } from '../types/optionScreener'
 import type {
   OptionCandidate,
@@ -34,7 +36,11 @@ import type {
   ScanRequest,
   AnalyzeRequest,
   OptionScreenerScanResult,
+  DeepDiveVolMetrics,
 } from '../types/optionScreener'
+import { getUniverseIVRank } from '../data/ivRankUniversePoller'
+import { getDailyContext } from '../data/equityDailyBarsCache'
+import { calculateIRP, calculateRR25, calculateTSS, calculateRVP } from '../lib/volMetrics'
 
 const openai = new OpenAI({ apiKey: CONFIG.OPENAI_API_KEY })
 
@@ -95,37 +101,32 @@ async function scanTicker(symbol: string, minIVR: number, marketOpen: boolean): 
     const atmCall = findATMOption(calls, quote.last)
     if (!atmCall) { console.log(`[Screener] ${symbol}: no ATM call`); return null }
 
-    // IVR: use polled value for SPY, chain smv_vol as proxy for others
+    // IVR: prefer polled Tastytrade value (true IV Rank 0–100), fallback to chain smv_vol (raw IV %, not rank)
     const chainIV = (atmCall.greeks?.smv_vol ?? 0) * 100
-    const ivRank = symbol === 'SPY'
-      ? (marketState.ivRank.value ?? chainIV)
-      : chainIV
+    const universeIVR = getUniverseIVRank(symbol)
+    const ivRank = universeIVR?.value
+      ?? (symbol === 'SPY' ? marketState.ivRank.value : null)
+      ?? chainIV
+    const ivRankSource: 'tastytrade' | 'chain_fallback' = universeIVR ? 'tastytrade' : 'chain_fallback'
 
     const underlyingVol = quote.volume ?? 0
     const avg20dVol = (quote as any).average_volume ?? underlyingVol
     const spread = atmCall.ask - atmCall.bid
-    const midpoint = (atmCall.ask + atmCall.bid) / 2
 
     const baseConfig = marketOpen ? DEFAULT_FILTER_CONFIG : CLOSED_MARKET_FILTER_CONFIG
     const filterConfig: FilterConfig = { ...baseConfig, minIVR: Math.min(minIVR, baseConfig.minIVR) }
 
-    const diagReasons: string[] = []
-    if (quote.last < filterConfig.minPrice) diagReasons.push(`price=${quote.last}<${filterConfig.minPrice}`)
-    if (underlyingVol < filterConfig.minUnderlyingVolume) diagReasons.push(`uvol=${underlyingVol}<${filterConfig.minUnderlyingVolume}`)
-    if (ivRank < filterConfig.minIVR || ivRank > filterConfig.maxIVR) diagReasons.push(`ivr=${ivRank.toFixed(1)} not in [${filterConfig.minIVR},${filterConfig.maxIVR}]`)
-    if (atmCall.open_interest < filterConfig.minOI) diagReasons.push(`oi=${atmCall.open_interest}<${filterConfig.minOI}`)
-    if (atmCall.volume < filterConfig.minOptionVolume) diagReasons.push(`vol=${atmCall.volume}<${filterConfig.minOptionVolume}`)
-    if (spread < 0) diagReasons.push(`spread<0`)
-    if (spread > filterConfig.maxBidAskAbsolute) diagReasons.push(`spread=$${spread.toFixed(2)}>$${filterConfig.maxBidAskAbsolute}`)
-    if (midpoint > 0 && spread / midpoint > filterConfig.maxBidAskPct) diagReasons.push(`spreadPct=${(spread/midpoint*100).toFixed(1)}%>${filterConfig.maxBidAskPct*100}%`)
+    const tickerType: 'etf' | 'single_stock' = ETF_TICKERS.has(symbol) ? 'etf' : 'single_stock'
+    const filterConfigFinal: FilterConfig = { ...filterConfig, tickerType }
+    const filterResult = passesFilters(atmCall, underlyingVol, quote.last, ivRank, filterConfigFinal)
 
-    if (diagReasons.length > 0) {
-      console.log(`[Screener] ${symbol}: FAIL — ${diagReasons.join(', ')} | smv_vol=${atmCall.greeks?.smv_vol ?? 'null'} strike=${atmCall.strike} bid=${atmCall.bid} ask=${atmCall.ask}`)
+    if (!filterResult.passes) {
+      console.log(`[Screener] ${symbol}: FAIL | ivRankSource=${ivRankSource} ivr=${ivRank.toFixed(1)} spread=$${spread.toFixed(2)} oi=${atmCall.open_interest} uvol=${underlyingVol} smv_vol=${atmCall.greeks?.smv_vol ?? 'null'}`)
       return null
     }
 
-    console.log(`[Screener] ${symbol}: PASS — ivr=${ivRank.toFixed(1)} spread=$${spread.toFixed(2)} oi=${atmCall.open_interest} uvol=${underlyingVol}`)
-    return buildCandidate(symbol, quote.last, ivRank, atmCall, underlyingVol, avg20dVol, expiration, 'tastytrade')
+    console.log(`[Screener] ${symbol}: PASS — ivr=${ivRank.toFixed(1)} (${ivRankSource}) spread=$${spread.toFixed(2)} oi=${atmCall.open_interest} uvol=${underlyingVol}`)
+    return buildCandidate(symbol, quote.last, ivRank, atmCall, underlyingVol, avg20dVol, expiration, ivRankSource)
   } catch (err) {
     console.log(`[Screener] ${symbol}: exception — ${err instanceof Error ? err.message : String(err)}`)
     return null
@@ -141,7 +142,14 @@ function calculateIVSkew(options: { option_type: string; greeks?: { delta?: numb
   const puts  = options.filter((o) => o.option_type === 'put')
 
   const otmCalls = calls.filter((o) => o.greeks?.delta !== undefined && o.greeks.delta < 0.45 && o.greeks.delta > 0.15)
-  const otmPuts  = puts.filter((o)  => o.greeks?.delta !== undefined && Math.abs(o.greeks.delta!) < 0.45 && Math.abs(o.greeks.delta!) > 0.15)
+  // Normalize put deltas: Tastytrade returns positive (absolute convention), Black-Scholes returns negative.
+  // Use Math.abs() to handle both conventions — filter for |delta| in [0.15, 0.45].
+  const otmPuts  = puts.filter((o) => {
+    const d = o.greeks?.delta
+    if (d === undefined || d === null) return false
+    const absDelta = Math.abs(d)
+    return absDelta > 0.15 && absDelta < 0.45
+  })
 
   if (otmCalls.length === 0 || otmPuts.length === 0) return null
 
@@ -166,6 +174,14 @@ function buildDeepDivePrompt(deepDive: OptionDeepDive, deltaProfile: AnalyzeRequ
     ev.upcomingMacroEvents.length > 0 ? `Macro events: ${ev.upcomingMacroEvents.join(', ')}` : 'No major macro events',
   ].join('\n')
 
+  const vm = deepDive.volMetrics
+  const volMetricsBlock = vm ? [
+    `IV Risk Premium: ${vm.irp !== null ? (vm.irp > 0 ? '+' : '') + vm.irp.toFixed(1) + 'pp' : 'N/A'}${vm.irp !== null ? (vm.irp > 0 ? ' (vol premium favorável ao vendedor)' : ' (vol premium desfavorável — comprador favorecido)') : ''}`,
+    `25Δ Risk Reversal: ${vm.rr25 !== null ? vm.rr25.toFixed(1) + 'pp' : 'N/A'}${vm.rr25 !== null ? (vm.rr25 < -3 ? ' (put skew elevado — bearish implícito)' : vm.rr25 > 1 ? ' (call skew — bullish implícito)' : ' (skew neutro)') : ''}`,
+    `Term Structure: ${vm.tss !== null ? (vm.tss >= 0 ? '+' : '') + (vm.tss * 100).toFixed(1) + '% ' + (vm.tss >= 0 ? 'contango' : '[!] backwardation') : 'N/A'}`,
+    `Realized Vol Percentile: ${vm.rvp !== null ? vm.rvp + '° percentil' + (vm.rvp < 30 ? ' (compressão — favorável short vega)' : vm.rvp > 70 ? ' (expansão — favorável long vega)' : '') : 'N/A'}`,
+  ].join('\n') : ''
+
   return `You are a quantitative options strategist. Suggest the single best option strategy for ${deepDive.symbol}.
 
 ## Market Context
@@ -175,7 +191,7 @@ Max Pain: ${mp ? `$${mp.maxPainStrike} (${mp.distancePct > 0 ? '+' : ''}${mp.dis
 Put/Call Ratio: ${deepDive.putCallRatio?.toFixed(2) ?? 'N/A'}
 GEX Regime: ${deepDive.gexRegime ?? 'Unknown'}
 IV Skew: ${deepDive.ivSkew ? `Call IV ${deepDive.ivSkew.callIV}% · Put IV ${deepDive.ivSkew.putIV}% · Skew ${deepDive.ivSkew.skew > 0 ? '+' : ''}${deepDive.ivSkew.skew}` : 'N/A'}
-
+${volMetricsBlock ? '\n## Vol Metrics\n' + volMetricsBlock : ''}
 ## Events
 ${eventsBlock}
 
@@ -184,6 +200,7 @@ ${eventsBlock}
 - DTE: prefer 21–45 days. Avoid expiries containing earnings.
 - If IVR > 40: prefer premium-selling strategies (CSP, CC, vertical spread)
 - If IVR < 20: prefer premium-buying strategies (long call/put)
+- Use IRP and RVP to confirm/reject premium-selling strategy: positive IRP + low RVP percentile (<30) strongly favors selling vol
 
 ## Output (JSON only, no markdown)
 Respond with a single JSON object matching exactly this schema:
@@ -339,6 +356,45 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
         // Events
         const events = await getEventsForSymbol(sym, 60)
 
+        // Vol Metrics (institutional: IRP, RR25, TSS, RVP)
+        // Fetch a second expiration ~60 DTE for Term Structure Slope
+        const expirations2 = await getTradierClient().getExpirations(sym).catch(() => [])
+        const now2 = Date.now()
+        const longExp = expirations2
+          .map((e) => ({ e, dte: Math.round((new Date(e + 'T12:00:00Z').getTime() - now2) / 86_400_000) }))
+          .filter(({ dte }) => dte >= 55 && dte <= 90)
+          .sort((a, b) => Math.abs(a.dte - 60) - Math.abs(b.dte - 60))[0]
+
+        let ivLong: number | null = null
+        if (longExp) {
+          const longOptions = await getTradierClient().getOptionChain(sym, longExp.e).catch(() => null)
+          if (longOptions) {
+            const longCalls = longOptions.filter((o) => o.option_type === 'call')
+            const longATM = findATMOption(longCalls, spot)
+            ivLong = longATM?.greeks?.smv_vol != null ? longATM.greeks.smv_vol * 100 : null
+          }
+        }
+
+        // IVR from universe poller or fallback
+        const universeIVRForMetrics = getUniverseIVRank(sym)
+        const hv30ForMetrics = universeIVRForMetrics?.hv30 ?? null
+        const ivAtmForMetrics = (atmCall?.greeks?.smv_vol ?? 0) * 100 || null
+
+        // Daily bars for RVP
+        const dailyCtx = getDailyContext(sym)
+        const closes = dailyCtx?.bars?.map((b) => b.close) ?? []
+
+        const volMetrics: DeepDiveVolMetrics = {
+          irp: calculateIRP(ivAtmForMetrics, hv30ForMetrics),
+          rr25: calculateRR25(options),
+          tss: calculateTSS(ivAtmForMetrics, ivLong),
+          rvp: calculateRVP(closes),
+          termStructureInverted: (() => {
+            const tss = calculateTSS(ivAtmForMetrics, ivLong)
+            return tss !== null && tss < -0.03
+          })(),
+        }
+
         const deepDive: OptionDeepDive = {
           symbol: sym,
           price: spot,
@@ -349,6 +405,7 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
           gexRegime,
           ivSkew,
           events,
+          volMetrics,
         }
 
         sendEvent('metrics', deepDive)
