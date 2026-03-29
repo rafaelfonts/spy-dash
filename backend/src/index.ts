@@ -5,6 +5,7 @@ import { initTokenManager } from './auth/tokenManager'
 import { startDXFeedStream } from './stream/dxfeedClient'
 import { startVIXPoller } from './data/vixPoller'
 import { startIVRankPoller } from './data/ivRankPoller'
+import { startIVRankUniversePoller } from './data/ivRankUniversePoller'
 import { startAdvancedMetricsPoller } from './data/advancedMetricsPoller'
 import { startExpectedMovePoller } from './data/expectedMovePoller'
 import { startEarningsCalendar } from './data/earningsCalendar'
@@ -238,6 +239,7 @@ async function bootstrap(): Promise<void> {
       startSkewPoller()
       startSKEWIndexPoller().catch(console.error)
       startIVRankPoller()
+      startIVRankUniversePoller()
       startEarningsCalendar()
       startFredPoller()
       startFearGreedPoller()
