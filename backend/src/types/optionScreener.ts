@@ -17,6 +17,7 @@ export interface OptionCandidate {
   liquidityScore: number      // 0–100
   nearestExpiration: string   // YYYY-MM-DD
   lastUpdated: number
+  ivRankSource: 'tastytrade' | 'chain_fallback'
 }
 
 export interface OptionEvents {
@@ -33,6 +34,14 @@ export interface IVSkew {
   skew: number      // putIV - callIV (positive = put premium)
 }
 
+export interface DeepDiveVolMetrics {
+  irp: number | null          // IV - HV30 in percentage points (e.g. 4.2)
+  rr25: number | null         // put25Δ IV - call25Δ IV in percentage points (negative = put skew)
+  tss: number | null          // (IV60d / IV30d) - 1 as decimal (positive = contango)
+  rvp: number | null          // HV5 percentile 0–100 over 90-day window
+  termStructureInverted: boolean  // true when tss < -0.03
+}
+
 export interface OptionDeepDive {
   symbol: string
   price: number
@@ -42,6 +51,7 @@ export interface OptionDeepDive {
   putCallRatio: number | null
   gexRegime: 'positive' | 'negative' | null
   ivSkew: IVSkew | null
+  volMetrics: DeepDiveVolMetrics | null
   events: OptionEvents
 }
 
@@ -102,6 +112,12 @@ export const PRESET_IVR_THRESHOLD: Record<ScreenerPreset, number> = {
   blue_chips: 40,
   broad_etfs: 30,
 }
+
+// Tickers treated as ETFs for spread threshold purposes (absolute spread limit applies)
+export const ETF_TICKERS = new Set<string>([
+  ...PRESET_TICKERS.broad_etfs,
+  ...PRESET_TICKERS.flight_to_safety,
+])
 
 export const DELTA_RANGES: Record<DeltaProfile, { min: number; max: number }> = {
   conservative: { min: 0.15, max: 0.25 },
