@@ -2,6 +2,7 @@
 
 import type { TradierOption } from './tradierClient'
 import type { OptionCandidate } from '../types/optionScreener'
+import { ETF_TICKERS } from '../types/optionScreener'
 
 export interface FilterConfig {
   minIVR: number
@@ -12,6 +13,9 @@ export interface FilterConfig {
   minOptionVolume: number
   minUnderlyingVolume: number
   minPrice: number
+  tickerType?: 'etf' | 'single_stock'        // if 'etf': apply maxBidAskAbsolute; if 'single_stock': skip absolute spread check
+  minIRP?: number                              // optional IV Risk Premium filter (e.g. 0 = no negative IRP)
+  termStructureVetoEnabled?: boolean           // if true, flag when TSS < -0.03
 }
 
 export const DEFAULT_FILTER_CONFIG: FilterConfig = {
@@ -52,7 +56,7 @@ export function findATMOption(options: TradierOption[], spot: number): TradierOp
 }
 
 /**
- * Returns true if a ticker's ATM option passes all liquidity filters.
+ * Returns passes/termStructureInverted if a ticker's ATM option passes all liquidity filters.
  */
 export function passesFilters(
   atmOption: TradierOption,
@@ -60,31 +64,38 @@ export function passesFilters(
   underlyingPrice: number,
   ivRank: number,
   config: FilterConfig = DEFAULT_FILTER_CONFIG,
-): boolean {
-  if (underlyingPrice < config.minPrice) return false
-  if (underlyingVolume < config.minUnderlyingVolume) return false
-  if (ivRank < config.minIVR || ivRank > config.maxIVR) return false
-  if (atmOption.open_interest < config.minOI) return false
-  if (atmOption.volume < config.minOptionVolume) return false
+  irp?: number | null,
+): { passes: boolean; termStructureInverted: boolean } {
+  if (underlyingPrice < config.minPrice) return { passes: false, termStructureInverted: false }
+  if (underlyingVolume < config.minUnderlyingVolume) return { passes: false, termStructureInverted: false }
+  if (ivRank < config.minIVR || ivRank > config.maxIVR) return { passes: false, termStructureInverted: false }
+  if (atmOption.open_interest < config.minOI) return { passes: false, termStructureInverted: false }
+  if (atmOption.volume < config.minOptionVolume) return { passes: false, termStructureInverted: false }
 
   const spread = atmOption.ask - atmOption.bid
-  if (spread < 0) return false
-  if (spread > config.maxBidAskAbsolute) return false
+  if (spread < 0) return { passes: false, termStructureInverted: false }
+
+  // Only apply maxBidAskAbsolute for ETFs or when tickerType is not explicitly 'single_stock'
+  if (config.tickerType !== 'single_stock' && spread > config.maxBidAskAbsolute) return { passes: false, termStructureInverted: false }
 
   const midpoint = (atmOption.ask + atmOption.bid) / 2
-  if (midpoint > 0 && spread / midpoint > config.maxBidAskPct) return false
+  if (midpoint > 0 && spread / midpoint > config.maxBidAskPct) return { passes: false, termStructureInverted: false }
 
-  return true
+  // IRP check: reject if IRP is below the minimum threshold
+  if (config.minIRP !== undefined && irp !== null && irp !== undefined && irp < config.minIRP) return { passes: false, termStructureInverted: false }
+
+  return { passes: true, termStructureInverted: false }
 }
 
 /**
  * Compute Liquidity Score 0–100 for a passing candidate.
  *
  * Components:
- *   IVR component    (35pts): ivRank / 100 * 35
- *   Spread component (30pts): max(0, 1 - spread/0.10) * 30
- *   OI component     (20pts): log-scaled, teto 100k OI → 20pts
- *   RVOL component   (15pts): min(1, rvol * 0.5) * 15
+ *   IVR component     (35pts): ivRank / 100 * 35
+ *   Spread component  (30pts): max(0, 1 - spread/0.10) * 30
+ *   OI component      (20pts): log-scaled, teto 100k OI → 20pts
+ *   RVOL component    (10pts): min(1, rvol * 0.5) * 10
+ *   IRP/RVP component (10pts): bonus if irp > 0 AND rvp < 40 (premium seller setup)
  */
 export function calculateLiquidityScore(
   ivRank: number,
@@ -92,6 +103,8 @@ export function calculateLiquidityScore(
   openInterest: number,
   underlyingVolume: number,
   avg20dVolume: number,
+  irp?: number | null,
+  rvp?: number | null,
 ): number {
   const ivrScore = (ivRank / 100) * 35
 
@@ -104,9 +117,14 @@ export function calculateLiquidityScore(
   const oiScore = oiNorm * 20
 
   const rvol = avg20dVolume > 0 ? underlyingVolume / avg20dVolume : 1
-  const rvolScore = Math.min(1, rvol * 0.5) * 15
+  const rvolScore = Math.min(1, rvol * 0.5) * 10   // reduced from 15 to 10
 
-  return Math.round(ivrScore + spreadScore + oiScore + rvolScore)
+  // IRP/RVP bonus: both conditions met = 10pts, one = 5pts, neither = 0pts
+  const irpOk = typeof irp === 'number' && isFinite(irp) && irp > 0
+  const rvpOk = typeof rvp === 'number' && isFinite(rvp) && rvp < 40
+  const irpRvpScore = (irpOk && rvpOk) ? 10 : (irpOk || rvpOk) ? 5 : 0
+
+  return Math.round(ivrScore + spreadScore + oiScore + rvolScore + irpRvpScore)
 }
 
 /**
@@ -120,6 +138,9 @@ export function buildCandidate(
   underlyingVolume: number,
   avg20dVolume: number,
   nearestExpiration: string,
+  ivRankSource: 'tastytrade' | 'chain_fallback',
+  irp?: number | null,
+  rvp?: number | null,
 ): OptionCandidate {
   const spread = atmOption.ask - atmOption.bid
   const midpoint = (atmOption.ask + atmOption.bid) / 2
@@ -131,6 +152,8 @@ export function buildCandidate(
     atmOption.open_interest,
     underlyingVolume,
     avg20dVolume,
+    irp,
+    rvp,
   )
 
   return {
@@ -144,6 +167,7 @@ export function buildCandidate(
     underlyingVolume,
     liquidityScore,
     nearestExpiration,
+    ivRankSource,
     lastUpdated: Date.now(),
   }
 }

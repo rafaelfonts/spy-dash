@@ -125,7 +125,7 @@ async function scanTicker(symbol: string, minIVR: number, marketOpen: boolean): 
     }
 
     console.log(`[Screener] ${symbol}: PASS — ivr=${ivRank.toFixed(1)} spread=$${spread.toFixed(2)} oi=${atmCall.open_interest} uvol=${underlyingVol}`)
-    return buildCandidate(symbol, quote.last, ivRank, atmCall, underlyingVol, avg20dVol, expiration)
+    return buildCandidate(symbol, quote.last, ivRank, atmCall, underlyingVol, avg20dVol, expiration, 'tastytrade')
   } catch (err) {
     console.log(`[Screener] ${symbol}: exception — ${err instanceof Error ? err.message : String(err)}`)
     return null
