@@ -25,10 +25,13 @@ export function useOptionScreener() {
 
     try {
       const authHeader = await getAuthHeader()
+      // If no preset arg, re-use the currently active preset so "Varrer Agora" doesn't silently
+      // fall back to scanning all 37 tickers instead of the selected preset.
+      const effectivePreset = preset ?? useMarketStore.getState().optionScreener.activePreset
       const body: { preset?: ScreenerPresetFE; deltaProfile: DeltaProfileFE } = {
         deltaProfile: useMarketStore.getState().optionScreener.deltaProfile,
       }
-      if (preset) body.preset = preset
+      if (effectivePreset) body.preset = effectivePreset
 
       const res = await fetch(`${getApiBase()}/api/option-screener/scan`, {
         method: 'POST',
