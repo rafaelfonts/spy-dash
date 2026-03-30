@@ -47,7 +47,8 @@ export function EquityWatchlist() {
         body: JSON.stringify({ symbol }),
       })
       if (res.ok) {
-        const data: EquityAnalysis = await res.json()
+        const body = await res.json()
+        const data: EquityAnalysis = body.analysis ?? body
         setEquityAnalysis(data)
         setTimeout(() => document.getElementById('equity-ai-analysis')?.scrollIntoView({ behavior: 'smooth' }), 100)
       }
