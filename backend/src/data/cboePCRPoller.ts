@@ -1,5 +1,6 @@
 /**
- * CBOE Put/Call Ratio — scrape diário após fechamento (16:35 ET).
+ * CBOE Put/Call Ratio — fetch diário após fechamento (16:35 ET).
+ * Usa o endpoint JSON do CDN CBOE (não scraping HTML — a página é um SPA React).
  * Publica no #feed (Discord) e via SSE. Cache Redis 14h, restaurado no startup.
  */
 
@@ -8,7 +9,7 @@ import { cacheGet, cacheSet, redis } from '../lib/cacheStore'
 import { sendEmbed, DISCORD_COLORS } from '../lib/discordClient'
 
 const CACHE_KEY = 'cboe_pcr_daily'
-const CBOE_URL = 'https://www.cboe.com/us/options/market_statistics/daily/'
+const CBOE_CDN_BASE = 'https://cdn.cboe.com/data/us/options/market_statistics/daily'
 const TTL_MS = 14 * 60 * 60 * 1000  // 14h
 
 export interface CBOEPCRData {
@@ -27,39 +28,61 @@ function parseEquityLabel(equityPCR: number): CBOEPCRData['label'] {
   return 'extreme_greed'
 }
 
-export async function fetchCBOEPCR(): Promise<CBOEPCRData | null> {
-  try {
-    const res = await fetch(CBOE_URL, { signal: AbortSignal.timeout(10000) })
-    const html = await res.text()
+/** Retorna YYYY-MM-DD de uma Date em timezone ET */
+function toETDateString(date: Date): string {
+  // en-CA usa formato ISO YYYY-MM-DD
+  return date.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+}
 
-    const rows = html.match(/P\/C Ratio[\s\S]*?(\d+\.\d+)[\s\S]*?(\d+\.\d+)[\s\S]*?(\d+\.\d+)/)
-    if (rows) {
-      const totalPCR = parseFloat(rows[1])
-      const equityPCR = parseFloat(rows[2])
-      const indexPCR = parseFloat(rows[3])
-      return {
-        totalPCR,
-        equityPCR,
-        indexPCR,
-        label: parseEquityLabel(equityPCR),
-        capturedAt: new Date().toISOString(),
-      }
-    }
+/** Tenta buscar dados do CDN CBOE para uma data específica. Retorna null se 403/erro. */
+async function fetchForDate(dateStr: string): Promise<CBOEPCRData | null> {
+  const url = `${CBOE_CDN_BASE}/${dateStr}_daily_options`
+  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+  if (!res.ok) return null
 
-    const allRatios = [...html.matchAll(/>\s*(\d\.\d{2})\s*</g)].map((m) => parseFloat(m[1]))
-    if (allRatios.length < 3) return null
-    const [totalPCR, equityPCR, indexPCR] = allRatios
-    return {
-      totalPCR,
-      equityPCR,
-      indexPCR,
-      label: parseEquityLabel(equityPCR),
-      capturedAt: new Date().toISOString(),
-    }
-  } catch (err) {
-    console.warn('[CBOE PCR] Falha no fetch:', (err as Error).message)
-    return null
+  const json = await res.json() as { ratios?: Array<{ name: string; value: string }> }
+  const ratios = json.ratios ?? []
+
+  const findRatio = (keyword: string): number =>
+    parseFloat(ratios.find((r) => r.name.includes(keyword))?.value ?? '')
+
+  const totalPCR  = findRatio('TOTAL PUT/CALL')
+  const equityPCR = findRatio('EQUITY PUT/CALL')
+  const indexPCR  = findRatio('INDEX PUT/CALL')
+
+  if (isNaN(totalPCR) || isNaN(equityPCR) || isNaN(indexPCR)) return null
+
+  return {
+    totalPCR,
+    equityPCR,
+    indexPCR,
+    label: parseEquityLabel(equityPCR),
+    capturedAt: new Date().toISOString(),
   }
+}
+
+/** Busca o PCR do dia útil mais recente disponível (tenta até 5 dias para trás). */
+export async function fetchCBOEPCR(): Promise<CBOEPCRData | null> {
+  const today = new Date()
+  for (let daysBack = 0; daysBack <= 5; daysBack++) {
+    const d = new Date(today)
+    d.setDate(d.getDate() - daysBack)
+    const weekday = d.toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short' })
+    if (weekday === 'Sat' || weekday === 'Sun') continue
+
+    const dateStr = toETDateString(d)
+    try {
+      const result = await fetchForDate(dateStr)
+      if (result) {
+        console.log(`[CBOE PCR] Dados obtidos para ${dateStr}`)
+        return result
+      }
+    } catch (err) {
+      console.warn(`[CBOE PCR] Falha em ${dateStr}:`, (err as Error).message)
+    }
+  }
+  console.warn('[CBOE PCR] Nenhum dado disponível nos últimos 5 dias úteis')
+  return null
 }
 
 export async function publishCBOEPCR(data: CBOEPCRData): Promise<void> {
@@ -115,12 +138,22 @@ export function startCBOEPCRScheduler(): void {
       const dateET = `${etTime.getFullYear()}-${String(etTime.getMonth() + 1).padStart(2, '0')}-${String(etTime.getDate()).padStart(2, '0')}`
       const lockKey = `lock:cboe_pcr:${dateET}`
       const acquired = await redis.set(lockKey, '1', 'EX', LOCK_TTL, 'NX')
-      if (!acquired) return
+      if (!acquired) {
+        console.log(`[CBOE PCR] Lock já adquirido para ${dateET} — fetch ignorado`)
+        return
+      }
 
       const data = await fetchCBOEPCR()
       if (data) await publishCBOEPCR(data)
     }
   }, CHECK_INTERVAL_MS)
+
+  // Poll inicial 30s após startup — popula cache quando TTL expirou mas dado já está disponível
+  setTimeout(() => {
+    fetchCBOEPCR()
+      .then((data) => { if (data) publishCBOEPCR(data) })
+      .catch((err) => console.warn('[CBOE PCR] Poll inicial:', (err as Error).message))
+  }, 30_000)
 
   console.log('[CBOE PCR] Scheduler iniciado — disparo 16:35 ET em dias úteis')
 }
