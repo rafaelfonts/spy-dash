@@ -22,7 +22,7 @@ export const DEFAULT_FILTER_CONFIG: FilterConfig = {
   minIVR: 40,
   maxIVR: 100,
   minOI: 10_000,
-  maxBidAskAbsolute: 0.10,
+  maxBidAskAbsolute: 0.30,   // raised from 0.10 — elevated vol regimes widen ETF spreads to $0.15–0.25
   maxBidAskPct: 0.05,
   minOptionVolume: 200,
   minUnderlyingVolume: 500_000,

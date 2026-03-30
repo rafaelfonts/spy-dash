@@ -117,7 +117,10 @@ async function scanTicker(symbol: string, minIVR: number, marketOpen: boolean): 
     const filterConfig: FilterConfig = { ...baseConfig, minIVR: Math.min(minIVR, baseConfig.minIVR) }
 
     const tickerType: 'etf' | 'single_stock' = ETF_TICKERS.has(symbol) ? 'etf' : 'single_stock'
-    const filterConfigFinal: FilterConfig = { ...filterConfig, tickerType }
+    // When IVR comes from chain_fallback (raw IV% ≠ IV Rank), the value is unreliable as a rank proxy.
+    // Skip minIVR enforcement so other filters (spread, OI, volume) decide the outcome.
+    const effectiveMinIVR = ivRankSource === 'chain_fallback' ? 0 : filterConfig.minIVR
+    const filterConfigFinal: FilterConfig = { ...filterConfig, tickerType, minIVR: effectiveMinIVR }
     const filterResult = passesFilters(atmCall, underlyingVol, quote.last, ivRank, filterConfigFinal)
 
     if (!filterResult.passes) {
