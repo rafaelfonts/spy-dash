@@ -21,9 +21,9 @@ export interface FilterConfig {
 export const DEFAULT_FILTER_CONFIG: FilterConfig = {
   minIVR: 40,
   maxIVR: 100,
-  minOI: 10_000,
-  maxBidAskAbsolute: 0.30,   // raised from 0.10 — elevated vol regimes widen ETF spreads to $0.15–0.25
-  maxBidAskPct: 0.05,
+  minOI: 500,                // lowered from 10,000 — calibrated for SPY but unreachable for defensive ETFs (TLT ATM ≈ 900, GLD ≈ 500)
+  maxBidAskAbsolute: 1.00,   // raised from 0.30 — absolute cap must accommodate high-priced ETFs (GLD $290 → spread $0.60 is 3% = fine)
+  maxBidAskPct: 0.05,        // 5% relative check is the binding constraint for quality
   minOptionVolume: 200,
   minUnderlyingVolume: 500_000,
   minPrice: 20,
