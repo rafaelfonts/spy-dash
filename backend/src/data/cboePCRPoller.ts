@@ -161,7 +161,7 @@ export async function publishCBOEPCRToDiscord(data: CBOEPCRData): Promise<void> 
 
   // Flag anti-duplo
   const now = new Date()
-  const etDate = now.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  const etDate = toETDateString(now)
   const flagKey = `cboe_pcr_published:${etDate}`
   const acquired = await redis.set(flagKey, '1', 'EX', 14 * 60 * 60, 'NX')
   if (!acquired) {
@@ -180,11 +180,11 @@ export async function publishCBOEPCRToDiscord(data: CBOEPCRData): Promise<void> 
 
   // Monta embed
   const labelEmoji: Record<CBOEPCRData['label'], string> = {
-    extreme_fear: '[!!] Medo Extremo — proteção sistemica comprada',
-    fear: '[!] Medo — premio de put elevado',
+    extreme_fear: '[!!] Medo Extremo — proteção sistêmica comprada',
+    fear: '[!] Medo — prêmio de put elevado',
     neutral: '[ ] Neutro',
-    greed: '[+] Ganancia — premio de put baixo',
-    extreme_greed: '[++] Ganancia Extrema — complacencia',
+    greed: '[+] Ganância — prêmio de put baixo',
+    extreme_greed: '[++] Ganância Extrema — complacência',
   }
 
   const polarityLabel: Record<'bullish' | 'bearish', string> = {
@@ -196,8 +196,7 @@ export async function publishCBOEPCRToDiscord(data: CBOEPCRData): Promise<void> 
   const flipBlock = polarityFlip && prev
     ? [
         `[!] Virada de Sentimento: ${polarityLabel[prevPolarity as 'bullish' | 'bearish']} → ${polarityLabel[currentPolarity as 'bullish' | 'bearish']}`,
-        `Ontem: ${prev.label === 'greed' || prev.label === 'extreme_greed' ? 'Ganancia' : 'Medo'} (${prevEquityStr}) | Hoje: ${data.label === 'greed' || data.label === 'extreme_greed' ? 'Ganancia' : 'Medo'} (${data.equityPCR.toFixed(2)})`,
-        ``,
+        `Ontem: ${prev.label === 'greed' || prev.label === 'extreme_greed' ? 'Ganância' : 'Medo'} (${prevEquityStr}) | Hoje: ${data.label === 'greed' || data.label === 'extreme_greed' ? 'Ganância' : 'Medo'} (${data.equityPCR.toFixed(2)})`,
       ].join('\n')
     : ''
 
@@ -209,9 +208,9 @@ export async function publishCBOEPCRToDiscord(data: CBOEPCRData): Promise<void> 
     ``,
     `**Sentimento:** ${labelEmoji[data.label]}`,
     ``,
-    `> Equity PCR > 0.8 = medo -> favoravel para Put Spread (premio alto)`,
-    `> Equity PCR < 0.5 = complacencia -> cautela com sizing`,
-  ].join('\n')
+    `> Equity PCR > 0.8 = medo → favorável para Put Spread (prêmio alto)`,
+    `> Equity PCR < 0.5 = complacência → cautela com sizing`,
+  ].filter(Boolean).join('\n')
 
   const embedColor = polarityFlip
     ? currentPolarity === 'bearish'
@@ -223,7 +222,7 @@ export async function publishCBOEPCRToDiscord(data: CBOEPCRData): Promise<void> 
     title: `CBOE Put/Call Ratio — ${now.toLocaleDateString('pt-BR', { timeZone: 'America/New_York' })}`,
     description,
     color: embedColor,
-    footer: { text: 'Fonte: CBOE · Publicado apos fechamento do mercado' },
+    footer: { text: 'Fonte: CBOE · Publicado após fechamento do mercado' },
     timestamp: now.toISOString(),
   })
 
