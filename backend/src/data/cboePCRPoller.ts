@@ -95,20 +95,34 @@ export async function getLastCBOEPCR(): Promise<CBOEPCRData | null> {
   return cacheGet<CBOEPCRData>(CACHE_KEY)
 }
 
+/** Persiste dado ao cache Redis e emite via SSE. */
+async function persistAndEmit(data: CBOEPCRData): Promise<void> {
+  await cacheSet(CACHE_KEY, data, TTL_MS, 'cboe_pcr')
+  emitter.emit('cboe_pcr', data)
+}
+
 /**
  * Restaura o dado mais recente ao cache Redis e emite via SSE.
  * Nunca publica no Discord — apenas garante que o agente IA tenha o dado disponível.
  */
 export async function restoreCBOEPCRToCache(): Promise<void> {
   try {
+    // Se já há dado válido no cache, apenas emite via SSE (sem fetch HTTP)
+    const cached = await getLastCBOEPCR()
+    if (cached) {
+      emitter.emit('cboe_pcr', cached)
+      console.log('[CBOE PCR] Cache já presente — SSE emitido (sem fetch HTTP)')
+      return
+    }
+
+    // Cache vazio — busca da CBOE
     const data = await fetchCBOEPCR()
     if (!data) {
       console.warn('[CBOE PCR] restoreCBOEPCRToCache: nenhum dado disponível')
       return
     }
-    await cacheSet(CACHE_KEY, data, TTL_MS, 'cboe_pcr')
-    emitter.emit('cboe_pcr', data)
-    console.log('[CBOE PCR] Cache restaurado (sem Discord)')
+    await persistAndEmit(data)
+    console.log('[CBOE PCR] Cache restaurado da CBOE (sem Discord)')
   } catch (err) {
     console.warn('[CBOE PCR] restoreCBOEPCRToCache falhou:', (err as Error).message)
   }
@@ -124,8 +138,7 @@ const TTL_PREV_MS = 48 * 60 * 60 * 1000  // 48h
  */
 export async function publishCBOEPCRToDiscord(data: CBOEPCRData): Promise<void> {
   // Atualiza cache/memória primeiro (independente do Discord)
-  await cacheSet(CACHE_KEY, data, TTL_MS, 'cboe_pcr')
-  emitter.emit('cboe_pcr', data)
+  await persistAndEmit(data)
 
   // Flag anti-duplo
   const now = new Date()
