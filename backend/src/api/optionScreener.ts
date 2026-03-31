@@ -227,7 +227,7 @@ Respond with a single JSON object matching exactly this schema:
   "credit": number|null,
   "debit": number|null,
   "delta": number,
-  "popEstimate": number,
+  "popEstimate": number (0.0–1.0 decimal, e.g. 0.65 for 65% PoP),
   "maxProfit": number,
   "maxLoss": number|null,
   "breakevens": number[],
