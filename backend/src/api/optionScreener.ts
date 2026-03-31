@@ -177,7 +177,13 @@ function calculateIVSkew(options: { option_type: string; greeks?: { delta?: numb
   }
 }
 
-function buildDeepDivePrompt(deepDive: OptionDeepDive, deltaProfile: AnalyzeRequest['deltaProfile']): string {
+function buildDeepDivePrompt(
+  deepDive: OptionDeepDive,
+  deltaProfile: AnalyzeRequest['deltaProfile'],
+  expiration: string,
+  todayET: string,
+  selectedDTE: number,
+): string {
   const dr = DELTA_RANGES[deltaProfile]
   const mp = deepDive.maxPain
   const ev = deepDive.events
@@ -211,7 +217,11 @@ ${eventsBlock}
 
 ## Constraints
 - Delta range for primary strike: ${dr.min} to ${dr.max} (${deltaProfile} profile)
-- DTE: prefer 21–45 days. Avoid expiries containing earnings.
+- TODAY (ET): ${todayET}
+- Selected expiration from Tradier chain: ${expiration} (${selectedDTE} DTE from today)
+- MANDATORY: use EXACTLY "${expiration}" in the "expiration" field. Do not calculate or invent another date.
+- MANDATORY: use EXACTLY ${selectedDTE} in the "dte" field.
+- Avoid expiries containing earnings.
 - If IVR > 40: prefer premium-selling strategies (CSP, CC, vertical spread)
 - If IVR < 20: prefer premium-buying strategies (long call/put)
 - Use IRP and RVP to confirm/reject premium-selling strategy: positive IRP + low RVP percentile (<30) strongly favors selling vol
@@ -447,7 +457,9 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
         sendEvent('metrics', deepDive)
 
         // Stream AI strategy
-        const prompt = buildDeepDivePrompt(deepDive, deltaProfile)
+        const todayET = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(nowMs))
+        const selectedDTE = shortExpEntry.dte
+        const prompt = buildDeepDivePrompt(deepDive, deltaProfile, expiration, todayET, selectedDTE)
         const stream = await openai.chat.completions.create({
           model: 'gpt-4o-mini',
           messages: [{ role: 'user', content: prompt }],
@@ -473,6 +485,12 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
           const strategy = JSON.parse(fullText) as OptionStrategy
           // Normalize popEstimate: AI sometimes returns 0-100 scale instead of 0-1
           if (strategy.popEstimate > 1) strategy.popEstimate = strategy.popEstimate / 100
+          // Guardrail: if AI hallucinated an expiration, override with the real one
+          if (!strategy.expiration || strategy.expiration <= todayET || !allExpirations.includes(strategy.expiration)) {
+            console.warn('[Screener] expiry fix', { symbol: sym, aiExpiry: strategy.expiration, corrected: expiration })
+            strategy.expiration = expiration
+            strategy.dte = selectedDTE
+          }
           sendEvent('strategy', strategy)
         } catch {
           // If AI didn't return valid JSON, send raw text as rationale
