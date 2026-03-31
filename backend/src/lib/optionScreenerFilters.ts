@@ -21,10 +21,10 @@ export interface FilterConfig {
 export const DEFAULT_FILTER_CONFIG: FilterConfig = {
   minIVR: 40,
   maxIVR: 100,
-  minOI: 500,                // lowered from 10,000 — calibrated for SPY but unreachable for defensive ETFs (TLT ATM ≈ 900, GLD ≈ 500)
+  minOI: 0,                  // Tradier free tier returns unreliable/underreported OI for weekly ETF options — spread-based filters are the primary liquidity gate
   maxBidAskAbsolute: 1.00,   // raised from 0.30 — absolute cap must accommodate high-priced ETFs (GLD $290 → spread $0.60 is 3% = fine)
   maxBidAskPct: 0.05,        // 5% relative check is the binding constraint for quality
-  minOptionVolume: 200,
+  minOptionVolume: 5,        // lowered from 200 — Tradier free tier underreports option volume; spread filters are the real quality gate
   minUnderlyingVolume: 500_000,
   minPrice: 20,
 }
@@ -34,7 +34,7 @@ export const DEFAULT_FILTER_CONFIG: FilterConfig = {
 export const CLOSED_MARKET_FILTER_CONFIG: FilterConfig = {
   minIVR: 30,
   maxIVR: 100,
-  minOI: 1_000,
+  minOI: 0,
   maxBidAskAbsolute: 1.00,
   maxBidAskPct: 0.50,
   minOptionVolume: 0,
