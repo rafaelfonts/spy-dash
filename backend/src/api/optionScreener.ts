@@ -124,7 +124,18 @@ async function scanTicker(symbol: string, minIVR: number, marketOpen: boolean): 
     const filterResult = passesFilters(atmCall, underlyingVol, quote.last, ivRank, filterConfigFinal)
 
     if (!filterResult.passes) {
-      console.log(`[Screener] ${symbol}: FAIL | ivRankSource=${ivRankSource} ivr=${ivRank.toFixed(1)} spread=$${spread.toFixed(2)} oi=${atmCall.open_interest} uvol=${underlyingVol} smv_vol=${atmCall.greeks?.smv_vol ?? 'null'}`)
+      const mid = (atmCall.ask + atmCall.bid) / 2
+      const spreadPct = mid > 0 ? ((spread / mid) * 100).toFixed(1) : 'N/A'
+      const failReasons: string[] = []
+      if (quote.last < filterConfigFinal.minPrice) failReasons.push(`price=${quote.last}<${filterConfigFinal.minPrice}`)
+      if (underlyingVol < filterConfigFinal.minUnderlyingVolume) failReasons.push(`uvol=${underlyingVol}<${filterConfigFinal.minUnderlyingVolume}`)
+      if (ivRank < filterConfigFinal.minIVR || ivRank > filterConfigFinal.maxIVR) failReasons.push(`ivr=${ivRank.toFixed(1)} out of [${filterConfigFinal.minIVR},${filterConfigFinal.maxIVR}]`)
+      if (atmCall.open_interest < filterConfigFinal.minOI) failReasons.push(`oi=${atmCall.open_interest}<${filterConfigFinal.minOI}`)
+      if (atmCall.volume < filterConfigFinal.minOptionVolume) failReasons.push(`optvol=${atmCall.volume}<${filterConfigFinal.minOptionVolume}`)
+      if (spread < 0) failReasons.push('spread<0')
+      if (filterConfigFinal.tickerType !== 'single_stock' && spread > filterConfigFinal.maxBidAskAbsolute) failReasons.push(`spread=$${spread.toFixed(2)}>${filterConfigFinal.maxBidAskAbsolute}`)
+      if (mid > 0 && spread / mid > filterConfigFinal.maxBidAskPct) failReasons.push(`spread%=${spreadPct}%>${filterConfigFinal.maxBidAskPct * 100}%`)
+      console.log(`[Screener] ${symbol}: FAIL [${failReasons.join(' | ')}] | ivr=${ivRank.toFixed(1)}(${ivRankSource}) spread=$${spread.toFixed(2)}(${spreadPct}%) oi=${atmCall.open_interest} optvol=${atmCall.volume} uvol=${underlyingVol}`)
       return null
     }
 
@@ -248,7 +259,11 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
 
       const cKey = scanCacheKey(tickers)
       const cached = await cacheGet<OptionScreenerScanResult>(cKey)
-      if (cached) return reply.send({ ...cached, cacheHit: true })
+      if (cached) {
+        console.log(`[Screener] cache HIT | preset=${resolvedPreset} tickers=${tickers.length} candidates=${cached.candidates.length} scannedAt=${new Date(cached.scannedAt).toISOString()}`)
+        return reply.send({ ...cached, cacheHit: true })
+      }
+      console.log(`[Screener] FRESH SCAN | preset=${resolvedPreset} tickers=${tickers.join(',')} minIVR=${minIVR} marketOpen=${marketOpen}`)
 
       // Scan in parallel batches; smaller batch after hours to reduce rate-limit pressure
       const BATCH = marketOpen ? 10 : 5
