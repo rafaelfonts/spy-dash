@@ -294,12 +294,13 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
       }
       const sym = symbol.toUpperCase()
 
-      reply.raw.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-        'X-Accel-Buffering': 'no',
-      })
+      const res = reply.raw
+      res.setHeader('Content-Type', 'text/event-stream')
+      res.setHeader('Cache-Control', 'no-cache')
+      res.setHeader('Connection', 'keep-alive')
+      res.setHeader('X-Accel-Buffering', 'no')
+      res.setHeader('Access-Control-Allow-Origin', CONFIG.CORS_ORIGIN)
+      res.flushHeaders()
 
       function sendEvent(event: string, data: unknown): void {
         reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
