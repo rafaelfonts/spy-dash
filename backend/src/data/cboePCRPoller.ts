@@ -28,6 +28,12 @@ function parseEquityLabel(equityPCR: number): CBOEPCRData['label'] {
   return 'extreme_greed'
 }
 
+function getPolarityGroup(label: CBOEPCRData['label']): 'bullish' | 'bearish' | 'neutral' {
+  if (label === 'greed' || label === 'extreme_greed') return 'bullish'
+  if (label === 'fear' || label === 'extreme_fear') return 'bearish'
+  return 'neutral'
+}
+
 /** Retorna YYYY-MM-DD de uma Date em timezone ET */
 function toETDateString(date: Date): string {
   // en-CA usa formato ISO YYYY-MM-DD
@@ -119,6 +125,25 @@ export async function publishCBOEPCR(data: CBOEPCRData): Promise<void> {
 
 export async function getLastCBOEPCR(): Promise<CBOEPCRData | null> {
   return cacheGet<CBOEPCRData>(CACHE_KEY)
+}
+
+/**
+ * Restaura o dado mais recente ao cache Redis e emite via SSE.
+ * Nunca publica no Discord — apenas garante que o agente IA tenha o dado disponível.
+ */
+export async function restoreCBOEPCRToCache(): Promise<void> {
+  try {
+    const data = await fetchCBOEPCR()
+    if (!data) {
+      console.warn('[CBOE PCR] restoreCBOEPCRToCache: nenhum dado disponível')
+      return
+    }
+    await cacheSet(CACHE_KEY, data, TTL_MS, 'cboe_pcr')
+    emitter.emit('cboe_pcr', data)
+    console.log('[CBOE PCR] Cache restaurado (sem Discord)')
+  } catch (err) {
+    console.warn('[CBOE PCR] restoreCBOEPCRToCache falhou:', (err as Error).message)
+  }
 }
 
 const SCHEDULED_HHMM = '16:35'
