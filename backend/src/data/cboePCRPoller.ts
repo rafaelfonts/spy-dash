@@ -91,38 +91,6 @@ export async function fetchCBOEPCR(): Promise<CBOEPCRData | null> {
   return null
 }
 
-export async function publishCBOEPCR(data: CBOEPCRData): Promise<void> {
-  await cacheSet(CACHE_KEY, data, TTL_MS, 'cboe_pcr')
-  emitter.emit('cboe_pcr', data)
-
-  const labelEmoji: Record<CBOEPCRData['label'], string> = {
-    extreme_fear: '🔴 Medo Extremo — proteção sistêmica comprada',
-    fear: '🟠 Medo — prêmio de put elevado',
-    neutral: '🟡 Neutro',
-    greed: '🟢 Ganância — prêmio de put baixo',
-    extreme_greed: '🟢🟢 Ganância Extrema — complacência',
-  }
-
-  const description = [
-    `**Total PCR:** ${data.totalPCR}`,
-    `**Equity PCR:** ${data.equityPCR}  ← principal indicador`,
-    `**Index PCR:** ${data.indexPCR}`,
-    ``,
-    `**Sentimento:** ${labelEmoji[data.label]}`,
-    ``,
-    `> Equity PCR > 0.8 = medo → favorável para Put Spread (prêmio alto)`,
-    `> Equity PCR < 0.5 = complacência → cautela com sizing`,
-  ].join('\n')
-
-  await sendEmbed('feed', {
-    title: `📊 CBOE Put/Call Ratio — ${new Date().toLocaleDateString('pt-BR', { timeZone: 'America/New_York' })}`,
-    description,
-    color: DISCORD_COLORS.cboePCR,
-    footer: { text: 'Fonte: CBOE · Publicado após fechamento do mercado' },
-    timestamp: new Date().toISOString(),
-  })
-}
-
 export async function getLastCBOEPCR(): Promise<CBOEPCRData | null> {
   return cacheGet<CBOEPCRData>(CACHE_KEY)
 }
@@ -254,15 +222,14 @@ export function startCBOEPCRScheduler(): void {
       }
 
       const data = await fetchCBOEPCR()
-      if (data) await publishCBOEPCR(data)
+      if (data) await publishCBOEPCRToDiscord(data)
     }
   }, CHECK_INTERVAL_MS)
 
-  // Poll inicial 30s após startup — popula cache quando TTL expirou mas dado já está disponível
+  // Startup silencioso — restaura cache para o agente IA, sem Discord
   setTimeout(() => {
-    fetchCBOEPCR()
-      .then((data) => { if (data) publishCBOEPCR(data) })
-      .catch((err) => console.warn('[CBOE PCR] Poll inicial:', (err as Error).message))
+    restoreCBOEPCRToCache()
+      .catch((err) => console.warn('[CBOE PCR] Restore inicial:', (err as Error).message))
   }, 30_000)
 
   console.log('[CBOE PCR] Scheduler iniciado — disparo 16:35 ET em dias úteis')
