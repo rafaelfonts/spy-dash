@@ -471,6 +471,8 @@ export async function registerOptionScreener(app: FastifyInstance): Promise<void
         // Parse structured strategy from AI response
         try {
           const strategy = JSON.parse(fullText) as OptionStrategy
+          // Normalize popEstimate: AI sometimes returns 0-100 scale instead of 0-1
+          if (strategy.popEstimate > 1) strategy.popEstimate = strategy.popEstimate / 100
           sendEvent('strategy', strategy)
         } catch {
           // If AI didn't return valid JSON, send raw text as rationale
