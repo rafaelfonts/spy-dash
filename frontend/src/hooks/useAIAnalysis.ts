@@ -64,6 +64,7 @@ export function useAIAnalysis(): UseAIAnalysis {
   const vix = useMarketStore((s) => s.vix)
   const ivRank = useMarketStore((s) => s.ivRank)
   const newsFeed = useMarketStore((s) => s.newsFeed)
+  const market = useMarketStore((s) => s.market)
 
   const analyze = useCallback(async () => {
     abortRef.current?.abort()
@@ -148,7 +149,7 @@ export function useAIAnalysis(): UseAIAnalysis {
       const res = await fetch(`${getApiBase()}/api/analyze`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ marketSnapshot, optionChain, context, freshness }),
+        body: JSON.stringify({ marketSnapshot, optionChain, context, freshness, market }),
         signal: abortRef.current.signal,
       })
 
@@ -284,6 +285,7 @@ export function useAIAnalysis(): UseAIAnalysis {
           question: trimmed,
           structuredOutput: so,
           chatHistory: historyForApi,
+          market,
         }),
       })
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)

@@ -36,6 +36,7 @@ import { startTreasuryPoller } from './data/treasuryPoller'
 import { startEiaOilPoller } from './data/eiaOilPoller'
 import { startFinraDarkPoolPoller } from './data/finraDarkPoolPoller'
 import { startSKEWIndexPoller } from './data/skewIndexPoller'
+import { startBova11Poller } from './stream/bova11Poller'
 import { registerSSE } from './api/sse'
 import { registerOpenAI } from './api/openai'
 import { registerRiskReview } from './api/riskReview'
@@ -230,6 +231,7 @@ async function bootstrap(): Promise<void> {
     startAdvancedMetricsPoller()
     startExpectedMovePoller()
     startTechnicalIndicatorsPoller()
+    startBova11Poller()
 
     // Start streaming (token was initialized above)
     try {

@@ -75,6 +75,8 @@ interface AnalyzeBody {
   optionChain?: OptionExpiry[]
   context?: ContextData
   freshness?: FreshnessBlock
+  /** Market context: 'US' for SPY (default) or 'BR' for BOVA11. */
+  market?: 'US' | 'BR'
 }
 
 // ---------------------------------------------------------------------------
@@ -1329,6 +1331,66 @@ function buildPOPReferenceBlock(spot: number): string | null {
   return lines.join('\n')
 }
 
+/**
+ * Theta/Gamma Ratio block for the 20–45 DTE priority window.
+ * Computes avg |theta|/gamma for ATM calls and puts per expiration in that range.
+ * High ratio → theta decay is rich relative to gamma risk (favors premium selling).
+ */
+function buildThetaGammaBlock(chain: OptionExpiry[], spotPrice: number): string | null {
+  if (!chain || chain.length === 0 || spotPrice <= 0) return null
+
+  const eligible = chain.filter((exp) => exp.dte >= 20 && exp.dte <= 45)
+  if (eligible.length === 0) return null
+
+  const rows: string[] = []
+  for (const exp of eligible) {
+    // ATM = strikes within 2% of spot
+    const atmCalls = exp.calls.filter(
+      (c) => c.thetaGammaRatio !== null && Math.abs(c.strike - spotPrice) / spotPrice <= 0.02,
+    )
+    const atmPuts = exp.puts.filter(
+      (p) => p.thetaGammaRatio !== null && Math.abs(p.strike - spotPrice) / spotPrice <= 0.02,
+    )
+
+    if (atmCalls.length === 0 && atmPuts.length === 0) continue
+
+    const avgCallRatio =
+      atmCalls.length > 0
+        ? atmCalls.reduce((s, c) => s + (c.thetaGammaRatio ?? 0), 0) / atmCalls.length
+        : null
+    const avgPutRatio =
+      atmPuts.length > 0
+        ? atmPuts.reduce((s, p) => s + (p.thetaGammaRatio ?? 0), 0) / atmPuts.length
+        : null
+
+    const callStr = avgCallRatio !== null ? avgCallRatio.toFixed(2) : '—'
+    const putStr = avgPutRatio !== null ? avgPutRatio.toFixed(2) : '—'
+
+    // Signal: best ratio above 1.5 marks good theta capture window
+    const bestRatio = Math.max(avgCallRatio ?? 0, avgPutRatio ?? 0)
+    const signal = bestRatio >= 2.0 ? '[EXCELENTE]' : bestRatio >= 1.5 ? '[BOM]' : bestRatio >= 0.8 ? '[OK]' : '[FRACO]'
+
+    rows.push(`| ${exp.dte} DTE | ${exp.expirationDate} | ${callStr} | ${putStr} | ${signal} |`)
+  }
+
+  if (rows.length === 0) return null
+
+  let block = '\n=== THETA/GAMMA RATIO — JANELA PRIORITARIA 20-45 DTE ===\n'
+  block += 'Interpretacao: |theta|/gamma = prêmio de decaimento por unidade de risco gamma.\n'
+  block += '  theta/gamma >= 2.0 = EXCELENTE (venda de premium bem remunerada)\n'
+  block += '  theta/gamma >= 1.5 = BOM (janela valida com IVR > 30%)\n'
+  block += '  theta/gamma >= 0.8 = OK (aceitavel em regime GEX positivo)\n'
+  block += '  theta/gamma < 0.8  = FRACO — VETO para venda de premium neste vencimento\n'
+  block += '\n| DTE | Expiracao | theta/gamma Calls ATM | theta/gamma Puts ATM | Sinal |\n'
+  block += '|-----|-----------|----------------------|---------------------|-------|\n'
+  block += rows.join('\n')
+  block += '\n\nINSTRUCAO: Priorize o DTE com maior theta/gamma dentro de 20-45. '
+  block += 'Fora dessa janela, exija justificativa explicita via gammaAnomaly ou estrutura de IV. '
+  block += 'VETO se theta/gamma < 0.8 mesmo com IVR alto — o risco gamma nao compensa o decaimento.\n'
+
+  return block
+}
+
 function buildPrompt(
   snapshot: AnalyzeBody['marketSnapshot'],
   chain?: OptionExpiry[],
@@ -1355,12 +1417,27 @@ function buildPrompt(
   secSummaryBlock?: string | null,
   finraBlock?: string | null,
   cftcBlock?: string | null,
+  thetaGammaBlock?: string | null,
+  market?: 'US' | 'BR',
 ): string {
   const spy = snapshot?.spy
   const vix = snapshot?.vix
   const ivRank = snapshot?.ivRank
+  const isBR = market === 'BR'
 
   let prompt = ''
+
+  // Brazilian market context preamble — tells the AI which instrument and conventions to use
+  if (isBR) {
+    prompt +=
+      '=== CONTEXTO: MERCADO BRASILEIRO ===\n' +
+      'Instrumento alvo: BOVA11 (ETF do Ibovespa — B3, Brasil)\n' +
+      'Moeda: BRL (R$). Horário de mercado: 09:00–18:00 BRT (12:00–21:00 UTC).\n' +
+      'Taxa livre de risco: SELIC (~10.75% a.a.). Opções: majoritariamente europeias.\n' +
+      'Todas as referências numéricas de preço são em R$. Não confundir com SPY/USD.\n' +
+      'Blocos de dados abaixo podem usar terminologia de "SPY" — interprete como BOVA11 para este contexto.\n' +
+      'Blocos US-específicos sem equivalente BR (CBOE PCR, VIX term structure, dark pool FINRA) devem ser ignorados.\n\n'
+  }
 
   if (memoryBlock) {
     prompt += `=== SUAS ANÁLISES ANTERIORES (HOJE) ===\n${memoryBlock}\n\n`
@@ -1566,6 +1643,10 @@ function buildPrompt(
   }
   if (popReferenceBlock) {
     prompt += popReferenceBlock
+  }
+
+  if (thetaGammaBlock) {
+    prompt += thetaGammaBlock
   }
 
   prompt += `\nCom base nessas condições de mercado, forneça:\n`
@@ -1930,6 +2011,10 @@ const STATIC_SYSTEM_PROMPT =
   'DTEs curtos (0-7D): válidos em regime GEX positivo + IV backwardation + tendência clara. ' +
   'DTEs médios (14-30D): válidos em contango + IV Rank >30% + cone bem definido. ' +
   'DTEs longos (45-60D): válidos em estrutura de médio prazo sólida + IV barata. ' +
+  'JANELA PRIORITÁRIA 20-45 DTE: faixa ótima para captura de theta decay (risco/retorno equilibrado). ' +
+  'Ao selecionar DTE candidato, prefira vencimentos nessa faixa quando theta/gamma > 1.5 e IVR > 30%. ' +
+  'Fora de 20-45 DTE, exija justificativa explícita baseada em gammaAnomaly ou estrutura de IV anômala. ' +
+  'VETO automático se theta/gamma < 0.8 no vencimento candidato — decaimento insuficiente para o risco gamma assumido. ' +
   'Vanna Exposure (VEX): dDelta/dIV agregado dos dealers. VEX positivo alto: quando IV comprime, dealers de-hedge comprando spot → suporte bullish. VEX negativo: IV subindo força venda de spot. Charm Exposure (CEX): dDelta/dTime. CEX negativo alto próximo de expiração: pressão de venda intraday. Use VEX/CEX como confirmação, não como sinal primário. ' +
   'VEX POSITIVO com IV em queda: contexto favorável para Put Spread (perna curta mais segura), NÃO é sinal de entrada LONG. ' +
   'VEX NEGATIVO com VIX > 20: VETO de Put Spread curto — dealers amplificam queda mecanicamente. ' +
@@ -2177,6 +2262,9 @@ export async function runAnalysisForPayload(
   const ivConeBlockScheduled = ivConeSnapshotScheduled ? buildIVConeBlock(ivConeSnapshotScheduled) : null
   const macroDigestData = getLastMacroDigest()
   const macroDigestBlockScheduled = macroDigestData ? buildMacroDigestBlock(macroDigestData) : null
+  const thetaGammaBlockScheduled = optionChain
+    ? buildThetaGammaBlock(optionChain, snapshot?.spy?.last ?? 0)
+    : null
 
   const userContent = buildPrompt(
     snapshot,
@@ -2204,6 +2292,8 @@ export async function runAnalysisForPayload(
     secSummaryBlock,
     finraBlockMain,
     cftcBlockMain,
+    thetaGammaBlockScheduled,
+    'US', // scheduled runs are SPY-only
   )
 
   const marketStatusNote = isMarketOpen()
@@ -2619,6 +2709,11 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       secSummaryBlockMain = null
     }
 
+    const market = body.market ?? 'US'
+    const thetaGammaBlockMain = body.optionChain
+      ? buildThetaGammaBlock(body.optionChain, snapshot?.spy?.last ?? 0)
+      : null
+
     const userContent = buildPrompt(
       snapshot,
       body.optionChain,
@@ -2645,6 +2740,8 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       secSummaryBlockMain,
       finraBlockSSE,
       cftcBlockSSE,
+      thetaGammaBlockMain,
+      market,
     )
     const useClaudePrimary = Boolean(CONFIG.ANTHROPIC_API_KEY)
     if (!CONFIG.ANTHROPIC_API_KEY) {
@@ -2960,11 +3057,12 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
     analysisId?: string
     structuredOutput: AnalysisStructuredOutput
     chatHistory: Array<{ role: 'user' | 'assistant'; content: string }>
+    market?: 'US' | 'BR'
   }
 
   fastify.post<{ Body: ChatFollowupBody }>('/api/chat-followup', async (request, reply) => {
     const body = request.body ?? {}
-    const { question, structuredOutput: so, chatHistory = [] } = body
+    const { question, structuredOutput: so, chatHistory = [], market = 'US' } = body
     if (!question?.trim() || !so) {
       reply.code(400).send({ error: 'question and structuredOutput are required' })
       return
@@ -2977,11 +3075,74 @@ export async function registerOpenAI(fastify: FastifyInstance): Promise<void> {
       keyLevels.gex_flip,
     ].filter(Boolean).join(', ')
 
+    // Build Vanna/Charm per-strike context (hybrid: ATM top-10 + outliers top-5)
+    let vannaCharmContext = ''
+    try {
+      const chatGexSnap = getAdvancedMetricsSnapshot()
+      const spotForChat = marketState.spy.last ?? 0
+      if (chatGexSnap?.gexDynamic && chatGexSnap.gexDynamic.length > 0 && spotForChat > 0) {
+        // Aggregate vannaByStrike across all expirations (sum same strikes)
+        const aggMap = new Map<number, { vannaExp: number; charmExp: number }>()
+        for (const entry of chatGexSnap.gexDynamic) {
+          for (const v of (entry.gex.vannaByStrike ?? [])) {
+            const ex = aggMap.get(v.strike) ?? { vannaExp: 0, charmExp: 0 }
+            ex.vannaExp += v.vannaExp
+            ex.charmExp += v.charmExp
+            aggMap.set(v.strike, ex)
+          }
+        }
+        const allStrikes = Array.from(aggMap.entries()).map(([strike, v]) => ({
+          strike,
+          vannaExp: v.vannaExp,
+          charmExp: v.charmExp,
+          distancePct: Math.abs(strike - spotForChat) / spotForChat,
+        }))
+
+        // ATM: top-10 closest to spot (within 5%)
+        const atmStrikes = allStrikes
+          .filter((s) => s.distancePct <= 0.05)
+          .sort((a, b) => a.distancePct - b.distancePct)
+          .slice(0, 10)
+
+        // Outliers: top-5 by |vannaExp| NOT already in ATM set
+        const atmSet = new Set(atmStrikes.map((s) => s.strike))
+        const outlierStrikes = allStrikes
+          .filter((s) => !atmSet.has(s.strike))
+          .sort((a, b) => Math.abs(b.vannaExp) - Math.abs(a.vannaExp))
+          .slice(0, 5)
+
+        const combined = [...atmStrikes, ...outlierStrikes]
+          .sort((a, b) => b.strike - a.strike)  // descending by strike price
+
+        if (combined.length > 0) {
+          vannaCharmContext =
+            '\n\nVanna/Charm por strike (dados em tempo real — use esses valores, não invente):\n' +
+            '| Strike | Vanna ($M) | Charm ($M/dia) | Dist ATM |\n' +
+            '|--------|-----------|---------------|----------|\n' +
+            combined
+              .map((s) =>
+                `| $${s.strike} | ${s.vannaExp >= 0 ? '+' : ''}${s.vannaExp.toFixed(2)} | ${s.charmExp >= 0 ? '+' : ''}${s.charmExp.toFixed(2)} | ${(s.distancePct * 100).toFixed(1)}% |`,
+              )
+              .join('\n') +
+            '\nVanna positiva: dealers compram spot quando IV cai (suporte). ' +
+            'Vanna negativa: dealers vendem spot quando IV sobe (pressão). ' +
+            'Charm negativo próximo de expiração: pressão de venda intraday mecânica. ' +
+            'Cite valores reais desta tabela ao responder perguntas sobre Vanna/Charm.\n'
+        }
+      }
+    } catch {
+      // vannaCharmContext stays empty — non-critical
+    }
+
+    const instrument = market === 'BR' ? 'BOVA11 (mercado brasileiro, B3)' : 'SPY (mercado americano)'
+    const currency = market === 'BR' ? 'BRL (R$)' : 'USD ($)'
     const systemContent =
-      'Você é o mesmo especialista em opções SPY que gerou a análise anterior. ' +
+      `Você é o mesmo especialista em opções ${instrument} que gerou a análise anterior. ` +
+      `Moeda de referência: ${currency}. ` +
       'Responda perguntas de follow-up de forma concisa (máx 150 palavras). ' +
       `Análise atual: bias=${so.bias}, estratégia="${so.suggested_strategy?.name ?? 'N/A'}", ` +
-      `níveis-chave=${levelsStr || 'N/A'}, confiança=${so.confidence}`
+      `níveis-chave=${levelsStr || 'N/A'}, confiança=${so.confidence}` +
+      vannaCharmContext
 
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: systemContent },

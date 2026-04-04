@@ -24,6 +24,7 @@ export interface OptionLeg {
   theta: number | null         // daily $ decay (always negative)
   vega: number | null          // per 1% IV change
   greeksSource: 'api' | 'calculated' | null
+  thetaGammaRatio: number | null  // |theta| / gamma — profitability per unit of gamma risk
 }
 
 export interface OptionChainMeta {
@@ -166,6 +167,11 @@ function enrichLeg(
     greeksSource = null
   }
 
+  const thetaGammaRatio =
+    gamma !== null && gamma > 0.001 && theta !== null
+      ? Math.abs(theta) / gamma
+      : null
+
   return {
     symbol: rawLeg.symbol,
     strike,
@@ -179,6 +185,7 @@ function enrichLeg(
     theta,
     vega,
     greeksSource,
+    thetaGammaRatio,
   }
 }
 

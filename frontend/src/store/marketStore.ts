@@ -228,6 +228,7 @@ export interface OptionLeg {
   theta: number | null
   vega: number | null
   greeksSource: 'api' | 'calculated' | null
+  thetaGammaRatio: number | null
 }
 
 export interface OptionExpiry {
@@ -553,6 +554,9 @@ interface MarketStore {
   skewByDTE: SkewByDTE | null
   regimePreview: RegimePreviewData | null
   marketOpen: boolean | null  // null = SSE snapshot ainda não recebido
+  /** Active market context: 'US' for SPY/Tastytrade or 'BR' for BOVA11/OpLab. */
+  market: 'US' | 'BR'
+  setMarket: (market: 'US' | 'BR') => void
 
   updateSPY: (data: Partial<SPYData>) => void
   updateVIX: (data: Partial<VIXData>) => void
@@ -679,6 +683,7 @@ export const useMarketStore = create<MarketStore>()(
     skewByDTE: null,
     regimePreview: null,
     marketOpen: null,
+    market: 'US',
     alerts: [],
 
     updateSPY: (data) =>
@@ -733,6 +738,7 @@ export const useMarketStore = create<MarketStore>()(
     setSkewByDTE: (data) => set({ skewByDTE: data }),
     setRegimePreview: (data) => set({ regimePreview: data }),
     setMarketOpen: (open) => set({ marketOpen: open }),
+    setMarket: (market) => set({ market }),
 
     // Equity Screener state
     equityCandidates: [] as EquityCandidate[],

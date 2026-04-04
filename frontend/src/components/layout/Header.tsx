@@ -1,5 +1,6 @@
 import { useMarketStore } from '../../store/marketStore'
 import { ConnectionDot } from '../ui/ConnectionDot'
+import { MarketToggle } from './MarketToggle'
 import { useMarketOpen } from '../../hooks/useMarketOpen'
 import { fmtPrice, fmtPct } from '../../lib/formatters'
 
@@ -37,6 +38,9 @@ export function Header({ onLogout }: HeaderProps) {
 
         {/* Right side */}
         <div className="flex items-center gap-4">
+          {/* Market toggle US/BR */}
+          <MarketToggle />
+
           {/* Market status */}
           <span
             className={`hidden sm:inline text-[10px] font-semibold tracking-widest uppercase ${

@@ -17,6 +17,7 @@ import type { GEXProfile, ZeroGammaContract } from '../lib/gexCalculator'
 import { calcVanna, calcCharm } from '../lib/blackScholes'
 import { cacheGet, cacheSet } from '../lib/cacheStore'
 import { marketState, newsSnapshot } from './marketState'
+import { getBova11Snapshot } from './bova11State'
 import { calculateMaxPain } from '../lib/maxPainCalculator'
 import type { MaxPainResult } from '../lib/maxPainCalculator'
 
@@ -88,6 +89,34 @@ function getRiskFreeRate(): number {
 }
 
 /**
+ * SELIC rate for Brazilian options pricing.
+ * Fallback: 10.75% (approximate rate as of early 2026).
+ * TODO: add BACEN API poller to fetch live SELIC when available.
+ */
+function getSelicRate(): number {
+  return 0.1075
+}
+
+/**
+ * Return risk-free rate appropriate for the symbol.
+ * US symbols (SPY, etc.) → Fed Funds. Brazilian symbols (BOVA11, etc.) → SELIC.
+ */
+function getRiskFreeRateForSymbol(symbol: string): number {
+  return symbol === 'BOVA11' ? getSelicRate() : getRiskFreeRate()
+}
+
+/**
+ * Return the current spot price for the given symbol from in-memory state.
+ * US → marketState.spy.last. BR → bova11State.last.
+ */
+function resolveSpotPrice(symbol: string): number {
+  if (symbol === 'BOVA11') {
+    return getBova11Snapshot().last ?? 0
+  }
+  return marketState.spy.last ?? 0
+}
+
+/**
  * Fetch available option expirations from Tradier and return the nearest one.
  * Prefers today's date (0DTE); otherwise the first future expiration.
  */
@@ -134,8 +163,8 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
     return null
   }
 
-  // 3. Spot price: live marketState → Tradier quote fallback
-  let spotPrice = marketState.spy.last ?? 0
+  // 3. Spot price: symbol-aware live state → Tradier/OpLab quote fallback
+  let spotPrice = resolveSpotPrice(symbol)
   if (spotPrice <= 0) {
     const quotes = await client.getQuotes(symbol)
     spotPrice = quotes[0]?.last ?? 0
@@ -153,7 +182,7 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
   const dte = Math.max(0, Math.round(dteMs / msPerDay))
   const T = dte === 0 ? 0.5 / 365 : dte / 365
 
-  const r = getRiskFreeRate()
+  const r = getRiskFreeRateForSymbol(symbol)
 
   // 5. Build per-strike maps for calculateGEX and findZeroGammaLevel
   const strikeMap = new Map<
@@ -334,7 +363,7 @@ async function calculateGexForExpiration(
   const dteMs = new Date(expiration).getTime() - new Date(today).getTime()
   const dte = Math.max(0, Math.round(dteMs / msPerDay))
   const T = dte === 0 ? 0.5 / 365 : dte / 365
-  const r = getRiskFreeRate()
+  const r = getRiskFreeRateForSymbol(symbol)
 
   const strikeMap = new Map<
     number,
@@ -441,8 +470,8 @@ export async function calculateAllExpirationsGex(symbol: string): Promise<GEXByE
     return { dte0: null, dte1: null, dte7: null, dte21: null, dte45: null, all: null }
   }
 
-  // Resolve spot price once
-  let spotPrice = marketState.spy.last ?? 0
+  // Resolve spot price once (symbol-aware)
+  let spotPrice = resolveSpotPrice(symbol)
   if (spotPrice <= 0) {
     const quotes = await client.getQuotes(symbol)
     spotPrice = quotes[0]?.last ?? 0
@@ -477,7 +506,7 @@ export async function calculateAllExpirationsGex(symbol: string): Promise<GEXByE
   let all: DailyGexResult | null = null
 
   if (buckets.length > 0) {
-    const r = getRiskFreeRate()
+    const r = getRiskFreeRateForSymbol(symbol)
     const aggMap = new Map<number, { callOI: number; callGamma: number; putOI: number; putGamma: number }>()
     const aggZgl: ZeroGammaContract[] = []
 
