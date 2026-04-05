@@ -356,10 +356,31 @@ function buildGexMultiDTEBlock(gexDynamic: GEXDynamic): string {
     block += `| ${label.padEnd(19)} | ${String(dte).padEnd(3)} | ${expiration} | ${regime} | ${total.padEnd(10)} | ${flip.padEnd(10)} | $${gex.maxGexStrike} | ${anomalyLabel} |\n`
   }
 
-  // Call Wall / Put Wall por expiração
+  // Call Wall / Put Wall por expiração — com tier de confiança por strike
   block += `\nCall Wall / Put Wall por expiração:\n`
   for (const entry of gexDynamic) {
-    block += `- ${entry.label}: Call Wall $${entry.gex.callWall} | Put Wall $${entry.gex.putWall}\n`
+    const byStrike = entry.gex.profile?.byStrike ?? []
+
+    const findConfidence = (targetStrike: number): string => {
+      const s = byStrike.find((x) => x.strike === targetStrike)
+      if (!s?.gexConfidence) return ''
+      const tier = s.gexConfidence
+      return tier === 'high' ? ' [OI ALTO]' : tier === 'medium' ? ' [OI médio]' : tier === 'low' ? ' [OI baixo]' : ' [RUÍDO]'
+    }
+
+    const findAggressor = (targetStrike: number, side: 'call' | 'put'): string => {
+      const s = byStrike.find((x) => x.strike === targetStrike)
+      if (!s) return ''
+      const bias = side === 'call' ? s.callAggressorBias : s.putAggressorBias
+      return bias === 'buyer' ? ' comprador' : bias === 'seller' ? ' vendedor' : ''
+    }
+
+    const cwConf = findConfidence(entry.gex.callWall)
+    const pwConf = findConfidence(entry.gex.putWall)
+    const cwAggr = findAggressor(entry.gex.callWall, 'call')
+    const pwAggr = findAggressor(entry.gex.putWall, 'put')
+
+    block += `- ${entry.label}: Call Wall $${entry.gex.callWall}${cwConf}${cwAggr} | Put Wall $${entry.gex.putWall}${pwConf}${pwAggr}\n`
   }
 
   // VEX/CEX summary — aggregated across all entries
@@ -1436,7 +1457,15 @@ function buildPrompt(
       'Taxa livre de risco: SELIC (~10.75% a.a.). Opções: majoritariamente europeias.\n' +
       'Todas as referências numéricas de preço são em R$. Não confundir com SPY/USD.\n' +
       'Blocos de dados abaixo podem usar terminologia de "SPY" — interprete como BOVA11 para este contexto.\n' +
-      'Blocos US-específicos sem equivalente BR (CBOE PCR, VIX term structure, dark pool FINRA) devem ser ignorados.\n\n'
+      'Blocos US-específicos sem equivalente BR (CBOE PCR, VIX term structure, dark pool FINRA) devem ser ignorados.\n' +
+      'CALIBRAÇÃO DE LIQUIDEZ B3: Thresholds de OI para BOVA11 são significativamente menores que US:\n' +
+      '  [OI ALTO] = OI ≥ 500 contratos (equivale a "high" no mercado BR)\n' +
+      '  [OI médio] = OI ≥ 200 contratos\n' +
+      '  [OI baixo] = OI ≥ 50 contratos\n' +
+      '  [RUÍDO]    = OI < 50 contratos — NÃO citar este strike como wall ou nível de âncora\n' +
+      'Spread threshold B3: bid/ask spread > 10% do prêmio = illíquido → downgrade de confiança do GEX.\n' +
+      'Strikes com [RUÍDO] não representam posicionamento real de dealers — ignorar como resistência/suporte.\n' +
+      'Apenas strikes com [OI ALTO] ou [OI médio] devem ser citados como Call Wall / Put Wall.\n\n'
   }
 
   if (memoryBlock) {
@@ -2056,6 +2085,17 @@ const STATIC_SYSTEM_PROMPT =
   'GEX decrescendo → dealers descarregando → vol tende a subir → cautela com Put Spread vendido. ' +
   'Flip Point migrando consistentemente em uma direção por 3+ dias = tendência estrutural de nível de magnetismo. ' +
   'Use GEX histórico para confirmar ou questionar o sinal do GEX spot atual — divergência entre spot e tendência histórica = sinal de atenção. ' +
+  'CREDIBILIDADE DE WALLS GEX (thresholds de OI e spread):\n' +
+  '  Mercado US (SPY): [OI ALTO]=OI≥5000 (wall confiável), [OI médio]=OI≥1000, [OI baixo]=OI≥200, [RUÍDO]=OI<200.\n' +
+  '  Mercado BR (BOVA11): [OI ALTO]=OI≥500, [OI médio]=OI≥200, [OI baixo]=OI≥50, [RUÍDO]=OI<50.\n' +
+  '  Spread US: spread bid/ask > 5% do prêmio = illíquido → confiança downgraded.\n' +
+  '  Spread BR: spread > 10% do prêmio = illíquido → confiança downgraded.\n' +
+  '  Strikes com [RUÍDO] NÃO devem ser citados como call wall, put wall, ou nível de suporte/resistência.\n' +
+  '  Apenas [OI ALTO] ou [OI médio] com spread dentro do threshold são walls confiáveis.\n' +
+  'SINAL DE AGGRESSOR BIAS: callAggressorBias=buyer/seller indica se o último trade foi comprador ou vendedor.\n' +
+  '  buyer em call wall → demanda real de calls; fortalece o teto de resistência.\n' +
+  '  seller em call wall → dealer pode estar do lado oposto; teto menos confiável.\n' +
+  '  Aggressor bias é confirmação secundária — não substitui OI e GEX como sinais primários.\n' +
   'Sizzle 0DTE: ratio vol hoje / vol médio 5d para opções 0DTE SPY. ' +
   'Sizzle > 2.5 + extreme_put = fluxo institucional de proteção → possível evento não precificado → AGUARDAR ou reduzir size 50%. ' +
   'Sizzle < 0.5 = liquidez reduzida → spreads mais largos → confirmar bid/ask antes de recomendar entrada. ' +

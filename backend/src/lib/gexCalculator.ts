@@ -7,6 +7,15 @@ export interface StrikeGEX {
   netGEX: number    // callGEX + putGEX
   callOI: number
   putOI: number
+  // Quality metadata — populated by gexService after calculateGEX; absent when called directly
+  callVolume?: number
+  putVolume?: number
+  callSpreadPct?: number | null    // (ask-bid)/mid for the call side
+  putSpreadPct?: number | null     // (ask-bid)/mid for the put side
+  callAggressorBias?: 'buyer' | 'seller' | 'neutral'  // inferred from last vs bid/ask
+  putAggressorBias?: 'buyer' | 'seller' | 'neutral'
+  oiQuality?: 'high' | 'medium' | 'low' | 'noise'    // OI tier (symbol-aware thresholds)
+  gexConfidence?: 'high' | 'medium' | 'low' | 'noise' // combined OI + spread + aggressor score
 }
 
 export interface GEXProfile {

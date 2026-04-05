@@ -97,6 +97,89 @@ function getSelicRate(): number {
   return 0.1075
 }
 
+// ---------------------------------------------------------------------------
+// GEX quality helpers — aggressor bias, spread, OI tier, confidence
+// ---------------------------------------------------------------------------
+
+/** OI thresholds by symbol family for tier classification. */
+const OI_THRESHOLDS = {
+  BOVA11: { high: 500, medium: 200, low: 50 },
+  default: { high: 5000, medium: 1000, low: 200 },
+} as const
+
+/** Max bid/ask spread as fraction of premium before a strike is downgraded. */
+const SPREAD_NOISE_THRESHOLD = { BOVA11: 0.10, default: 0.05 } as const
+
+/**
+ * Infer whether the last trade was driven by a buyer or seller.
+ * last ≥ ask × 0.99 → buyer (paid the ask or above = aggressive buy).
+ * last ≤ bid × 1.01 → seller (hit the bid or below = aggressive sell).
+ * Otherwise → neutral (mid-market fill or stale last).
+ */
+function inferAggressorBias(
+  last: number,
+  bid: number,
+  ask: number,
+): 'buyer' | 'seller' | 'neutral' {
+  if (last <= 0 || bid <= 0 || ask <= 0) return 'neutral'
+  if (last >= ask * 0.99) return 'buyer'
+  if (last <= bid * 1.01) return 'seller'
+  return 'neutral'
+}
+
+/** Normalised bid/ask spread as fraction of the mid price. Returns null when mid ≤ 0. */
+function computeSpreadPct(bid: number, ask: number): number | null {
+  const mid = (bid + ask) / 2
+  if (mid <= 0) return null
+  return (ask - bid) / mid
+}
+
+/** Classify OI into quality tiers using symbol-aware thresholds. */
+function computeOIQuality(
+  maxOI: number,
+  symbol: string,
+): 'high' | 'medium' | 'low' | 'noise' {
+  const t = symbol === 'BOVA11' ? OI_THRESHOLDS.BOVA11 : OI_THRESHOLDS.default
+  if (maxOI >= t.high)   return 'high'
+  if (maxOI >= t.medium) return 'medium'
+  if (maxOI >= t.low)    return 'low'
+  return 'noise'
+}
+
+/**
+ * Combine OI quality, spread width, and aggressor bias into a single GEX confidence tier.
+ * Logic:
+ *   - Start from OI quality tier.
+ *   - Downgrade one level if spread > noise threshold (illiquid premium).
+ *   - Upgrade one level (max: medium→high) if aggressor is 'buyer' or 'seller'
+ *     (directional conviction strengthens the GEX signal).
+ */
+function computeGEXConfidence(
+  oiQuality: 'high' | 'medium' | 'low' | 'noise',
+  spreadPct: number | null,
+  aggressorBias: 'buyer' | 'seller' | 'neutral',
+  symbol: string,
+): 'high' | 'medium' | 'low' | 'noise' {
+  const noiseThreshold = symbol === 'BOVA11'
+    ? SPREAD_NOISE_THRESHOLD.BOVA11
+    : SPREAD_NOISE_THRESHOLD.default
+
+  const tiers: Array<'high' | 'medium' | 'low' | 'noise'> = ['high', 'medium', 'low', 'noise']
+  let idx = tiers.indexOf(oiQuality)
+
+  // Downgrade if spread is wide
+  if (spreadPct !== null && spreadPct > noiseThreshold) {
+    idx = Math.min(idx + 1, tiers.length - 1)
+  }
+
+  // Upgrade if there is directional aggressor conviction (capped at 'medium')
+  if (aggressorBias !== 'neutral' && idx > 0) {
+    idx = Math.max(idx - 1, 1)  // floor at index 1 (medium), never back to 'high' from 'noise'
+  }
+
+  return tiers[idx]
+}
+
 /**
  * Return risk-free rate appropriate for the symbol.
  * US symbols (SPY, etc.) → Fed Funds. Brazilian symbols (BOVA11, etc.) → SELIC.
@@ -190,6 +273,13 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
     { callOI: number; callGamma: number; putOI: number; putGamma: number }
   >()
 
+  // Quality map: volume, bid/ask/last per side — used after calculateGEX to enrich byStrike
+  const qualityMap = new Map<number, {
+    callVolume: number; putVolume: number
+    callBid: number; callAsk: number; callLast: number
+    putBid: number;  putAsk: number;  putLast: number
+  }>()
+
   // ZGL contracts: one entry per option contract (not per strike pair)
   const zglContracts: ZeroGammaContract[] = []
 
@@ -198,14 +288,29 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
     const entry = strikeMap.get(opt.strike) ?? {
       callOI: 0, callGamma: 0, putOI: 0, putGamma: 0,
     }
+    // --- qualityMap entry ---
+    const qEntry = qualityMap.get(opt.strike) ?? {
+      callVolume: 0, putVolume: 0,
+      callBid: 0, callAsk: 0, callLast: 0,
+      putBid: 0, putAsk: 0, putLast: 0,
+    }
     if (opt.option_type === 'call') {
       entry.callOI = opt.open_interest ?? 0
       entry.callGamma = opt.greeks?.gamma ?? 0
+      qEntry.callVolume = opt.volume ?? 0
+      qEntry.callBid = opt.bid ?? 0
+      qEntry.callAsk = opt.ask ?? 0
+      qEntry.callLast = opt.last ?? 0
     } else {
       entry.putOI = opt.open_interest ?? 0
       entry.putGamma = opt.greeks?.gamma ?? 0
+      qEntry.putVolume = opt.volume ?? 0
+      qEntry.putBid = opt.bid ?? 0
+      qEntry.putAsk = opt.ask ?? 0
+      qEntry.putLast = opt.last ?? 0
     }
     strikeMap.set(opt.strike, entry)
+    qualityMap.set(opt.strike, qEntry)
 
     // --- ZGL contracts (need IV per contract for BS re-simulation) ---
     const oi = opt.open_interest ?? 0
@@ -239,6 +344,30 @@ export async function calculateDailyGex(symbol: string): Promise<DailyGexResult 
 
   // 7. Compute static GEX profile at current spot (ZGL attached for convenience)
   const profile = calculateGEX(strikeInputs, spotPrice, zeroGammaLevel)
+
+  // 7a. Enrich byStrike with quality metadata (aggressor bias, spread, OI tier, confidence)
+  for (const s of profile.byStrike) {
+    const q = qualityMap.get(s.strike)
+    if (!q) continue
+    const callSpreadPct = computeSpreadPct(q.callBid, q.callAsk)
+    const putSpreadPct  = computeSpreadPct(q.putBid,  q.putAsk)
+    const callAggressorBias = inferAggressorBias(q.callLast, q.callBid, q.callAsk)
+    const putAggressorBias  = inferAggressorBias(q.putLast,  q.putBid,  q.putAsk)
+    const maxOI = Math.max(s.callOI, s.putOI)
+    const oiQuality = computeOIQuality(maxOI, symbol)
+    const worstSpread = Math.max(callSpreadPct ?? 0, putSpreadPct ?? 0)
+    const dominantBias =
+      callAggressorBias !== 'neutral' ? callAggressorBias :
+      putAggressorBias  !== 'neutral' ? putAggressorBias  : 'neutral'
+    s.callVolume        = q.callVolume
+    s.putVolume         = q.putVolume
+    s.callSpreadPct     = callSpreadPct
+    s.putSpreadPct      = putSpreadPct
+    s.callAggressorBias = callAggressorBias
+    s.putAggressorBias  = putAggressorBias
+    s.oiQuality         = oiQuality
+    s.gexConfidence     = computeGEXConfidence(oiQuality, worstSpread, dominantBias, symbol)
+  }
 
   // 8. Vanna & Charm Exposure (same sign convention as GEX: call +1, put -1)
   let totalVEX = 0
@@ -369,18 +498,37 @@ async function calculateGexForExpiration(
     number,
     { callOI: number; callGamma: number; putOI: number; putGamma: number }
   >()
+  const qualityMapExp = new Map<number, {
+    callVolume: number; putVolume: number
+    callBid: number; callAsk: number; callLast: number
+    putBid: number;  putAsk: number;  putLast: number
+  }>()
   const zglContracts: ZeroGammaContract[] = []
 
   for (const opt of options) {
     const entry = strikeMap.get(opt.strike) ?? { callOI: 0, callGamma: 0, putOI: 0, putGamma: 0 }
+    const qEntry = qualityMapExp.get(opt.strike) ?? {
+      callVolume: 0, putVolume: 0,
+      callBid: 0, callAsk: 0, callLast: 0,
+      putBid: 0, putAsk: 0, putLast: 0,
+    }
     if (opt.option_type === 'call') {
       entry.callOI = opt.open_interest ?? 0
       entry.callGamma = opt.greeks?.gamma ?? 0
+      qEntry.callVolume = opt.volume ?? 0
+      qEntry.callBid = opt.bid ?? 0
+      qEntry.callAsk = opt.ask ?? 0
+      qEntry.callLast = opt.last ?? 0
     } else {
       entry.putOI = opt.open_interest ?? 0
       entry.putGamma = opt.greeks?.gamma ?? 0
+      qEntry.putVolume = opt.volume ?? 0
+      qEntry.putBid = opt.bid ?? 0
+      qEntry.putAsk = opt.ask ?? 0
+      qEntry.putLast = opt.last ?? 0
     }
     strikeMap.set(opt.strike, entry)
+    qualityMapExp.set(opt.strike, qEntry)
 
     const oi = opt.open_interest ?? 0
     if (oi === 0) continue
@@ -398,6 +546,30 @@ async function calculateGexForExpiration(
 
   const zeroGammaLevel = await findZeroGammaLevel(zglContracts, spotPrice, r)
   const profile = calculateGEX(strikeInputs, spotPrice, zeroGammaLevel)
+
+  // Enrich byStrike with quality metadata
+  for (const s of profile.byStrike) {
+    const q = qualityMapExp.get(s.strike)
+    if (!q) continue
+    const callSpreadPct = computeSpreadPct(q.callBid, q.callAsk)
+    const putSpreadPct  = computeSpreadPct(q.putBid,  q.putAsk)
+    const callAggressorBias = inferAggressorBias(q.callLast, q.callBid, q.callAsk)
+    const putAggressorBias  = inferAggressorBias(q.putLast,  q.putBid,  q.putAsk)
+    const maxOI = Math.max(s.callOI, s.putOI)
+    const oiQuality = computeOIQuality(maxOI, symbol)
+    const worstSpread = Math.max(callSpreadPct ?? 0, putSpreadPct ?? 0)
+    const dominantBias =
+      callAggressorBias !== 'neutral' ? callAggressorBias :
+      putAggressorBias  !== 'neutral' ? putAggressorBias  : 'neutral'
+    s.callVolume        = q.callVolume
+    s.putVolume         = q.putVolume
+    s.callSpreadPct     = callSpreadPct
+    s.putSpreadPct      = putSpreadPct
+    s.callAggressorBias = callAggressorBias
+    s.putAggressorBias  = putAggressorBias
+    s.oiQuality         = oiQuality
+    s.gexConfidence     = computeGEXConfidence(oiQuality, worstSpread, dominantBias, symbol)
+  }
 
   let totalVEX = 0
   let totalCEX = 0
